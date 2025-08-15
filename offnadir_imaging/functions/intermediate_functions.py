@@ -42,3 +42,57 @@ def get_scene_characteristics(satellite_ecef, target_ecef, sun_ecef, img_height,
     azimuth_rad = np.arctan2(satellite_local[0], satellite_local[1]) % (2 * np.pi)
 
     return satellite_local, target_local, sun_direction, fov_deg, off_nadir_rad, azimuth_rad
+
+
+def is_dark_from_sun_dir(target_ecef, sun_ecef, *,
+                     threshold_deg=-18.0,   # apparent horizon (~sunrise/sunset)
+                     model="spherical",      # "spherical" or "wgs84"
+                     dir_type="target_to_sun"):
+    """
+    Returns (dark, sun_elevation_deg, threshold_deg).
+
+    target_ecef    : 3-vector in ECEF [m]
+    sun_direction  : 3-vector in same ECEF frame; direction from target toward Sun
+                     (if it's Sun->target, set dir_type='sun_to_target')
+    threshold_deg  : choose your cutoff:
+                     0.0   = geometric horizon
+                    -0.566 = apparent horizon (refraction + solar radius)
+                    -6/-12/-18 = civil/nautical/astronomical night
+    """
+    r = np.asarray(target_ecef, float).reshape(3)
+    s = np.asarray(sun_ecef, float).reshape(3)
+
+    # local up at target
+    if model == "spherical":
+        u = r / np.linalg.norm(r)
+    else:  # WGS-84 ellipsoidal normal
+        a = 6378137.0
+        e2 = 6.69437999014e-3
+        b = a * math.sqrt(1.0 - e2)
+        u = np.array([r[0] / (a * a), r[1] / (a * a), r[2] / (b * b)], float)
+        u /= np.linalg.norm(u)
+
+    # direction from target to Sun (normalize)
+    v = s - r
+    v /= np.linalg.norm(v)
+
+    # elevation
+    dot = float(np.clip(np.dot(v, u), -1.0, 1.0))
+    elev_deg = math.degrees(math.asin(dot))
+
+    return (elev_deg < float(threshold_deg)), elev_deg, float(threshold_deg)
+
+import numpy as np, math
+
+def dbg_sun_elevation(target_ecef, sun_ecef):
+    r = np.asarray(target_ecef, float).reshape(3)
+    s = np.asarray(sun_ecef, float).reshape(3)
+    u = r / np.linalg.norm(r)  # spherical 'up'
+    # two possible directions (flip to test sign)
+    v = s - r
+    v /= np.linalg.norm(v)
+    elev1 = math.degrees(math.asin(np.clip(np.dot(v, u), -1.0, 1.0)))
+    elev2 = -elev1
+    # large-sun-distance approx (if s really is ECEF)
+    elev_approx = math.degrees(math.asin(np.clip(np.dot(s/np.linalg.norm(s), u), -1.0, 1.0)))
+    print(f"elev(target→Sun) = {elev1:.2f}°  |  flipped = {elev2:.2f}°  |  approx(using ŝ) = {elev_approx:.2f}°")

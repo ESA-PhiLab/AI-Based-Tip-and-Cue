@@ -2,7 +2,7 @@ import numpy as np
 import pyvista
 from pyvista import examples
 
-from paseos.utils.point_transformation import Point_ECEF2Geodetic
+from custom_paseos.utils.point_transformation import Point_ECEF2Geodetic
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D

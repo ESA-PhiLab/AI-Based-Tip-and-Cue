@@ -4,6 +4,9 @@ __pycache__/
 dataset/whales_from_space/*
 !dataset/whales_from_space/.gitkeep
 
+dataset/worldmaps/*
+!dataset/worldmap/.gitkeep
+
 offnadir_imaging/images/*
 !offnadir_imaging/images/.gitkeep
 
@@ -12,6 +15,8 @@ offnadir_imaging/pySMARTS/*
 
 PASEOS/*
 !PASEOS/.gitkeep
+
+test*
 
 installation_notes.txt
 

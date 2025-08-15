@@ -14,7 +14,7 @@ from .create_DEM.convert_DEM import convert_DEM
 from .functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb
 from .functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
 from .functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
-from .functions.intermediate_functions import rmse, normalize, get_scene_characteristics
+from .functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation
 from .functions import image_utils as iu
 
 def get_radiance_sunglint(input_img, dem_path, spd_path, solar_spd, satellite_local, target_local, sun_direction, sensor_characteristics, alpha):
@@ -212,6 +212,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
 
     if bools['print_values']:
         print("Convert lat lon to ecef coordinates")
+
     satellite_ecef, target_ecef, sun_ecef = get_ecef_from_lat_lon(satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc)
 
     if bools['max_glint']:
@@ -223,8 +224,21 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         formatted = " ".join(f"{x:.2e}" for x in sun_ecef / 1000)
         print(f"Sun ECEF       : [{formatted}]  km\n")
 
+
     if bools['plot_3d']:
         plot_earth_with_pyvista(satellite_ecef, target_ecef, sun_ecef, R_earth=6378137.0)
+
+    is_dark, elev_deg, thr = is_dark_from_sun_dir(
+        target_ecef=target_ecef,
+        sun_ecef=sun_ecef,
+        threshold_deg=-18.0,  # Astronomical night
+        model="wgs84",
+        dir_type="target_to_sun"
+    )
+
+    if is_dark:
+        print("Dark hours, no image possible")
+        return None, None, None, None
 
     img_rgb = np.asarray(Image.open(img_path).convert('RGB'))
     if bools['crop_black_border']:
@@ -235,7 +249,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
 
     img_lin = iu.DN255_to_linear(img_rgb)
     if bools['print_values']:
-        print("Loaded input image with DN255 min ", np.min(img_rgb), 'max ', np.max(img_rgb))
+        print("Loaded input image with shape ", img_height, "h x", img_width, " w, and DN255 min ", np.min(img_rgb), 'max ', np.max(img_rgb))
 
     satellite_local, target_local, sun_direction, fov_deg, off_nadir_rad, azimuth_rad = get_scene_characteristics(
         satellite_ecef, target_ecef, sun_ecef, img_height, img_width, GSD)
@@ -253,79 +267,99 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
     off_nadir_image = get_image_offnadir(img_lin, dem_path, satellite_local, target_local, sensor_characteristics)
     # off_nadir_image = np.flip(off_nadir_image, axis=0)
 
-    # Split bands
-    R_img = img_rgb[:, :, 0];    G_img = img_rgb[:, :, 1];    B_img =img_rgb[:, :, 2]
-    band_data['red']['input_img'] = R_img[:, :, np.newaxis]; band_data['green']['input_img'] = G_img[:, :, np.newaxis]; band_data['blue']['input_img'] = B_img[:, :, np.newaxis]
+    if bools['generate_radiation']:
 
-    sun_direction_away = -np.array(sun_direction)
-    min_wvl, max_wvl = 250, 1000  # nm
+        # Split bands
+        R_img = img_rgb[:, :, 0];    G_img = img_rgb[:, :, 1];    B_img =img_rgb[:, :, 2]
+        band_data['red']['input_img'] = R_img[:, :, np.newaxis]; band_data['green']['input_img'] = G_img[:, :, np.newaxis]; band_data['blue']['input_img'] = B_img[:, :, np.newaxis]
 
-    generate_solar_spd_from_target(
-        datetime_utc=datetime_utc,
-        target_lat=target_lat,
-        target_lon=target_lon,
-        target_alt=target_alt,
-        sun_direction=sun_direction_away,
-        output_path=solar_spd,
-        wavelength_range=[min_wvl, max_wvl],
-        timezone_offset=0,
-        material="Water"
-    )
-    if bools['print_values']:
-        print(f"Saved solar SPD to {solar_spd}\n")
+        sun_direction_away = -np.array(sun_direction)
+        min_wvl, max_wvl = 250, 1000  # nm
 
-    abs_cal_factor = band_data['abs_cal_factor']
-    gains_arr = []
-    offset_arr = []
-    eff_bw_arr = []
 
-    if bools['print_values']:
-        print("Generate radiance image for channels: (W m-2 µm-1 sr-1)")
-    for band_name in ['red', 'green', 'blue']:
+        generate_solar_spd_from_target(
+            datetime_utc=datetime_utc,
+            target_lat=target_lat,
+            target_lon=target_lon,
+            target_alt=target_alt,
+            sun_direction=sun_direction_away,
+            output_path=solar_spd,
+            wavelength_range=[min_wvl, max_wvl],
+            timezone_offset=0,
+            material="Water"
+        )
 
-        input_img = band_data[band_name]["input_img"]
-        spd_path = band_data[band_name]["spd"]
-        gain = band_data[band_name]["gain"]
-        offset = band_data[band_name]["offset"]
-        eff_bw = band_data[band_name]["eff_bw"]
-
-        # Obtain radiance per band
-        img_lin = iu.DN255_to_linear(input_img)
-        radiance_sunglint_n = get_radiance_sunglint(img_lin, dem_path, spd_path, solar_spd, satellite_local, target_local, sun_direction, sensor_characteristics, alpha)
-        radiance_sunglint_n = radiance_sunglint_n * 1000  # from [W nm-1 m-2 sr-1] to [W µm-1 m-2 sr-1]
-
-        # Save and convert to Digital Number
-        band_data[band_name]['radiance_sunglint'] = radiance_sunglint_n
         if bools['print_values']:
-            print(f"{band_name} min: {np.min(radiance_sunglint_n):.1f}, max: {np.max(radiance_sunglint_n):.1f} ")
+            print(f"Saved solar SPD to {solar_spd}\n")
 
-        # Append array values for future computations
-        gains_arr.append(gain);        offset_arr.append(offset);        eff_bw_arr.append(eff_bw)
+        abs_cal_factor = band_data['abs_cal_factor']
+        gains_arr = []
+        offset_arr = []
+        eff_bw_arr = []
 
-    # Convert to numpy
-    gains_arr = np.array(gains_arr);    offset_arr = np.array(offset_arr);    eff_bw_arr = np.array(eff_bw_arr)
+        if bools['print_values']:
+            print("Generate radiance image for channels: (W m-2 µm-1 sr-1)")
+        for band_name in ['red', 'green', 'blue']:
 
-    # Convert image formats
-    radiance_sunglint = iu.stack_rgb_img('radiance_sunglint', band_data)
-    DN2047_sunglint = iu.radiance_to_DN2047(radiance_sunglint, gains_arr, offset_arr, eff_bw_arr, abs_cal_factor)
-    DN255_sunglint = iu.DN2047_to_DN255(DN2047_sunglint)
+            input_img = band_data[band_name]["input_img"]
+            spd_path = band_data[band_name]["spd"]
+            gain = band_data[band_name]["gain"]
+            offset = band_data[band_name]["offset"]
+            eff_bw = band_data[band_name]["eff_bw"]
 
-    DN255_offnadir = iu.linear_to_DN255(off_nadir_image)
-    DN2047_offnadir = iu.linear_to_DN2047(off_nadir_image)
-    radiance_offnadir = iu.DN2047_to_radiance(DN2047_offnadir, gains_arr, offset_arr, eff_bw_arr, abs_cal_factor)
+            # Obtain radiance per band
+            img_lin = iu.DN255_to_linear(input_img)
+            radiance_sunglint_n = get_radiance_sunglint(img_lin, dem_path, spd_path, solar_spd, satellite_local, target_local, sun_direction, sensor_characteristics, alpha)
+            radiance_sunglint_n = radiance_sunglint_n * 1000  # from [W nm-1 m-2 sr-1] to [W µm-1 m-2 sr-1]
 
-    radiance_combined = radiance_offnadir + radiance_sunglint
-    DN2047_combined = iu.radiance_to_DN2047(radiance_combined, gains_arr, offset_arr, eff_bw_arr, abs_cal_factor)
-    DN255_combined = iu.DN2047_to_DN255(DN2047_combined)
+            # Save and convert to Digital Number
+            band_data[band_name]['radiance_sunglint'] = radiance_sunglint_n
+            if bools['print_values']:
+                print(f"{band_name} min: {np.min(radiance_sunglint_n):.1f}, max: {np.max(radiance_sunglint_n):.1f} ")
 
-    if bools['plot_result'] == True:
+            # Append array values for future computations
+            gains_arr.append(gain);        offset_arr.append(offset);        eff_bw_arr.append(eff_bw)
 
-        fig = plt.figure(figsize=(18,10))
-        fig.add_subplot(1, 4, 1).imshow(img_rgb);plt.axis('off');plt.title('original');
-        fig.add_subplot(1, 4, 2).imshow(DN255_offnadir);plt.axis('off');plt.title('off-nadir');
-        fig.add_subplot(1, 4, 3).imshow(DN255_sunglint);plt.axis('off');plt.title('sun glint');
-        fig.add_subplot(1, 4, 4).imshow(DN255_combined);plt.axis('off');plt.title('off-nadir + sun glint');
-        plt.show()
+        # Convert to numpy
+        gains_arr = np.array(gains_arr);    offset_arr = np.array(offset_arr);    eff_bw_arr = np.array(eff_bw_arr)
+
+        # Convert image formats
+        radiance_sunglint = iu.stack_rgb_img('radiance_sunglint', band_data)
+        DN2047_sunglint = iu.radiance_to_DN2047(radiance_sunglint, gains_arr, offset_arr, eff_bw_arr, abs_cal_factor)
+        DN255_sunglint = iu.DN2047_to_DN255(DN2047_sunglint)
+
+        DN255_offnadir = iu.linear_to_DN255(off_nadir_image)
+        DN2047_offnadir = iu.linear_to_DN2047(off_nadir_image)
+        radiance_offnadir = iu.DN2047_to_radiance(DN2047_offnadir, gains_arr, offset_arr, eff_bw_arr, abs_cal_factor)
+
+        radiance_combined = radiance_offnadir + radiance_sunglint
+        DN2047_combined = iu.radiance_to_DN2047(radiance_combined, gains_arr, offset_arr, eff_bw_arr, abs_cal_factor)
+        DN255_combined = iu.DN2047_to_DN255(DN2047_combined)
+
+        if bools['plot_result'] == True:
+
+            fig = plt.figure(figsize=(18,10))
+            fig.add_subplot(1, 4, 1).imshow(img_rgb);plt.axis('off');plt.title('original');
+            fig.add_subplot(1, 4, 2).imshow(DN255_offnadir);plt.axis('off');plt.title('off-nadir');
+            fig.add_subplot(1, 4, 3).imshow(DN255_sunglint);plt.axis('off');plt.title('sun glint');
+            fig.add_subplot(1, 4, 4).imshow(DN255_combined);plt.axis('off');plt.title('off-nadir + sun glint');
+            plt.show()
+
+    else:
+        DN255_offnadir = iu.linear_to_DN255(off_nadir_image)
+        DN255_sunglint = None
+        radiance_sunglint = None
+        DN255_combined = None
+
+        if bools['plot_result'] == True:
+            fig = plt.figure(figsize=(18,10))
+            fig.add_subplot(1, 3, 1).imshow(img_rgb);plt.axis('off');plt.title('original');
+            fig.add_subplot(1, 3, 2).imshow(DN255_offnadir);plt.axis('off');plt.title('off-nadir');
+            fig.add_subplot(1, 3, 3).imshow(np.abs(img_rgb - DN255_offnadir));plt.axis('off');plt.title('difference');
+            plt.show()
+
+
+
 
     return DN255_offnadir, DN255_sunglint, radiance_sunglint, DN255_combined
 
