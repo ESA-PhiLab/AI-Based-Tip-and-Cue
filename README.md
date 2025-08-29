@@ -1,5 +1,7 @@
 # AI-Based-Tip-and-Cue
 
+![Alt Text](0_resources/images/simulation.gif)
+
 **Under development.**\
 Expected release: End-2025
 
