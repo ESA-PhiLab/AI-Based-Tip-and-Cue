@@ -24,10 +24,10 @@ generate_radiation = True
 flat_dem = False
 
 R_earth = 6371e3
-t0 = datetime(2025, 8, 12, 12, 00, 00, tzinfo=timezone.utc)
+t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 # Simulation config
-sim_duration_hours = 1
+sim_duration_hours = 1 # 24 * 3
 sim_step_seconds = 50
 sim_duration_seconds = sim_duration_hours * 3600
 elapsed_time = 0.0
@@ -36,21 +36,22 @@ n_steps = 0
 # ================================================================================
 # SATELLITE
 
-nSats_tip = 2
-nSats_cue = 2
+nSats_tip = 1
+nSats_cue = 1
 
 nPlanes_tip = 1
 nPlanes_cue = 1
 
-a_tip = 786e3 + R_earth        # Semi-major axis [m]
-e_tip = 0.0003907              # Eccentricity
-i_tip_deg = 97.8748            # Inclination [deg]
-RAAN_tip_deg = 297.6688        # RAAN [deg]
-argp_tip_deg = 231.9817         # Argument of periapsis [deg]
-M_tip_deg = 218.1045           # Mean anomaly [deg]
+a_tip = 613e3 + R_earth        # Semi-major axis [m]
+e_tip = 0.0004466              # Eccentricity
+i_tip_deg = 55.0 # 97.8739            # Inclination [deg]
+RAAN_tip_deg = 305.5939        # RAAN [deg]
+argp_tip_deg = 201.0444         # Argument of periapsis [deg]
+M_tip_deg = 180+ 159.0587           # Mean anomaly [deg]
 
 delta_t_cue = 5*60  # seconds
-cue_tasking_delay_sec = 300  # e.g., 5-minute delay
+tasking_delay_tip = 300  # Time delay between tip and cue transfer
+tasking_delay_cue = 10   # Time delay after detection by cue
 
 a_cue = a_tip                     # Semi-major axis [m]
 e_cue = e_tip                     # Eccentricity
@@ -75,8 +76,8 @@ res_deg = 0.05                     # Raster resolution for land mask (deg/pixel)
 mask_tif = "land_mask.tif"
 mask_npy = "land_mask.npy"
 
-n_whales = 100
-whale_seed = 42
+n_whales = 300
+whale_seed = 17
 max_abs_lat = 70.0                 # Optional: exclude very high latitudes (avoid polar mask artifacts)
 detection_time_limit = 20*60       # Detection time limit
 
@@ -92,13 +93,14 @@ land_avoid_max_tries = 12
 # ================================================================================
 # SENSOR
 
-elevation_min = 10 # degrees
+elevation_min = 10.0 # degrees
+offnadir_max = 50.0     # max 62.5 deg
 
 resolution = 124  # pixels of render
 sample_count = 512  # 8192 min, 2048 * 2**7 max
 
 swath_tip = 290  * 10**3  # m
-swath_cue = 13.1 * 10**3  # m
+swath_cue = 4 * 13.1 * 10**3  # m
 
 fov_tip = math.degrees(2 * math.atan(swath_tip / (2 * (a_tip - R_earth))) )         # deg
 fov_cue = math.degrees(2 * math.atan(swath_cue / (2 * (a_cue - R_earth))) )         # deg

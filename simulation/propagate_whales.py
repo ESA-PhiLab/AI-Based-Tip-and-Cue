@@ -132,7 +132,8 @@ def init_whales(known_targets: list[tuple[float, float, float]], seed_val: int |
             "lon": lon,
             "alt": alt_m,                   # meters
             "speed": random.uniform(0.5, 3.0),  # m/s
-            "heading": random.uniform(0.0, 360.0)  # deg (0=N, 90=E)
+            "heading": random.uniform(0.0, 360.0),  # deg (0=N, 90=E)
+            "detected": 0       # 0 = not detected, 1 = detected by tip, 2 = detected by cue
         }
     return whales
 
