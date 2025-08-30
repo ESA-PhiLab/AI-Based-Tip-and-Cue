@@ -184,3 +184,14 @@ def step_whale(whale: dict, mask: np.ndarray, res_deg: float, dt_sec: float, wha
 
     return whale
 
+def update_whales(all_targets, tasked_targets, mask, res_deg, dt, whale_propagation):
+
+    for whale_idx, w in all_targets.items():
+        w = step_whale(w, mask, res_deg, dt_sec=dt, whale_propagation=whale_propagation)
+        all_targets[whale_idx] = w
+
+        if whale_idx in tasked_targets.keys():
+           tasked_targets[whale_idx]["lat"] = w['lat']
+           tasked_targets[whale_idx]["lon"] = w['lon']
+           tasked_targets[whale_idx]["alt"] = w['alt']
+

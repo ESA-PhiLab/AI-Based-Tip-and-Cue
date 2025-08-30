@@ -22,29 +22,28 @@ max_glint = False
 crop_black_border = True
 generate_radiation = True
 flat_dem = False
+exclude_dark = True
 
 R_earth = 6371e3
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 # Simulation config
-sim_duration_hours = 1 # 24 * 3
-sim_step_seconds = 50
+sim_duration_hours = 0.1 # 24 * 3
+sim_step_seconds = 30
 sim_duration_seconds = sim_duration_hours * 3600
-elapsed_time = 0.0
-n_steps = 0
 
 # ================================================================================
 # SATELLITE
 
-nSats_tip = 1
-nSats_cue = 1
+nSats_tip = 2
+nSats_cue = 2
 
-nPlanes_tip = 1
-nPlanes_cue = 1
+nPlanes_tip = 4
+nPlanes_cue = 4
 
 a_tip = 613e3 + R_earth        # Semi-major axis [m]
 e_tip = 0.0004466              # Eccentricity
-i_tip_deg = 55.0 # 97.8739            # Inclination [deg]
+i_tip_deg = 97.8739            # Inclination [deg]
 RAAN_tip_deg = 305.5939        # RAAN [deg]
 argp_tip_deg = 201.0444         # Argument of periapsis [deg]
 M_tip_deg = 180+ 159.0587           # Mean anomaly [deg]
@@ -100,7 +99,7 @@ resolution = 124  # pixels of render
 sample_count = 512  # 8192 min, 2048 * 2**7 max
 
 swath_tip = 290  * 10**3  # m
-swath_cue = 4 * 13.1 * 10**3  # m
+swath_cue = 6 * 13.1 * 10**3  # m
 
 fov_tip = math.degrees(2 * math.atan(swath_tip / (2 * (a_tip - R_earth))) )         # deg
 fov_cue = math.degrees(2 * math.atan(swath_cue / (2 * (a_cue - R_earth))) )         # deg
@@ -131,6 +130,25 @@ else:
 
 # ================================================================================
 # DICTIONARIES
+params_tip = {}
+params_tip["a"] = a_tip
+params_tip["e"] = e_tip
+params_tip["i"] = i_tip_deg
+params_tip["RAAN"] = RAAN_tip_deg
+params_tip["argp"] = argp_tip_deg
+params_tip["M"] = M_tip_deg
+params_tip["nSats"] = nSats_tip
+params_tip["nPlanes"] = nPlanes_tip
+
+params_cue = {}
+params_cue["a"] = a_cue
+params_cue["e"] = e_cue
+params_cue["i"] = i_cue_deg
+params_cue["RAAN"] = RAAN_cue_deg
+params_cue["argp"] = argp_cue_deg
+params_cue["M"] = M_cue_deg
+params_cue["nSats"] = nSats_cue
+params_cue["nPlanes"] = nPlanes_cue
 
 wave_properties = {}
 wave_properties['wind_speed'] = wind_speed
@@ -159,3 +177,6 @@ whale_propagation["speed_mean_reversion_per_s"] = speed_mean_reversion_per_s
 whale_propagation["speed_noise_sigma"] = speed_noise_sigma
 whale_propagation["turn_std_deg_per_sqrt_s"] = turn_std_deg_per_sqrt_s
 whale_propagation["land_avoid_max_tries"] = land_avoid_max_tries
+
+
+
