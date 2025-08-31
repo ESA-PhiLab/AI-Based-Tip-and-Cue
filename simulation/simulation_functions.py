@@ -1,14 +1,23 @@
-import numpy as np
 from custom_paseos.observation.EarthObservation import EOTools
 from datetime import timedelta
 
 import numpy as np
+import pykep as pk
 
 from org.orekit.time import AbsoluteDate
 from org.orekit.bodies import GeodeticPoint
 from org.orekit.frames import FramesFactory
 
+from org.orekit.utils import PVCoordinates, Constants
+from org.orekit.frames import FramesFactory
+from org.hipparchus.geometry.euclidean.threed import Vector3D
+from org.orekit.orbits import CartesianOrbit, KeplerianOrbit
+
 from custom_paseos.utils.point_transformation import Point_Geodetic2ECEF
+from custom_paseos.propagation.orekit_propagator import OrekitPropagator
+
+from paseos import ActorBuilder, SpacecraftActor
+
 
 def init_eo_tools(actors, fov_angle, eul_angles):
     tools = {}
@@ -41,6 +50,7 @@ def propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits):
     if show_orbits:
         trajectories[actor.name]["r"][n_steps] = r
         trajectories[actor.name]["v"][n_steps] = v
+
 
     r_vec = np.array(r).reshape(3, 1)
     v_vec = np.array(v).reshape(3, 1)
@@ -125,4 +135,47 @@ def daylight_mask(targets, sun_vec):
             illuminated.add(tid)
 
     return illuminated
+
+def reset_actor_propagator(actor, current_absdate, current_pykep,
+                           satellite_mass, area_s, cr_s, area_d, cd,
+                           trajectories=None, n_steps=0, show_orbits=False):
+    r_vec, v_vec, _, _ = propagate_actor(actor, current_pykep, trajectories, n_steps, show_orbits)
+
+    # build PVCoordinates and CartesianOrbit
+    pv = PVCoordinates(
+        Vector3D(float(r_vec[0]), float(r_vec[1]), float(r_vec[2])),
+        Vector3D(float(v_vec[0]), float(v_vec[1]), float(v_vec[2]))
+    )
+    cart_orbit = CartesianOrbit(pv, FramesFactory.getEME2000(), current_absdate, Constants.WGS84_EARTH_MU)
+
+    # convert Cartesian -> Keplerian
+    kep_orbit = KeplerianOrbit(cart_orbit)
+
+    # extract elements
+    new_elements = [
+        kep_orbit.getA(),
+        kep_orbit.getE(),
+        kep_orbit.getI(),
+        kep_orbit.getRightAscensionOfAscendingNode(),
+        kep_orbit.getPerigeeArgument(),
+        kep_orbit.getMeanAnomaly()
+    ]
+
+    # re-init OrekitPropagator with updated elements
+    new_propagator = OrekitPropagator(
+        orbital_elements=new_elements,
+        epoch=current_absdate,
+        satellite_mass=satellite_mass,
+        area_s=area_s, cr_s=cr_s, area_d=area_d, cd=cd
+    )
+
+    def new_orbit(t, p=new_propagator, t0=current_pykep):
+        pv = p.eph((t.mjd2000 - t0.mjd2000) * pk.DAY2SEC).getPVCoordinates()
+        return (
+            list(pv.getPosition().toArray()),
+            list(pv.getVelocity().toArray())
+        )
+
+    ActorBuilder.set_custom_orbit(actor, new_orbit, current_pykep)
+
 

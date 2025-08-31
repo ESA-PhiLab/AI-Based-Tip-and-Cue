@@ -28,18 +28,20 @@ R_earth = 6371e3
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 # Simulation config
-sim_duration_hours = 0.1 # 24 * 3
+sim_duration_hours = 24 * 3
 sim_step_seconds = 30
 sim_duration_seconds = sim_duration_hours * 3600
+reset_propagation_interval = 10
+reset_plot_interval = 100
 
 # ================================================================================
 # SATELLITE
 
-nSats_tip = 2
-nSats_cue = 2
+nSats_tip = 1
+nSats_cue = 1
 
-nPlanes_tip = 4
-nPlanes_cue = 4
+nPlanes_tip = 1
+nPlanes_cue = 1
 
 a_tip = 613e3 + R_earth        # Semi-major axis [m]
 e_tip = 0.0004466              # Eccentricity
@@ -49,8 +51,8 @@ argp_tip_deg = 201.0444         # Argument of periapsis [deg]
 M_tip_deg = 180+ 159.0587           # Mean anomaly [deg]
 
 delta_t_cue = 5*60  # seconds
-tasking_delay_tip = 300  # Time delay between tip and cue transfer
-tasking_delay_cue = 10   # Time delay after detection by cue
+tasking_delay_tip = 3 * 60  # Time delay between tip and cue transfer
+tasking_delay_cue = 10      # Time delay after detection by cue
 
 a_cue = a_tip                     # Semi-major axis [m]
 e_cue = e_tip                     # Eccentricity
@@ -99,7 +101,7 @@ resolution = 124  # pixels of render
 sample_count = 512  # 8192 min, 2048 * 2**7 max
 
 swath_tip = 290  * 10**3  # m
-swath_cue = 6 * 13.1 * 10**3  # m
+swath_cue = 13.1 * 10**3  # m
 
 fov_tip = math.degrees(2 * math.atan(swath_tip / (2 * (a_tip - R_earth))) )         # deg
 fov_cue = math.degrees(2 * math.atan(swath_cue / (2 * (a_cue - R_earth))) )         # deg

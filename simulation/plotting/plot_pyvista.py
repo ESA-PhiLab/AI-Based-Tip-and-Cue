@@ -446,4 +446,111 @@ def update_points_from_targets(points_array, targets_dict, t_datetime):
 
     return points_array
 
+def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=None):
+    """
+    Clear an existing PyVista plotter window and re-add background, Earth,
+    satellites, whales, FoV meshes and Sun light. Keeps same window open and
+    preserves Earth rotation continuity by passing in last_theta.
+    """
+    pl.clear()  # remove all actors/lights, keep the same window
+
+    # --- Background (stars/space) ---
+    cubemap = examples.download_cubemap_space_4k()
+    pl.add_actor(cubemap.to_skybox())
+    pl.set_environment_texture(cubemap, True)
+
+    # --- Earth ---
+    earth_mesh = examples.planets.load_earth(radius=R_earth)
+    earth_tex = examples.load_globe_texture()
+    earth_actor = pl.add_mesh(earth_mesh, texture=earth_tex, smooth_shading=True)
+
+    # Preserve Earth rotation state
+    earth_state = {"last_theta": last_theta}
+
+    # --- Whales ---
+    whales_plot_all = pv.PolyData(np.zeros((len(all_targets), 3)))
+    pl.add_points(whales_plot_all, color="red", point_size=8, render_points_as_spheres=True)
+
+    eval_pts = np.full((n_whales, 3), np.nan)
+    whales_plot_evaluated = pv.PolyData(eval_pts.copy())
+    pl.add_points(whales_plot_evaluated, color="green", point_size=9, render_points_as_spheres=True)
+
+    task_pts = np.full((n_whales, 3), np.nan)
+    whales_plot_tasked = pv.PolyData(task_pts.copy())
+    pl.add_points(whales_plot_tasked, color="orange", point_size=10, render_points_as_spheres=True)
+
+    # --- Satellites ---
+    cloud_tip_sats = pv.PolyData(np.zeros((len(tip_actors), 3)))
+    pl.add_points(cloud_tip_sats, color="yellowgreen", point_size=20, render_points_as_spheres=True)
+
+    cloud_cue_sats = pv.PolyData(np.zeros((len(cue_actors), 3)))
+    pl.add_points(cloud_cue_sats, color="lightseagreen", point_size=15, render_points_as_spheres=True)
+
+    # --- FoV meshes ---
+    tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes = init_fov_layers_eci(
+        pl, n_tip=len(tip_actors), n_cue=len(cue_actors),
+        tip_fill_color="orange", cue_fill_color="cyan",
+        tip_edge_color="white", cue_edge_color="white",
+        opacity=0.35, line_width=2.0
+    )
+
+    # --- Sun light ---
+    sun_light = init_sun_light(pl)
+
+    # --- Text ---
+    pl.add_text("Tip and Cue Simulation", font_size=12)
+
+    return (earth_actor, earth_state,
+            whales_plot_all, whales_plot_evaluated, whales_plot_tasked,
+            cloud_tip_sats, cloud_cue_sats,
+            tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
+            sun_light,
+            eval_pts, task_pts)
+
+
+def update_plotter(pl,
+                   earth_actor, earth_state,
+                   sun_light,
+                   cloud_tip_sats, cloud_cue_sats,
+                   whales_plot_all, whales_plot_evaluated, whales_plot_tasked,
+                   tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
+                   t_datetime,
+                   tip_positions, cue_positions,
+                   all_targets, evaluated_targets, tasked_targets,
+                   eval_pts, task_pts,
+                   FovPoints_tip, FovPoints_cue):
+    """
+    Update all actors in the plotter for the current simulation step.
+    """
+    # Earth rotation + Sun
+    update_earth_rotation_eci(earth_actor, t_datetime, earth_state)
+    update_sun_light_eci(sun_light, t_datetime)
+
+    # Satellites (ECI)
+    cloud_tip_sats.points = sats_to_points_eci(tip_positions)
+    cloud_cue_sats.points = sats_to_points_eci(cue_positions)
+
+    # All whales
+    whales_plot_all.points = whales_to_points_eci(all_targets, t_datetime)
+
+    # Evaluated whales
+    eval_pts = update_points_from_targets(eval_pts, evaluated_targets, t_datetime)
+    whales_plot_evaluated.points = eval_pts
+
+    # Tasked whales
+    task_pts = update_points_from_targets(task_pts, tasked_targets, t_datetime)
+    whales_plot_tasked.points = task_pts
+
+    # FoV polygons
+    update_fov_layers_eci(
+        tip_fill_meshes, tip_edge_meshes,
+        cue_fill_meshes, cue_edge_meshes,
+        FovPoints_tip, FovPoints_cue, t_datetime
+    )
+
+    # Refresh scene
+    pl.update()
+
+    return eval_pts, task_pts
+
 

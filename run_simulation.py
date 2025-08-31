@@ -6,6 +6,8 @@ import numpy as np
 import pykep as pk
 from datetime import datetime, timedelta
 import csv, atexit
+import time
+import gc
 
 from orekit.pyhelpers import setup_orekit_curdir
 
@@ -17,15 +19,16 @@ from simulation.constellation import build_constellation
 from custom_paseos.utils.point_transformation import Point_ECI2Geodetic
 
 from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints
-from simulation.plotting.plot_pyvista import make_plotter_eci, update_earth_rotation_eci, whales_to_points_eci, sats_to_points_eci, init_fov_layers_eci, update_fov_layers_eci, init_sun_light, update_sun_light_eci, update_points_from_targets
+from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter
 from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets,  init_whales, build_land_mask
-from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, log_tip_detection, log_cue_evaluation, satellite_in_shadow, target_illuminated, daylight_mask
+from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, log_tip_detection, log_cue_evaluation, satellite_in_shadow, daylight_mask, reset_actor_propagator
 
-show_constellation = True
+show_constellation = False
 plot_propagation = True
 plot_footprints = False
 show_orbits = False
 generate_image = False
+logging = False
 
 # Initialize Orekit
 vm = orekit.initVM()
@@ -36,6 +39,9 @@ from org.orekit.bodies import CelestialBodyFactory
 from org.orekit.utils import IERSConventions
 from org.orekit.frames import FramesFactory
 from org.orekit.time import AbsoluteDate, TimeScalesFactory
+
+from astropy.utils.iers import conf
+conf.auto_max_age = None  # allow predictive values older than 30 days
 
 pv.global_theme.allow_empty_mesh = True
 paseos.set_log_level("WARNING")
@@ -114,25 +120,25 @@ if show_orbits:
 else:
     trajectories = None  # no storage
 
-# Log files
-file_tip = open("sim_output_tip.csv", "w", newline="")
-file_cue = open("sim_output_cue.csv", "w", newline="")
+if logging:
+    file_tip = open("sim_output_tip.csv", "w", newline="")
+    file_cue = open("sim_output_cue.csv", "w", newline="")
 
-header_tip = ["date", "actor", "target_id", "target_lat", "target_lon", "target_alt", "x", "y", "z", "vx", "vy", "vz", "in_footprint"]
-header_cue = ["date", "actor", "target_id", "target_lat", "target_lon", "target_alt", "x", "y", "z", "vx", "vy", "vz", "offnadir_angle_deg", "in_view", "in_footprint", "yaw", "pitch", "roll"]
+    header_tip = ["date", "actor", "target_id", "target_lat", "target_lon", "target_alt", "x", "y", "z", "vx", "vy", "vz", "in_footprint"]
+    header_cue = ["date", "actor", "target_id", "target_lat", "target_lon", "target_alt", "x", "y", "z", "vx", "vy", "vz", "offnadir_angle_deg", "in_view", "in_footprint", "yaw", "pitch", "roll"]
 
-writer_tip = csv.writer(file_tip)
-writer_cue = csv.writer(file_cue)
+    writer_tip = csv.writer(file_tip)
+    writer_cue = csv.writer(file_cue)
 
-writer_tip.writerow(header_tip)
-writer_cue.writerow(header_cue)
+    writer_tip.writerow(header_tip)
+    writer_cue.writerow(header_cue)
 
-def close_files():
-    file_tip.close()
-    file_cue.close()
-    print("CSV files closed and saved.")
+    def close_files():
+        file_tip.close()
+        file_cue.close()
+        print("CSV files closed and saved.")
 
-atexit.register(close_files)
+    atexit.register(close_files)
 
 os.makedirs(worldmap_dir, exist_ok=True)
 npy_path_full = os.path.join(worldmap_dir, mask_npy)
@@ -149,32 +155,20 @@ tasked_targets, detected_targets, evaluated_targets = {}, {}, {}
 if plot_propagation:
     pl, earth_actor, earth_state = make_plotter_eci()
 
-    whales_plot_all = pv.PolyData(np.zeros((len(all_targets), 3)))
-    pl.add_points(whales_plot_all, color="red", point_size=8, render_points_as_spheres=True)
+    (earth_actor, earth_state,
+     whales_plot_all, whales_plot_evaluated, whales_plot_tasked,
+     cloud_tip_sats, cloud_cue_sats,
+     tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
+     sun_light,
+     eval_pts, task_pts) = reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=None)
 
-    eval_pts = np.full((n_whales, 3), np.nan)
-    whales_plot_evaluated = pv.PolyData(eval_pts.copy())
-    pl.add_points(whales_plot_evaluated, color="green", point_size=9, render_points_as_spheres=True)
-
-    task_pts = np.full((n_whales, 3), np.nan)
-    whales_plot_tasked = pv.PolyData(task_pts.copy())
-    pl.add_points(whales_plot_tasked, color="orange", point_size=10, render_points_as_spheres=True)
-
-    cloud_tip_sats = pv.PolyData(np.zeros((len(tip_actors), 3)))
-    pl.add_points(cloud_tip_sats, color="yellowgreen", point_size=20, render_points_as_spheres=True)
-
-    cloud_cue_sats = pv.PolyData(np.zeros((len(cue_actors), 3)))
-    pl.add_points(cloud_cue_sats, color="lightseagreen", point_size=15, render_points_as_spheres=True)
-
-    tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes = init_fov_layers_eci(pl, n_tip=len(tip_actors), n_cue=len(cue_actors), tip_fill_color="orange", cue_fill_color="cyan", tip_edge_color="white", cue_edge_color="white", opacity=0.35, line_width=2.0 )
-    sun_light = init_sun_light(pl)
-
-    pl.add_text("Tip and Cue Simulation", font_size=12)
     pl.show(cpos="xy", interactive_update=True, auto_close=False)
 
 
 elapsed_time, n_steps = 0.0, 0
 while elapsed_time <= sim_duration_seconds:
+
+    t_start = time.time()
 
     t_pykep = sim.local_time
     t_datetime = datetime(2000, 1, 1, 12, 0, 0) + timedelta(days=t_pykep.mjd2000)
@@ -195,22 +189,38 @@ while elapsed_time <= sim_duration_seconds:
     sun_vec_ecef = np.array([sun_pos_ecef.getX(), sun_pos_ecef.getY(), sun_pos_ecef.getZ()])
     illuminated_targets = daylight_mask(all_targets, sun_vec_ecef)
 
+    # Reset and resume orbit to prevent slowdown
+    if n_steps % reset_propagation_interval == 0 and n_steps > 0:
+        current_absdate = t0_orekit.shiftedBy(float(elapsed_time))
+        current_pykep = pk.epoch(t0_pykep.mjd2000 + elapsed_time / pk.DAY2SEC)
+
+        for actor in tip_actors + cue_actors:
+
+            reset_actor_propagator(actor, current_absdate, current_pykep,
+                                   satellite_mass, area_s, cr_s, area_d, cd,
+                                   trajectories, n_steps, show_orbits)
+
     for actor in tip_actors:
 
         n_detections = 0
         tip_detected = False
-        tip_illuminated = False
         eo_tools = eo_tools_dict[actor.name]
 
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
         tip_positions.append(r)
 
-        if not satellite_in_shadow(r_vec, sun_vec_eci, earth.getEquatorialRadius()):
+        FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, eul_ang_tip, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
+        FovPoints_tip.append(FovPoints)
+
+        try:
+            tip_illuminated = not satellite_in_shadow(r_vec, sun_vec_eci, earth.getEquatorialRadius())
+
+        except:
             tip_illuminated = True
+            print("!! Tip: failed to compute illumination state, set to True preventing exclusion.")
+            print(r_vec, sun_vec_eci, earth.getEquatorialRadius())
 
-            FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, eul_ang_tip, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
-            FovPoints_tip.append(FovPoints)
-
+        if tip_illuminated:
             for whale_idx, whale in all_targets.items():
                 if whale_idx not in illuminated_targets:
                     continue
@@ -225,7 +235,9 @@ while elapsed_time <= sim_duration_seconds:
                     w["tasking_delay"] = tasking_delay_tip
                     tasked_targets[whale_idx], detected_targets[whale_idx] = w, w
                     all_targets[whale_idx]["detected"] = 1
-                    log_tip_detection(writer_tip, t_datetime, actor, whale_idx, target_coord, r, v, in_footprint)
+
+                    if logging:
+                        log_tip_detection(writer_tip, t_datetime, actor, whale_idx, target_coord, r, v, in_footprint)
 
                     n_detections +=1
                     tip_detected = True
@@ -264,16 +276,20 @@ while elapsed_time <= sim_duration_seconds:
         n_evaluated = 0
         in_view = False
         cue_evaluated = False
-        cue_illuminated = False
         cue_busy = False
         eo_tools = eo_tools_dict[actor.name]
 
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
         cue_positions.append(r)
 
-        if not satellite_in_shadow(r_vec, sun_vec_eci, earth.getEquatorialRadius()):
+        try:
+            cue_illuminated = not satellite_in_shadow(r_vec, sun_vec_eci, earth.getEquatorialRadius())
+        except:
             cue_illuminated = True
+            print("!! Cue: failed to compute illumination state, set to True preventing exclusion.")
+            print(r_vec, sun_vec_eci, earth.getEquatorialRadius())
 
+        if cue_illuminated:
             for whale_idx, whale in tasked_targets.items():
                 if whale_idx not in illuminated_targets:
                     continue
@@ -302,16 +318,20 @@ while elapsed_time <= sim_duration_seconds:
                 eul_ang_cue = [0.0, 0.0, 0.0]
                 offnadir_angle_deg = 0.0
 
-            try:
-                FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, eul_ang_cue, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
-                FovPoints_cue.append(FovPoints)
+        try:
+            FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, eul_ang_cue, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
+            FovPoints_cue.append(FovPoints)
 
-            except:
-                print("!! Cue: target out of sight, continue to the next step")
-                eul_ang_cue = [0.0, 0.0, 0.0]
-                continue
+        except:
+            print("!! Cue: target out of sight, continue to the next step")
+            eul_ang_cue = [0.0, 0.0, 0.0]
+            continue
+
+        if cue_illuminated:
 
             for whale_idx, whale in all_targets.items():
+                if whale_idx not in illuminated_targets:
+                    continue
 
                 target_coord = (whale["lat"], whale["lon"], whale["alt"])
                 in_footprint = eo_tools.check_point_in_footprint(target_coord, FovPoints)
@@ -323,7 +343,9 @@ while elapsed_time <= sim_duration_seconds:
                     w["tasking_delay"] = tasking_delay_cue
                     detected_targets[whale_idx], tasked_targets[whale_idx] = w, w  # to keep track of history
                     all_targets[whale_idx]["detected"] = 2  # detected by cue
-                    log_cue_evaluation(writer_cue, t_datetime, actor, whale_idx, target_coord, r, v, offnadir_angle_deg, in_view, 1, yaw, pitch, roll)
+
+                    if logging:
+                        log_cue_evaluation(writer_cue, t_datetime, actor, whale_idx, target_coord, r, v, offnadir_angle_deg, in_view, 1, yaw, pitch, roll)
 
                     n_evaluated += 1
                     cue_evaluated = True
@@ -375,34 +397,37 @@ while elapsed_time <= sim_duration_seconds:
                     f"lon={float(target_coord[1]):.4f}, alt={float(target_coord[2]):.1f}"
                 )
 
+    t_mid  = time.time()
+
+    if n_steps % 10 == 0:
+        gc.collect()
 
     if plot_propagation:
-        update_earth_rotation_eci(earth_actor, t_datetime, earth_state)
-        update_sun_light_eci(sun_light, t_datetime)
+        if n_steps % reset_plot_interval == 0 and n_steps > 0:
+            last_theta = earth_state.get("last_theta", None)
+            (earth_actor, earth_state,
+             whales_plot_all, whales_plot_evaluated, whales_plot_tasked,
+             cloud_tip_sats, cloud_cue_sats,
+             tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
+             sun_light, eval_pts, task_pts) = reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=last_theta)
 
-        # satellites (ECI)
-        cloud_tip_sats.points = sats_to_points_eci(tip_positions)
-        cloud_cue_sats.points = sats_to_points_eci(cue_positions)
-
-        # all whales (fixed size)
-        whales_plot_all.points = whales_to_points_eci(all_targets, t_datetime)
-
-        # Evaluated whales
-        eval_pts = update_points_from_targets(eval_pts, evaluated_targets, t_datetime)
-        whales_plot_evaluated.points = eval_pts
-
-        # Tasked whales
-        task_pts = update_points_from_targets(task_pts, tasked_targets, t_datetime)
-        whales_plot_tasked.points = task_pts
-
-        # FoV polygons
-        update_fov_layers_eci(
-            tip_fill_meshes, tip_edge_meshes,
-            cue_fill_meshes, cue_edge_meshes,
-            FovPoints_tip, FovPoints_cue, t_datetime
+        eval_pts, task_pts = update_plotter(
+            pl,
+            earth_actor, earth_state,
+            sun_light,
+            cloud_tip_sats, cloud_cue_sats,
+            whales_plot_all, whales_plot_evaluated, whales_plot_tasked,
+            tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
+            t_datetime,
+            tip_positions, cue_positions,
+            all_targets, evaluated_targets, tasked_targets,
+            eval_pts, task_pts,
+            FovPoints_tip, FovPoints_cue
         )
 
-        pl.update()
+    t_end = time.time()
+    print(f"\t Time iteration: {t_mid - t_start:.2f}")
+    print(f"\t Time plot: {t_end - t_mid:.2f}")
 
     sim.advance_time(time_to_advance=sim_step_seconds, current_power_consumption_in_W=0.0)
     elapsed_time += sim_step_seconds
