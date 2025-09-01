@@ -24,11 +24,12 @@ from simulation.propagate_whales import update_whales, load_land_mask, generate_
 from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, log_tip_detection, log_cue_evaluation, satellite_in_shadow, daylight_mask, reset_actor_propagator
 
 show_constellation = False
-plot_propagation = True
+plot_propagation = False
 plot_footprints = False
 show_orbits = False
 generate_image = False
-logging = False
+logging = True
+verbose = True
 
 # Initialize Orekit
 vm = orekit.initVM()
@@ -174,6 +175,9 @@ while elapsed_time <= sim_duration_seconds:
     t_datetime = datetime(2000, 1, 1, 12, 0, 0) + timedelta(days=t_pykep.mjd2000)
     t_abs = AbsoluteDate(t_datetime.year, t_datetime.month, t_datetime.day, t_datetime.hour, t_datetime.minute, t_datetime.second + t_datetime.microsecond / 1e6, utc)
 
+    for actor in tip_actors + cue_actors:
+        actor.set_time(t_pykep)
+
     tip_positions, cue_positions, FovPoints_tip, FovPoints_cue = [], [], [], []
 
     # Update whales + cleanup
@@ -191,14 +195,9 @@ while elapsed_time <= sim_duration_seconds:
 
     # Reset and resume orbit to prevent slowdown
     if n_steps % reset_propagation_interval == 0 and n_steps > 0:
-        current_absdate = t0_orekit.shiftedBy(float(elapsed_time))
-        current_pykep = pk.epoch(t0_pykep.mjd2000 + elapsed_time / pk.DAY2SEC)
-
         for actor in tip_actors + cue_actors:
-
-            reset_actor_propagator(actor, current_absdate, current_pykep,
-                                   satellite_mass, area_s, cr_s, area_d, cd,
-                                   trajectories, n_steps, show_orbits)
+            reset_actor_propagator(actor, t_abs, t_pykep, satellite_mass, area_s, cr_s, area_d, cd, trajectories, n_steps, show_orbits)
+            print("reset success")
 
     for actor in tip_actors:
 
@@ -242,32 +241,33 @@ while elapsed_time <= sim_duration_seconds:
                     n_detections +=1
                     tip_detected = True
 
-        if tip_detected == False:
-            print(
-                f"{n_steps} {actor.name} | {t_datetime.isoformat()} | "
-                f"detections={n_detections} | illuminated={tip_illuminated}")
+        if verbose == True:
+            if tip_detected == False:
+                print(
+                    f"\t{actor.name} | {t_datetime.isoformat()} | "
+                    f"detections={n_detections} | illuminated={tip_illuminated}")
 
-        if tip_detected == True:
-            print(
-                f"{n_steps} {actor.name} | {t_datetime.isoformat()} | "
-                f"detections={n_detections} | illuminated={tip_illuminated} | {w['lat'], w['lon'], w['alt']}")
+            if tip_detected == True:
+                print(
+                    f"\t{actor.name} | {t_datetime.isoformat()} | "
+                    f"detections={n_detections} | illuminated={tip_illuminated} | {w['lat'], w['lon'], w['alt']}")
 
-        boresight_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_tip, t_datetime)
-        if boresight_hit is not None:
+            boresight_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_tip, t_datetime)
+            if boresight_hit is not None:
 
-            # Print where the tip satellite is positioned
-            tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime)
-            print(
-                f"\tTip position at lat={float(tip_lat):.4f}, "
-                f"lon={float(tip_lon):.4f}, alt={float(tip_alt):.1f}"
-            )
+                # Print where the tip satellite is positioned
+                tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime)
+                print(
+                    f"\t\tTip position at lat={float(tip_lat):.4f}, "
+                    f"lon={float(tip_lon):.4f}, alt={float(tip_alt):.1f}"
+                )
 
-            # Print where center ray intersects Earth
-            lat_b, lon_b, alt_b = boresight_hit
-            print(
-                f"\tTip boresight at lat={float(lat_b):.4f}, "
-                f"lon={float(lon_b):.4f}, alt={float(alt_b):.1f}"
-            )
+                # Print where center ray intersects Earth
+                lat_b, lon_b, alt_b = boresight_hit
+                print(
+                    f"\t\tTip boresight at lat={float(lat_b):.4f}, "
+                    f"lon={float(lon_b):.4f}, alt={float(alt_b):.1f}"
+                )
 
         if plot_footprints:
             all_fov_polygons.append(FovPoints)
@@ -365,37 +365,37 @@ while elapsed_time <= sim_duration_seconds:
                     if plot_footprints:
                         all_fov_polygons.append(FovPoints)
 
-
-        if cue_evaluated == True:
-            print(
-                f"{n_steps} {actor.name} | {t_datetime.isoformat()} | "
-                f"target={target_coord[:2]} | "
-                f"off nadir angle={offnadir_angle_deg:.2f}, in_view={in_view}, in_footprint={in_footprint}"
-            )
-
-        if cue_evaluated == False:
-            print(
-                f"{n_steps} {actor.name} | {t_datetime.isoformat()} | "
-                f"detections={n_evaluated} | illuminated={cue_illuminated}")
-
-        boresight_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_cue, t_datetime)
-        if boresight_hit is not None:
-            # Print where the tip satellite is positioned
-            cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime)
-            print(
-                f"\tCue position  at lat={float(cue_lat):.4f}, "
-                f"lon={float(cue_lon):.4f}, alt={float(cue_alt):.1f}"
-            )
-            lat_b, lon_b, alt_b = boresight_hit
-            print(
-                f"\tCue boresight at lat={float(lat_b):.4f}, "
-                f"lon={float(lon_b):.4f}, alt={float(alt_b):.1f}")
-
+        if verbose == True:
             if cue_evaluated == True:
                 print(
-                    f"\tTarget location at lat={float(target_coord[0]):.4f}, "
-                    f"lon={float(target_coord[1]):.4f}, alt={float(target_coord[2]):.1f}"
+                    f"\t{actor.name} | {t_datetime.isoformat()} | "
+                    f"target={target_coord[:2]} | "
+                    f"off nadir angle={offnadir_angle_deg:.2f}, in_view={in_view}, in_footprint={in_footprint}"
                 )
+
+            if cue_evaluated == False:
+                print(
+                    f"\t{actor.name} | {t_datetime.isoformat()} | "
+                    f"detections={n_evaluated} | illuminated={cue_illuminated}")
+
+            boresight_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_cue, t_datetime)
+            if boresight_hit is not None:
+                # Print where the tip satellite is positioned
+                cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime)
+                print(
+                    f"\t\tCue position  at lat={float(cue_lat):.4f}, "
+                    f"lon={float(cue_lon):.4f}, alt={float(cue_alt):.1f}"
+                )
+                lat_b, lon_b, alt_b = boresight_hit
+                print(
+                    f"\t\tCue boresight at lat={float(lat_b):.4f}, "
+                    f"lon={float(lon_b):.4f}, alt={float(alt_b):.1f}")
+
+                if cue_evaluated == True:
+                    print(
+                        f"\t\tTarget location at lat={float(target_coord[0]):.4f}, "
+                        f"lon={float(target_coord[1]):.4f}, alt={float(target_coord[2]):.1f}"
+                    )
 
     t_mid  = time.time()
 
@@ -426,13 +426,12 @@ while elapsed_time <= sim_duration_seconds:
         )
 
     t_end = time.time()
-    print(f"\t Time iteration: {t_mid - t_start:.2f}")
-    print(f"\t Time plot: {t_end - t_mid:.2f}")
+    print(f" {n_steps} Time iteration: {t_mid - t_start:.2f} | Time plot: {t_end - t_mid:.2f}")
 
     sim.advance_time(time_to_advance=sim_step_seconds, current_power_consumption_in_W=0.0)
     elapsed_time += sim_step_seconds
     n_steps += 1
-    print('\n')
+
 
 
 if show_orbits:

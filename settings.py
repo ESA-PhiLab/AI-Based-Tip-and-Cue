@@ -29,19 +29,20 @@ t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 # Simulation config
 sim_duration_hours = 24 * 3
-sim_step_seconds = 30
+sim_step_seconds = 10
 sim_duration_seconds = sim_duration_hours * 3600
-reset_propagation_interval = 10
-reset_plot_interval = 100
+
+reset_propagation_interval = 12
+reset_plot_interval = 10000
 
 # ================================================================================
 # SATELLITE
 
-nSats_tip = 1
+nSats_tip = 0
 nSats_cue = 1
 
-nPlanes_tip = 1
-nPlanes_cue = 1
+nPlanes_tip = 0
+nPlanes_cue = 2
 
 a_tip = 613e3 + R_earth        # Semi-major axis [m]
 e_tip = 0.0004466              # Eccentricity

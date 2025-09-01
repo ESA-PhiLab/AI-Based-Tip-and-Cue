@@ -139,19 +139,16 @@ def daylight_mask(targets, sun_vec):
 def reset_actor_propagator(actor, current_absdate, current_pykep,
                            satellite_mass, area_s, cr_s, area_d, cd,
                            trajectories=None, n_steps=0, show_orbits=False):
+
     r_vec, v_vec, _, _ = propagate_actor(actor, current_pykep, trajectories, n_steps, show_orbits)
 
-    # build PVCoordinates and CartesianOrbit
     pv = PVCoordinates(
         Vector3D(float(r_vec[0]), float(r_vec[1]), float(r_vec[2])),
         Vector3D(float(v_vec[0]), float(v_vec[1]), float(v_vec[2]))
     )
     cart_orbit = CartesianOrbit(pv, FramesFactory.getEME2000(), current_absdate, Constants.WGS84_EARTH_MU)
-
-    # convert Cartesian -> Keplerian
     kep_orbit = KeplerianOrbit(cart_orbit)
 
-    # extract elements
     new_elements = [
         kep_orbit.getA(),
         kep_orbit.getE(),
@@ -161,7 +158,6 @@ def reset_actor_propagator(actor, current_absdate, current_pykep,
         kep_orbit.getMeanAnomaly()
     ]
 
-    # re-init OrekitPropagator with updated elements
     new_propagator = OrekitPropagator(
         orbital_elements=new_elements,
         epoch=current_absdate,
@@ -169,13 +165,15 @@ def reset_actor_propagator(actor, current_absdate, current_pykep,
         area_s=area_s, cr_s=cr_s, area_d=area_d, cd=cd
     )
 
-    def new_orbit(t, p=new_propagator, t0=current_pykep):
-        pv = p.eph((t.mjd2000 - t0.mjd2000) * pk.DAY2SEC).getPVCoordinates()
+    def new_orbit(t, p=new_propagator, epoch_ref=current_pykep):
+        dt = (t.mjd2000 - epoch_ref.mjd2000) * pk.DAY2SEC
+        pv = p.eph(dt).getPVCoordinates()
         return (
             list(pv.getPosition().toArray()),
             list(pv.getVelocity().toArray())
         )
 
     ActorBuilder.set_custom_orbit(actor, new_orbit, current_pykep)
+
 
 
