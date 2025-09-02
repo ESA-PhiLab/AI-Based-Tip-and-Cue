@@ -6,17 +6,21 @@ import pykep as pk
 
 from org.orekit.time import AbsoluteDate
 from org.orekit.bodies import GeodeticPoint
-from org.orekit.frames import FramesFactory
-
 from org.orekit.utils import PVCoordinates, Constants
 from org.orekit.frames import FramesFactory
-from org.hipparchus.geometry.euclidean.threed import Vector3D
 from org.orekit.orbits import CartesianOrbit, KeplerianOrbit
+from org.hipparchus.geometry.euclidean.threed import Vector3D
 
 from custom_paseos.utils.point_transformation import Point_Geodetic2ECEF
 from custom_paseos.propagation.orekit_propagator import OrekitPropagator
-
 from paseos import ActorBuilder, SpacecraftActor
+
+
+import math
+from org.orekit.orbits import KeplerianOrbit, PositionAngleType
+from org.orekit.utils import Constants
+from org.orekit.frames import FramesFactory
+
 
 
 def init_eo_tools(actors, fov_angle, eul_angles):
@@ -139,32 +143,43 @@ def daylight_mask(targets, sun_vec):
 def reset_actor_propagator(actor, current_absdate, current_pykep,
                            satellite_mass, area_s, cr_s, area_d, cd,
                            trajectories=None, n_steps=0, show_orbits=False):
-
-    r_vec, v_vec, _, _ = propagate_actor(actor, current_pykep, trajectories, n_steps, show_orbits)
+    # --- 1) get current position and velocity ---
+    r_vec, v_vec, _, _ = propagate_actor(actor, current_pykep,
+                                         trajectories, n_steps, show_orbits)
 
     pv = PVCoordinates(
         Vector3D(float(r_vec[0]), float(r_vec[1]), float(r_vec[2])),
         Vector3D(float(v_vec[0]), float(v_vec[1]), float(v_vec[2]))
     )
-    cart_orbit = CartesianOrbit(pv, FramesFactory.getEME2000(), current_absdate, Constants.WGS84_EARTH_MU)
+
+    # --- 2) build CartesianOrbit ---
+    cart_orbit = CartesianOrbit(
+        pv, FramesFactory.getEME2000(),
+        current_absdate, Constants.WGS84_EARTH_MU
+    )
+
+    # --- 3) convert to KeplerianOrbit (for orbital elements) ---
     kep_orbit = KeplerianOrbit(cart_orbit)
 
-    new_elements = [
+    elements = [
         kep_orbit.getA(),
         kep_orbit.getE(),
         kep_orbit.getI(),
-        kep_orbit.getRightAscensionOfAscendingNode(),
         kep_orbit.getPerigeeArgument(),
-        kep_orbit.getMeanAnomaly()
+        kep_orbit.getRightAscensionOfAscendingNode(),
+        kep_orbit.getTrueAnomaly()
     ]
 
+    # --- 4) build new OrekitPropagator ---
     new_propagator = OrekitPropagator(
-        orbital_elements=new_elements,
+        orbital_elements=elements,
         epoch=current_absdate,
         satellite_mass=satellite_mass,
-        area_s=area_s, cr_s=cr_s, area_d=area_d, cd=cd
+        area_s=area_s, cr_s=cr_s,
+        area_d=area_d, cd=cd
     )
 
+    # --- 5) wrap it in a callback for the actor ---
     def new_orbit(t, p=new_propagator, epoch_ref=current_pykep):
         dt = (t.mjd2000 - epoch_ref.mjd2000) * pk.DAY2SEC
         pv = p.eph(dt).getPVCoordinates()
@@ -173,7 +188,29 @@ def reset_actor_propagator(actor, current_absdate, current_pykep,
             list(pv.getVelocity().toArray())
         )
 
-    ActorBuilder.set_custom_orbit(actor, new_orbit, current_pykep)
+    # --- 6) assign new orbit to the actor ---
+    ActorBuilder.set_custom_orbit(actor, lambda t, p=new_propagator: (
+        list(p.eph((t.mjd2000 - current_pykep.mjd2000) * pk.DAY2SEC).getPVCoordinates().getPosition().toArray()),
+        list(p.eph((t.mjd2000 - current_pykep.mjd2000) * pk.DAY2SEC).getPVCoordinates().getVelocity().toArray())
+    ), current_pykep)
 
 
 
+def convert_M_to_lv(orbital_elements, epoch):
+    """
+    Convert mean anomaly (deg) in orbital_elements to true anomaly (deg).
+    orbital_elements = [a, e, i, RAAN, argp, M_deg]
+    """
+    a, e, i, raan, argp, M_deg = orbital_elements
+    inertialFrame = FramesFactory.getEME2000()
+
+    # Temporary orbit with mean anomaly
+    temp_orbit = KeplerianOrbit(
+        a, e, i,
+        argp, raan, math.radians(M_deg),
+        PositionAngleType.MEAN,
+        inertialFrame, epoch, Constants.WGS84_EARTH_MU
+    )
+    lv_deg = math.degrees(temp_orbit.getTrueAnomaly())
+
+    return [a, e, i, argp, raan, lv_deg]
