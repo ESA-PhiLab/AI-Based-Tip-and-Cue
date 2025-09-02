@@ -19,7 +19,7 @@ from org.orekit.forces.gravity import ThirdBodyAttraction
 from org.orekit.forces.gravity import OceanTides, SolidTides
 from org.orekit.forces.radiation import SolarRadiationPressure
 from org.orekit.forces.radiation import IsotropicRadiationSingleCoefficient
-from org.orekit.bodies import CelestialBodyFactory, OneAxisEllipsoid 
+from org.orekit.bodies import CelestialBodyFactory, OneAxisEllipsoid
 from org.orekit.models.earth.atmosphere import NRLMSISE00
 from org.orekit.models.earth.atmosphere.data import CssiSpaceWeatherData
 from org.orekit.forces.drag import DragForce, IsotropicDrag
@@ -29,80 +29,115 @@ from org.orekit.data import DataProvidersManager, DirectoryCrawler
 from java.io import File
 from orekit import JArray_double
 
-
-import pykep as pk
-
-import os, sys
-
 import numpy as np
+import sys, os
+
+
+from org.orekit.propagation.sampling import PythonOrekitFixedStepHandler, OrekitStepNormalizer
+
+class StepHandler(PythonOrekitFixedStepHandler):
+    def __init__(self, step_sec):
+        super(StepHandler, self).__init__()
+        self.step_sec = step_sec
+        self.states = []
+
+    def init(self, s0, t, step):
+        pass
+
+    def handleStep(self, currentState, isLast):
+        # Save each sampled state
+        self.states.append(currentState)
+
+def propagate_with_fixed_step(propagator, initialDate, duration_sec, step_sec):
+    """Run once, sample all states at fixed step_sec."""
+    handler = StepHandler(step_sec)
+    normalizer = OrekitStepNormalizer(step_sec, handler)
+    propagator.setMasterMode(normalizer)
+    propagator.propagate(initialDate.shiftedBy(duration_sec))
+    return handler.states
+
 
 class OrekitPropagator:
-    minStep = 1e-3
-    maxstep = 86400.0
+    """This class serves as a wrapper to orekit. It initializes the orekit
+    virtual machine and provides a method to propagate a satellite orbit.
+
+    It follows the example from the orekit documentation:
+
+    https://gitlab.orekit.org/orekit-labs/python-wrapper/-/blob/master/examples/Propagation.ipynb
+    """
+
+    # Constants for the numerical propagator, see orekit docs for details
+    minStep = 0.0001
+    maxstep = 1000.0
     initStep = 60.0
-    positionTolerance = 1e-13
+    positionTolerance = 1e-3
 
     def __init__(self, orbital_elements: list, epoch: AbsoluteDate, satellite_mass: float, area_s: float, cr_s: float, area_d: float, cd: float) -> None:
+        """Initialize the propagator.
+
+        Args:
+            orbital_elements (list): List of orbital elements.
+            epoch (AbsoluteDate): Epoch of the orbit.
+            satellite_mass (float): Mass of the satellite.
+        """
+
+        # Inertial frame where the satellite is defined
         inertialFrame = FramesFactory.getEME2000()
-        a, e, i, raan, argp, M = orbital_elements
+
+        # Unpack the orbital elements
+        a, e, i, omega, raan, lv = orbital_elements
+
         self.initialDate = epoch
 
-        # build temporary orbit with mean anomaly
-        temp_orbit = KeplerianOrbit(
-            a, e, i, argp, raan, M,
-            PositionAngleType.MEAN,
-            inertialFrame, epoch, Constants.WGS84_EARTH_MU
-        )
-
-        # then extract the true anomaly
-        true_anomaly = temp_orbit.getTrueAnomaly()
-
+        # Orbit construction as Keplerian
         initialOrbit = KeplerianOrbit(
-            a, e, i, argp, raan, true_anomaly,
+            a,
+            e,
+            i,
+            omega,
+            raan,
+            lv,
             PositionAngleType.TRUE,
-            inertialFrame, epoch, Constants.WGS84_EARTH_MU
+            inertialFrame,
+            epoch,
+            Constants.WGS84_EARTH_MU,
         )
-		
-        #position = Vector3D(-5585307.01800000, -3984841.87800000, -81.7070000000000)  # [m]
-        #velocity = Vector3D(-563.668065000000, 804.376494000000, 7559.36260000000)  # [m/s]
-        #pv = PVCoordinates(position, velocity)
-        #initialOrbit = CartesianOrbit(pv, FramesFactory.getEME2000(), epoch, Constants.WGS84_EARTH_MU)
 
+        # Set up the numerical propagator tolerance
         tolerances = NumericalPropagator.tolerances(
             self.positionTolerance, initialOrbit, initialOrbit.getType()
         )
 
-        #integrator = DormandPrince853Integrator(
-        #    self.minStep,
-        #    self.maxstep,
-        #    JArray_double.cast_(tolerances[0]),
-        #    JArray_double.cast_(tolerances[1]),
-        #)
-
+        # Set up the numerical integrator
         integrator = DormandPrince853Integrator(
             self.minStep,
             self.maxstep,
-            1e-13,
-            1e-13,
+            JArray_double.cast_(
+                tolerances[0]
+            ),  # Double array of doubles needs to be casted in Python
+            JArray_double.cast_(tolerances[1]),
         )
         integrator.setInitialStepSize(self.initStep)
 
-        initialState = SpacecraftState(initialOrbit, satellite_mass)
+        # Define the initial state of the spacecraft
+        self.initialState = SpacecraftState(initialOrbit, satellite_mass)
 
+
+        # Set up the numerical propagator
         self.propagator_num = NumericalPropagator(integrator)
         self.propagator_num.setOrbitType(OrbitType.CARTESIAN)
-        self.propagator_num.setInitialState(initialState)
+        self.propagator_num.setInitialState(self.initialState)
 
-        gravityProvider = GravityFieldFactory.getNormalizedProvider(100, 100)
+        self.currentState = self.propagator_num.getInitialState()
+        self.currentDate = self.initialDate
+
+        # Add the force models
+        gravityProvider = GravityFieldFactory.getNormalizedProvider(10, 10)
         self.propagator_num.addForceModel(
             HolmesFeatherstoneAttractionModel(
                 FramesFactory.getITRF(IERSConventions.IERS_2010, True), gravityProvider
             )
         )
-
-      # propagator.addForceModel(
-        #self.propagator_num.addForceModel(OceanTides(FramesFactory.getEME2000()))
-        #self.propagator_num.addForceModel(SolidTides(FramesFactory.getEME2000()))
 
         moon = CelestialBodyFactory.getMoon()
         self.propagator_num.addForceModel(ThirdBodyAttraction(moon))
@@ -121,30 +156,36 @@ class OrekitPropagator:
         self.propagator_num.addForceModel(srp_model)
 
         # Set up space weather and atmosphere
+        # Set up space weather and atmosphere
         site_packages = next(p for p in sys.path if "site-packages" in p)
-        orekit_data_path = os.path.join(site_packages, "orekitdata")  # ✅ correct
-
-        print(orekit_data_path)
-
+        orekit_data_path = os.path.join(site_packages, "orekitdata")
         orekitData = File(orekit_data_path)
+
         manager = DataContext.getDefault().getDataProvidersManager()
         manager.addProvider(DirectoryCrawler(orekitData))
         utc = TimeScalesFactory.getUTC()
-        #cssi = CssiSpaceWeatherData(CssiSpaceWeatherData.DEFAULT_SUPPORTED_NAMES, manager, utc)
+        # cssi = CssiSpaceWeatherData(CssiSpaceWeatherData.DEFAULT_SUPPORTED_NAMES, manager, utc)
         cssiSpaceWeatherData = CssiSpaceWeatherData("SpaceWeather-All-v1.2.txt")
-        #atmosphere = NRLMSISE00(cssiSpaceWeatherData, sun, wgs84_ellipsoid).withSwitch(9, -1)
+        # atmosphere = NRLMSISE00(cssiSpaceWeatherData, sun, wgs84_ellipsoid).withSwitch(9, -1)
         atmosphere = NRLMSISE00(cssiSpaceWeatherData, sun, wgs84_ellipsoid)
         self.atmosphere = atmosphere
-        #import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         drag_model = DragForce(atmosphere, IsotropicDrag(area_d, cd))
         self.propagator_num.addForceModel(drag_model)
 
-
     def eph(self, time_since_epoch_in_seconds: float):
-        state = self.propagator_num.propagate(
-            self.initialDate, self.initialDate.shiftedBy(time_since_epoch_in_seconds)
-        )
-        return state
+        targetDate = self.initialDate.shiftedBy(time_since_epoch_in_seconds)
+
+        # Only propagate forward from current date
+        if targetDate.compareTo(self.currentDate) >= 0:
+            self.currentState = self.propagator_num.propagate(targetDate)
+            self.currentDate = targetDate
+        else:
+            # If asked to go backwards in time, must restart
+            self.currentState = self.propagator_num.propagate(targetDate)
+            self.currentDate = targetDate
+
+        return self.currentState
 
     def propagate_at_fixed_times(self, duration_sec: float, step_sec: float = 10):
         t_array = [
@@ -156,13 +197,13 @@ class OrekitPropagator:
         for date in t_array:
             state = self.propagator_num.propagate(date)
             wgs84_ellipsoid = OneAxisEllipsoid(
-            Constants.WGS84_EARTH_EQUATORIAL_RADIUS,
-            Constants.WGS84_EARTH_FLATTENING,
-            FramesFactory.getITRF(IERSConventions.IERS_2010, True),
+                Constants.WGS84_EARTH_EQUATORIAL_RADIUS,
+                Constants.WGS84_EARTH_FLATTENING,
+                FramesFactory.getITRF(IERSConventions.IERS_2010, True),
             )
             sun = CelestialBodyFactory.getSun()
-            #eclipse_detector = EclipseDetector(sun, 696000.0, wgs84_ellipsoid)
-            #in_shadow = eclipse_detector.g(state) <= 0  # True se in ombra
+            # eclipse_detector = EclipseDetector(sun, 696000.0, wgs84_ellipsoid)
+            # in_shadow = eclipse_detector.g(state) <= 0  # True se in ombra
             orbit = KeplerianOrbit(state.getOrbit())
             pv = state.getPVCoordinates()
             pos = pv.getPosition()
@@ -178,10 +219,7 @@ class OrekitPropagator:
                 'raan': orbit.getRightAscensionOfAscendingNode(),
                 'pa': orbit.getPerigeeArgument(),
                 'ta': orbit.getTrueAnomaly(),
-                'density': dens  # 👈 Densità salvata
-                #'in_sunlight': not in_shadow  # 👈 aggiunto
+                'density': dens  #
+                # 'in_sunlight': not in_shadow
             })
         return results
-
-
-

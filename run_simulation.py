@@ -8,6 +8,9 @@ from datetime import datetime, timedelta
 import csv, atexit
 import time
 import gc
+import pandas as pd
+from openpyxl import Workbook, load_workbook
+import os
 
 from orekit.pyhelpers import setup_orekit_curdir
 
@@ -21,15 +24,48 @@ from custom_paseos.utils.point_transformation import Point_ECI2Geodetic
 from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter
 from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets,  init_whales, build_land_mask
-from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, log_tip_detection, log_cue_evaluation, satellite_in_shadow, daylight_mask, reset_actor_propagator
+from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, log_tip_detection, log_cue_evaluation, satellite_in_shadow, daylight_mask, reset_actor_propagator, convert_M_to_lv
 
 show_constellation = False
 plot_propagation = False
 plot_footprints = False
 show_orbits = False
 generate_image = False
-logging = True
-verbose = True
+logging = False
+verbose = False
+
+log_file_name = "new2.xlsx"
+
+def init_logger(filepath="simulation_log.xlsx"):
+    """Ensure a valid Excel log file exists with headers."""
+    if not os.path.exists(filepath) or not filepath.endswith(".xlsx"):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Log"
+        ws.append(["n_steps", "lat", "lon", "alt"])  # headers
+        wb.save(filepath)
+    else:
+        # Try to open; if corrupted, recreate
+        try:
+            _ = load_workbook(filepath)
+        except Exception:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Log"
+            ws.append(["n_steps", "lat", "lon", "alt"])
+            wb.save(filepath)
+    return filepath
+
+def log_step(filepath, n_steps, lat, lon, alt):
+    """Append one row to the Excel log file."""
+    wb = load_workbook(filepath)
+    ws = wb.active
+    ws.append([n_steps, lat, lon, alt])
+    wb.save(filepath)
+
+log_file = init_logger(log_file_name)
+
+
 
 # Initialize Orekit
 vm = orekit.initVM()
@@ -69,17 +105,22 @@ if show_constellation:
 # Create actors
 tip_actors, cue_actors = [], []
 for planet in all_planets:
+
+    orbital_elements_true = convert_M_to_lv(planet.orbital_elements, t0_orekit)
+
     propagator = OrekitPropagator(
-        orbital_elements=planet.orbital_elements,
+        orbital_elements=orbital_elements_true,
         epoch=t0_orekit,
         satellite_mass=satellite_mass,
         area_s=area_s, cr_s=cr_s, area_d=area_d, cd=cd
     )
+
     actor = ActorBuilder.get_actor_scaffold(name=planet.name, actor_type=SpacecraftActor, epoch=t0_pykep)
     ActorBuilder.set_custom_orbit(actor, lambda t, p=propagator: (
         list(p.eph((t.mjd2000 - t0_pykep.mjd2000) * pk.DAY2SEC).getPVCoordinates().getPosition().toArray()),
         list(p.eph((t.mjd2000 - t0_pykep.mjd2000) * pk.DAY2SEC).getPVCoordinates().getVelocity().toArray())
     ), t0_pykep)
+
     ActorBuilder.set_central_body(actor, pk.planet.jpl_lp("earth"), radius=R_earth)
 
     (tip_actors if "Tip" in planet.name else cue_actors).append(actor)
@@ -197,7 +238,7 @@ while elapsed_time <= sim_duration_seconds:
     if n_steps % reset_propagation_interval == 0 and n_steps > 0:
         for actor in tip_actors + cue_actors:
             reset_actor_propagator(actor, t_abs, t_pykep, satellite_mass, area_s, cr_s, area_d, cd, trajectories, n_steps, show_orbits)
-            print("reset success")
+            # print("reset success")
 
     for actor in tip_actors:
 
@@ -282,6 +323,9 @@ while elapsed_time <= sim_duration_seconds:
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
         cue_positions.append(r)
 
+        cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
+        cue_lat, cue_lon, cue_alt = float(cue_lat), float(cue_lon), float(cue_alt)  # meters above ellipsoid
+
         try:
             cue_illuminated = not satellite_in_shadow(r_vec, sun_vec_eci, earth.getEquatorialRadius())
         except:
@@ -350,13 +394,12 @@ while elapsed_time <= sim_duration_seconds:
                     n_evaluated += 1
                     cue_evaluated = True
 
-                    satellite_lat, satellite_lon, satellite_alt = Point_ECI2Geodetic(r[0], r[1], r[2],t_datetime).flatten()
-                    satellite_lat, satellite_lon, satellite_alt = float(satellite_lat), float(satellite_lon), float(satellite_alt)  # meters above ellipsoid
+
 
                     if generate_image:
                         print("Generate image")
                         DN255_rgb_offnadir, DN255_rgb_sunglint, radiance_sunglint, DN255_combined = generate_image(
-                            img_path, satellite, satellite_lat, satellite_lon, satellite_alt, target_coord[0], target_coord[1],
+                            img_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1],
                             target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
 
                     evaluated_targets[whale_idx] = w
@@ -365,6 +408,14 @@ while elapsed_time <= sim_duration_seconds:
                     if plot_footprints:
                         all_fov_polygons.append(FovPoints)
 
+        log_step(
+            log_file,
+            n_steps,
+            lat=cue_lat,
+            lon=cue_lon,
+            alt=cue_alt
+        )
+        
         if verbose == True:
             if cue_evaluated == True:
                 print(
@@ -381,7 +432,7 @@ while elapsed_time <= sim_duration_seconds:
             boresight_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_cue, t_datetime)
             if boresight_hit is not None:
                 # Print where the tip satellite is positioned
-                cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime)
+
                 print(
                     f"\t\tCue position  at lat={float(cue_lat):.4f}, "
                     f"lon={float(cue_lon):.4f}, alt={float(cue_alt):.1f}"
@@ -426,13 +477,13 @@ while elapsed_time <= sim_duration_seconds:
         )
 
     t_end = time.time()
+
+
     print(f" {n_steps} Time iteration: {t_mid - t_start:.2f} | Time plot: {t_end - t_mid:.2f}")
 
     sim.advance_time(time_to_advance=sim_step_seconds, current_power_consumption_in_W=0.0)
     elapsed_time += sim_step_seconds
     n_steps += 1
-
-
 
 if show_orbits:
     plot_orbits(trajectories)

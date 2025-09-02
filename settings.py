@@ -32,7 +32,7 @@ sim_duration_hours = 24 * 3
 sim_step_seconds = 10
 sim_duration_seconds = sim_duration_hours * 3600
 
-reset_propagation_interval = 12
+reset_propagation_interval = 100000
 reset_plot_interval = 10000
 
 # ================================================================================
