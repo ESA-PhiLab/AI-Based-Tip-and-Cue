@@ -39,10 +39,10 @@ reset_plot_interval = 10000
 # SATELLITE
 
 nSats_tip = 0
-nSats_cue = 1
+nSats_cue = 4
 
 nPlanes_tip = 0
-nPlanes_cue = 2
+nPlanes_cue = 4
 
 a_tip = 613e3 + R_earth        # Semi-major axis [m]
 e_tip = 0.0004466              # Eccentricity

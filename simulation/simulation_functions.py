@@ -140,62 +140,6 @@ def daylight_mask(targets, sun_vec):
 
     return illuminated
 
-def reset_actor_propagator(actor, current_absdate, current_pykep,
-                           satellite_mass, area_s, cr_s, area_d, cd,
-                           trajectories=None, n_steps=0, show_orbits=False):
-    # --- 1) get current position and velocity ---
-    r_vec, v_vec, _, _ = propagate_actor(actor, current_pykep,
-                                         trajectories, n_steps, show_orbits)
-
-    pv = PVCoordinates(
-        Vector3D(float(r_vec[0]), float(r_vec[1]), float(r_vec[2])),
-        Vector3D(float(v_vec[0]), float(v_vec[1]), float(v_vec[2]))
-    )
-
-    # --- 2) build CartesianOrbit ---
-    cart_orbit = CartesianOrbit(
-        pv, FramesFactory.getEME2000(),
-        current_absdate, Constants.WGS84_EARTH_MU
-    )
-
-    # --- 3) convert to KeplerianOrbit (for orbital elements) ---
-    kep_orbit = KeplerianOrbit(cart_orbit)
-
-    elements = [
-        kep_orbit.getA(),
-        kep_orbit.getE(),
-        kep_orbit.getI(),
-        kep_orbit.getPerigeeArgument(),
-        kep_orbit.getRightAscensionOfAscendingNode(),
-        kep_orbit.getTrueAnomaly()
-    ]
-
-    # --- 4) build new OrekitPropagator ---
-    new_propagator = OrekitPropagator(
-        orbital_elements=elements,
-        epoch=current_absdate,
-        satellite_mass=satellite_mass,
-        area_s=area_s, cr_s=cr_s,
-        area_d=area_d, cd=cd
-    )
-
-    # --- 5) wrap it in a callback for the actor ---
-    def new_orbit(t, p=new_propagator, epoch_ref=current_pykep):
-        dt = (t.mjd2000 - epoch_ref.mjd2000) * pk.DAY2SEC
-        pv = p.eph(dt).getPVCoordinates()
-        return (
-            list(pv.getPosition().toArray()),
-            list(pv.getVelocity().toArray())
-        )
-
-    # --- 6) assign new orbit to the actor ---
-    ActorBuilder.set_custom_orbit(actor, lambda t, p=new_propagator: (
-        list(p.eph((t.mjd2000 - current_pykep.mjd2000) * pk.DAY2SEC).getPVCoordinates().getPosition().toArray()),
-        list(p.eph((t.mjd2000 - current_pykep.mjd2000) * pk.DAY2SEC).getPVCoordinates().getVelocity().toArray())
-    ), current_pykep)
-
-
-
 def convert_M_to_lv(orbital_elements, epoch):
     """
     Convert mean anomaly (deg) in orbital_elements to true anomaly (deg).

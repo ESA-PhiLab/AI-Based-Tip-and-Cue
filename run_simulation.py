@@ -24,48 +24,15 @@ from custom_paseos.utils.point_transformation import Point_ECI2Geodetic
 from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter
 from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets,  init_whales, build_land_mask
-from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, log_tip_detection, log_cue_evaluation, satellite_in_shadow, daylight_mask, reset_actor_propagator, convert_M_to_lv
+from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, log_tip_detection, log_cue_evaluation, satellite_in_shadow, daylight_mask, convert_M_to_lv
 
 show_constellation = False
-plot_propagation = False
+plot_propagation = True
 plot_footprints = False
 show_orbits = False
 generate_image = False
 logging = False
 verbose = False
-
-log_file_name = "new2.xlsx"
-
-def init_logger(filepath="simulation_log.xlsx"):
-    """Ensure a valid Excel log file exists with headers."""
-    if not os.path.exists(filepath) or not filepath.endswith(".xlsx"):
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Log"
-        ws.append(["n_steps", "lat", "lon", "alt"])  # headers
-        wb.save(filepath)
-    else:
-        # Try to open; if corrupted, recreate
-        try:
-            _ = load_workbook(filepath)
-        except Exception:
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Log"
-            ws.append(["n_steps", "lat", "lon", "alt"])
-            wb.save(filepath)
-    return filepath
-
-def log_step(filepath, n_steps, lat, lon, alt):
-    """Append one row to the Excel log file."""
-    wb = load_workbook(filepath)
-    ws = wb.active
-    ws.append([n_steps, lat, lon, alt])
-    wb.save(filepath)
-
-log_file = init_logger(log_file_name)
-
-
 
 # Initialize Orekit
 vm = orekit.initVM()
@@ -407,14 +374,6 @@ while elapsed_time <= sim_duration_seconds:
 
                     if plot_footprints:
                         all_fov_polygons.append(FovPoints)
-
-        log_step(
-            log_file,
-            n_steps,
-            lat=cue_lat,
-            lon=cue_lon,
-            alt=cue_alt
-        )
         
         if verbose == True:
             if cue_evaluated == True:
