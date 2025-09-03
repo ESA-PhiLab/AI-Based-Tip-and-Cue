@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 import numpy as np
 import math
 
-
 # ================================================================================
 # SIMULATION SETTINGS
 
@@ -29,10 +28,11 @@ t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 # Simulation config
 sim_duration_hours = 24 * 3
-sim_step_seconds = 10
 sim_duration_seconds = sim_duration_hours * 3600
+sim_step_seconds = 1
 
-reset_propagation_interval = 100000
+plot_interval = 10
+print_interval = 10
 reset_plot_interval = 10000
 
 # ================================================================================
@@ -107,14 +107,15 @@ swath_cue = 13.1 * 10**3  # m
 fov_tip = math.degrees(2 * math.atan(swath_tip / (2 * (a_tip - R_earth))) )         # deg
 fov_cue = math.degrees(2 * math.atan(swath_cue / (2 * (a_cue - R_earth))) )         # deg
 
+GSD0_tip = 10       # m
+GSD0_cue = 0.31     # m
+
 try:
     satellite = get_satellite(img_path, csv_path)
-    GSD = 500 # get_spatial_res(img_path, csv_path)
 
 except:
     print("Got default settings")
     satellite = 'WV3'
-    GSD = 0.5
 
 # ================================================================================
 # WAVES
@@ -170,7 +171,7 @@ bools['generate_radiation'] = generate_radiation
 sensor_characteristics = {}
 sensor_characteristics['resolution'] = resolution
 sensor_characteristics['sample_count'] = sample_count
-sensor_characteristics['GSD'] = GSD
+sensor_characteristics['GSD'] = GSD0_cue
 
 whale_propagation = {}
 whale_propagation["speed_mean"] = speed_mean
