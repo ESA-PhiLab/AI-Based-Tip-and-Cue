@@ -1,284 +1,168 @@
-""" Module containing the functions to generate rotation matrix between reference frames 
-Three Reference Frames have been identified:
+"""
+Attitude/geometry transforms between IRF (ECI), LVLH, and BRF.
 
-LVLH (Local Vertical Local Horizon) :
-- x-axis in the direction of the spacecraft's velocity vector;
-- z-axis in the opposite direction of the spacecraft's position vector;
-- y-axis completes the right triad, with a direction opposite to the angular momentum vector h;
+Frame conventions (planet-observation LVLH):
+- LVLH z-axis: points toward planet center (nadir)  => ẑ = - r̂
+- LVLH y-axis: opposite orbital angular momentum     => ŷ = - ĥ,  where h = r × v
+- LVLH x-axis: velocity projected onto the local horizon
+               (i.e., the along-track direction)     => x̂ = normalize( v - (v·ẑ) ẑ )
 
-Note: 
-
-The LVLH reference frame has been defined in such a way that the z-axis points toward the center of the planet (usefull for Planet-Observation)
-
-BRF (Body Reference Frame) has been designed as a reference frame nominally aligned with the LVLH.
-
-IRF (Inertial Reference Frame) is instead nominally the Earth Centered Inertial reference frame. 
+Euler angles:
+- Always handled as (roll, pitch, yaw).
+- Convention: intrinsic ZYX rotation (first roll about x, then pitch about y, then yaw about z).
+- Composition: R = Rz(yaw) @ Ry(pitch) @ Rx(roll).
 """
 
-
 import numpy as np
+# ------------------------- helpers -------------------------
 
-def RotMat_IRF_to_LVLH(r,v):
-    
-    """ The function creates the transformation matrix from IRF to LVLH. 
-    Args:
-    - r (np.ndarray) [3x1] : position vector of the spacecraft's CG expressed in the IRF;
-    - v (np.ndarray) [3x1] : velocity vector of the spacecraft's CG expressed in the IRF;
-    Returns
-    - R (np.ndarray) [3x3] : Rotation Matrix from IRF to LVLH
-    Note: The rotation matrix from LVLH to IRF can be obtained through a transposition of the R matrix 
-    """
-    #import pdb; pdb.set_trace()
-    r = r.flatten()
-    v = v.flatten()
-    z_dir = - r / np.linalg.norm(r)
-    
-    # LVLH x-axis: Along velocity direction
-    x_dir = v / np.linalg.norm(v)
+def _normalize(vec, eps=1e-12):
+    v = np.asarray(vec, dtype=float).flatten()
+    n = np.linalg.norm(v)
+    if n < eps:
+        raise ValueError("Zero (or near-zero) magnitude encountered during normalization.")
+    return v / n
 
-    # LVLH y-axis: Completes the right-handed frame
-    y_dir = np.cross(z_dir, x_dir)
-    y_dir = y_dir / np.linalg.norm(y_dir)
-    
-    T = np.array([x_dir, y_dir, z_dir])
-    #import pdb; pdb.set_trace()
+def _asvec3(a):
+    v = np.asarray(a, dtype=float).flatten()
+    if v.size != 3:
+        raise ValueError("Expected a 3-element vector.")
+    return v
+
+# --------------------- core rotation matrices ---------------------
+
+def RotMat_IRF_to_LVLH(r, v):
+    """Rotation matrix from IRF (ECI) to LVLH."""
+    r = _asvec3(r)
+    v = _asvec3(v)
+
+    z_dir = -_normalize(r)
+    h = np.cross(r, v)
+    y_dir = -_normalize(h)
+
+    v_proj = v - np.dot(v, z_dir) * z_dir
+    try:
+        x_dir = _normalize(v_proj)
+    except ValueError:
+        x_dir = _normalize(np.cross(y_dir, z_dir))
+
+    y_dir = _normalize(np.cross(z_dir, x_dir))
+    T = np.vstack((x_dir, y_dir, z_dir))
     return T
 
-
 def RotMat_LVLH_to_BRF_by_eul(eul_ang):
-    
-    """ The function creates the transformation matrix from LVLH to BRF. 
-    Args:
-    - euler_angles (np.ndarray) [3x1] : array of euler angles in the order roll-pitch-yaw;
-    Returns
-    - T (np.ndarray) [3x3] : Rotation Matrix from IRF to LVLH
-    Note: the rotation matrix has been built according to a 3-2-1 matrix of rotations
     """
-    roll_deg, pitch_deg, yaw_deg = eul_ang 
+    Rotation matrix LVLH -> BRF using intrinsic ZYX (roll, pitch, yaw).
+    Input order: (roll_deg, pitch_deg, yaw_deg).
+    """
+    roll_deg, pitch_deg, yaw_deg = eul_ang
     roll = np.radians(roll_deg)
     pitch = np.radians(pitch_deg)
     yaw = np.radians(yaw_deg)
 
-    A = np.array(
-    [
-      [1,0,0],
-      [0, np.cos(roll), np.sin(roll)],
-      [0, -np.sin(roll), np.cos(roll)],
-      
-    ]
-    )
-
-    B = np.array(
-    [
-    [np.cos(pitch), 0, -np.sin(pitch)],
-    [0, 1, 0],
-    [np.sin(pitch), 0, np.cos(pitch)],
-    ]
-    )
-
-    C = np.array(
-    [
-    [np.cos(yaw), np.sin(yaw), 0],
-    [-np.sin(yaw), np.cos(yaw), 0],
-    [0, 0, 1],
-    ]
-    )
-
-    T = A @ B @ C
-
-    return T
-
-
-def RotMat_by_quat(q):
-    """ The function creates the transformation matrix from IRF to BRF using quaternion coming up from the quaternion kinematic propagation. 
-    Args:
-    - q (np.ndarray) [4x1] : quaternion vector relating the BRF to the IRF [NB: scalar last convention adopted!]
-    Returns
-    - R (np.ndarray) [3x3] : Rotation Matrix from BRF to LVLH
-    Note: The rotation matrix from IRF to BRF can be obtained through a transposition of the R matrix.
-
-    Rationale: given the quaternion relating Reference Frame 1 (RF1) to Reference Frame 2 (RF2) following a scalar last convetion q = [q1 q2 q3 q0], 
-    it is possible to define the rotation matrix between the two reference frames as:
-
-                |1 - 2*(2*q2 + 2*q3)     2*(q1*q2 - q0*q3)    2*(q1*q3 + q0*q2)|
-    T_RF1_RF2 = |2*(q1*q2 + q0*q3)       1-2*(2*q1 + 2*q3)    2*(q2*q3 - q0*q1)|
-                |2*(q1*q3 - q0*q2)       2*(q2*q3 + q0*q1)    1-2*(2*q1 + 2*q2)| 
-
-    """
-
-    q1, q2, q3, q0 = q
-    T = np.array([
-    [1 - 2*(q2**2 + q3**2),  2*(q1*q2 - q0*q3),  2*(q1*q3 + q0*q2)],
-    [2*(q1*q2 + q0*q3),  1 - 2*(q1**2 + q3**2),  2*(q2*q3 - q0*q1)],
-    [2*(q1*q3 - q0*q2),  2*(q2*q3 + q0*q1),  1 - 2*(q1**2 + q2**2)]
+    Rx = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, np.cos(roll), -np.sin(roll)],
+        [0.0, np.sin(roll),  np.cos(roll)]
     ])
 
+    Ry = np.array([
+        [ np.cos(pitch), 0.0, np.sin(pitch)],
+        [ 0.0,           1.0, 0.0          ],
+        [-np.sin(pitch), 0.0, np.cos(pitch)]
+    ])
+
+    Rz = np.array([
+        [np.cos(yaw), -np.sin(yaw), 0.0],
+        [np.sin(yaw),  np.cos(yaw), 0.0],
+        [0.0,          0.0,         1.0]
+    ])
+
+    return Rz @ Ry @ Rx  # intrinsic ZYX
+
+def RotMat_by_quat(q):
+    """Rotation matrix IRF -> BRF from quaternion [qx,qy,qz,qw] (scalar last)."""
+    q = np.asarray(q, dtype=float).flatten()
+    if q.size != 4:
+        raise ValueError("Quaternion must have 4 elements [qx, qy, qz, qw].")
+    qx, qy, qz, qw = q
+    n2 = qx*qx + qy*qy + qz*qz + qw*qw
+    if n2 < 1e-16:
+        raise ValueError("Zero-norm quaternion.")
+    s = 2.0 / n2
+
+    xx, yy, zz = qx*qx*s, qy*qy*s, qz*qz*s
+    xy, xz, yz = qx*qy*s, qx*qz*s, qy*qz*s
+    wx, wy, wz = qw*qx*s, qw*qy*s, qw*qz*s
+
+    T = np.array([
+        [1.0 - (yy + zz),     xy - wz,            xz + wy],
+        [xy + wz,             1.0 - (xx + zz),    yz - wx],
+        [xz - wy,             yz + wx,            1.0 - (xx + yy)]
+    ])
     return T
 
+# --------------------- vector transforms ---------------------
 
 def IRF2LVLH(u, r, v):
-    """  
-    Description: The function creates a vector trasposed in the LVLH reference frame from the IRF.    
-    Note: The function uses the "RotMat_IRF_to_LVLH" 
-    """
-
-    T = RotMat_IRF_to_LVLH(r,v)
-
-    u =  T @ u
-
-    return u
+    return RotMat_IRF_to_LVLH(r, v) @ _asvec3(u)
 
 def LVLH2IRF(u, r, v):
-    """  
-    Description: The function creates a vector trasposed in the IRF reference frame from the LVLH.    
-    Note: The function uses the "RotMat_IRF_to_LVLH" 
-    """
-    T = RotMat_IRF_to_LVLH(r, v)
+    return RotMat_IRF_to_LVLH(r, v).T @ _asvec3(u)
 
-    u = np.linalg.inv(T) @ u
+def LVLH2BRF_eul(u, eul_ang):
+    return RotMat_LVLH_to_BRF_by_eul(eul_ang) @ _asvec3(u)
 
-    return u
+def BRF2LVLH_eul(u, eul_ang):
+    return RotMat_LVLH_to_BRF_by_eul(eul_ang).T @ _asvec3(u)
 
-def LVLH2BRF_eul(u,eul_ang):
-    """  
-    Description: The function creates a vector trasposed in the BRF reference frame from the LVLH.    
-    Note: - The function uses the "RotMat_LVLH_to_BRF_by_EUL
-          - Eul angle in deg" 
-    """
-    T = RotMat_LVLH_to_BRF_by_eul(eul_ang)
+def IRF2BRF_quat(u, q):
+    return RotMat_by_quat(q) @ _asvec3(u)
 
-    u = T @ u
+def BRF2IRF_quat(u, q):
+    return RotMat_by_quat(q).T @ _asvec3(u)
 
-    return u
+def RotMat_IRF_to_BRF(r, v, eul_ang):
+    return RotMat_LVLH_to_BRF_by_eul(eul_ang) @ RotMat_IRF_to_LVLH(r, v)
 
+def IRF2BRF_eul(u, r, v, eul_ang):
+    return RotMat_IRF_to_BRF(r, v, eul_ang) @ _asvec3(u)
 
-def BRF2LVLH_eul(u,eul_ang):
-    """ 
-    Description: The function creates a vector trasposed in the LVLH Reference Frame from the BRF.    
-    Note: - The function uses the "RotMat_LVLH_to_BRF_by_EUL
-          - Eul angle in deg" 
-    """
-    T = np.linalg.inv(RotMat_LVLH_to_BRF_by_eul(eul_ang))
+def BRF2IRF_eul(u, r, v, eul_ang):
+    return RotMat_IRF_to_BRF(r, v, eul_ang).T @ _asvec3(u)
 
-    u = T @ u
-
-    return u
-
-def IRF2BRF_quat(u,q):
-
-    """  
-    Description: The function creates a vector trasposed in the BRF from the IRF.    
-    Note: The function uses the "RotMat_LVLH_to_BRF_b" 
-    """
-    T = RotMat_by_quat(q)
-
-    u = T @ u,
-
-    return u
-
-def BRF2IRF_quat(u,q):
-    """  
-    Description: The function creates a vector trasposed in the BRF from the IRF.    
-    Note: The function uses the "RotMat_LVLH_to_BRF_b" 
-    """
-    T = np.linalg.inv(RotMat_by_quat(q))
-
-    u = T @ u,
-
-    return u
-
-def RotMat_IRF_to_BRF(r,v,eul_ang):
-
-    """  
-    Description: The function creates the rotation matrix from IRF to the BRF
-    Note: 
-          - The function uses the "RotMat_LVLH_to_BRF_by_eul(r,v) and "RotMat_IRF_to_LVLH(r, v);
-          - The eul_ang are in deg;
-    """
-    #print(f"r.shape: {r.shape}, v.shape: {v.shape}")
-    T1 = RotMat_IRF_to_LVLH(r,v)
-    T2 = RotMat_LVLH_to_BRF_by_eul(eul_ang)
-
-    T = T2 @ T1
-
-    
-    return T
-
-def IRF2BRF_eul(u,r,v,eul_ang):
-    
-    """  
-    Description: The function transposes a vector in the BRF from the IRF
-    Note: 
-          - The function uses the "RotMat_LVLH_to_BRF_by_eul(r,v) and "RotMat_IRF_to_LVLH(r, v);
-          - The eul_ang are in deg;
-    """
-#    print(f"T.Shape: {T.shape}")
-#    print(f"u.shape: {u.shape}")  # Deve essere (3,) o (3,1)
-    
-    T = RotMat_IRF_to_BRF(r,v,eul_ang)
-    #import pdb; pdb.set_trace()
-    u = T @ u
-    
-    return u
-
-def BRF2IRF_eul(u,r,v,eul_ang):
-    
-    """  
-    Description: The function transposes a vector in the BRF from the IRF
-    Note: 
-          - The function uses the "RotMat_LVLH_to_BRF_by_eul(r,v) and "RotMat_IRF_to_LVLH(r, v);
-          - The eul_ang are in deg;
-    """
-    #import pdb; pdb.set_trace()
-    T = np.linalg.inv(RotMat_IRF_to_BRF(r,v,eul_ang))
-    u = T @ u
-    return u
+# --------------------- Euler extraction ---------------------
 
 def rotation_matrix_to_ypr(R):
     """
-    Convert a 3x3 rotation matrix into yaw, pitch, roll (ZYX order).
-
-    Parameters
-    ----------
-    R : np.ndarray
-        3x3 rotation matrix
-
-    Returns
-    -------
-    yaw : float
-        Rotation around Z axis [rad]
-    pitch : float
-        Rotation around Y axis [rad]
-    roll : float
-        Rotation around X axis [rad]
+    Extract (roll, pitch, yaw) from R = Rz(yaw) @ Ry(pitch) @ Rx(roll).
+    Returns radians.
     """
+    R = np.asarray(R, dtype=float)
+    if R.shape != (3, 3):
+        raise ValueError("Input must be 3x3")
 
-    if not (R.shape == (3, 3)):
-        raise ValueError("Input must be a 3x3 rotation matrix")
+    # pitch from -asin(r20)
+    r20 = R[2, 0]
 
-    # Check for gimbal lock (pitch = ±90°)
-    if np.isclose(R[2, 0], -1.0):
+    if np.isclose(r20, -1.0, atol=1e-12):
         pitch = np.pi / 2
-        yaw = np.arctan2(R[0, 1], R[0, 2])
-        roll = 0.0
-    elif np.isclose(R[2, 0], 1.0):
+        roll = np.arctan2(R[0, 1], R[0, 2])
+        yaw = 0.0
+        return roll, pitch, yaw
+
+    if np.isclose(r20, 1.0, atol=1e-12):
         pitch = -np.pi / 2
-        yaw = np.arctan2(-R[0, 1], -R[0, 2])
-        roll = 0.0
-    else:
-        pitch = -np.arcsin(R[2, 0])
-        cos_pitch = np.cos(pitch)
-        roll = np.arctan2(R[2, 1] / cos_pitch, R[2, 2] / cos_pitch)
-        yaw = np.arctan2(R[1, 0] / cos_pitch, R[0, 0] / cos_pitch)
+        roll = np.arctan2(-R[0, 1], -R[0, 2])
+        yaw = 0.0
+        return roll, pitch, yaw
 
-    return yaw, pitch, roll
+    pitch = np.arcsin(-r20)
+    cp = np.cos(pitch)
 
-
-
-
-
-
-
+    roll = np.arctan2(R[2, 1] / cp, R[2, 2] / cp)
+    yaw  = np.arctan2(R[1, 0] / cp, R[0, 0] / cp)
+    return roll, pitch, yaw
 
 
 

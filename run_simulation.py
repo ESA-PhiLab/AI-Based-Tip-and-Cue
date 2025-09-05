@@ -29,7 +29,7 @@ from simulation.logging import init_excel_log, log_tip_detection, log_cue_evalua
 
 show_constellation = False
 plot_propagation = False
-plot_footprints = False
+plot_footprints = True
 show_orbits = False
 generate_image = False
 logging = True
@@ -94,12 +94,10 @@ for planet in all_planets:
 
     (tip_actors if "Tip" in planet.name else cue_actors).append(actor)
 
-z_brf = np.array([0.0, 0.0, 1.0])
 eul_ang_tip = [0.0, 0.0, 0.0]
 eul_ang_cue = [0.0, 0.0, 0.0]
 offnadir_cue_deg = 0.0
 offnadir_tip_deg = 0.0
-yaw, pitch, roll = 0.0, 0.0, 0.0
 phi_rad = 0.0
 all_fov_polygons = []
 
@@ -139,7 +137,7 @@ if logging:
 
     header_cue = ["target_id", "date", "actor", "target_lat", "target_lon", "target_alt",
                   "x", "y", "z", "vx", "vy", "vz",
-                  "offnadir_deg", "GSD_m", "in_view", "in_footprint", "yaw", "pitch", "roll"]
+                  "offnadir_deg", "GSD_m", "in_view", "in_footprint", "roll", "pitch", "yaw"]
 
     writer_tip = init_excel_log("sim_output_tip.xlsx", header_tip, sheet_name="TipLog")
     writer_cue = init_excel_log("sim_output_cue.xlsx", header_cue, sheet_name="CueLog")
@@ -205,10 +203,18 @@ while elapsed_time <= sim_duration_seconds:
         eo_tools = eo_tools_dict[actor.name]
 
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
+        tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
+        tip_lat, tip_lon, tip_alt = float(tip_lat), float(tip_lon), float(tip_alt)  # meters above ellipsoid
         tip_positions.append(r)
+
+        centerray_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_tip, t_datetime).flatten()
+        ctr_lat, ctr_lon, ctr_alt = centerray_hit.flatten()
 
         FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, eul_ang_tip, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
         FovPoints_tip.append(FovPoints)
+
+        if plot_footprints:
+            all_fov_polygons.append(FovPoints)
 
         h_m = float(np.linalg.norm(np.array(r))) - R_earth
         gsd_tip = gsd_offnadir(GSD0_tip, h_m, offnadir_tip_deg)
@@ -236,45 +242,18 @@ while elapsed_time <= sim_duration_seconds:
                     w["tasking_delay"] = tasking_delay_tip
                     tasked_targets[whale_idx], detected_targets[whale_idx] = w, w
                     all_targets[whale_idx]["detected"] = 1
+                    detect_idx = whale_idx
 
                     if logging:
-                        log_tip_detection(writer_tip, t_datetime, actor, whale_idx, target_coord, r, v, offnadir_tip_deg,
-                                          gsd_tip, in_footprint)
-
+                        log_tip_detection(writer_tip, t_datetime, actor, whale_idx, target_coord, r, v, offnadir_tip_deg, gsd_tip, in_footprint)
 
                     n_detections +=1
                     tip_detected = True
 
         if verbose == True and n_steps % print_interval == 0:
-            if tip_detected == False:
-                print(
-                    f"\t{actor.name} | {t_datetime.isoformat()} | "
-                    f"detections={n_detections} | illuminated={tip_illuminated} | gsd={gsd_tip}")
-
+            print(f"\t\t{actor.name} | {t_datetime.isoformat()} | lat={tip_lat:.1f}, lon={tip_lon:.1f}, alt={tip_alt:.1f} | illuminated={tip_illuminated}")
             if tip_detected == True:
-                print(
-                    f"\t{actor.name} | {t_datetime.isoformat()} | "
-                    f"detections={n_detections} | illuminated={tip_illuminated} | gsd={gsd_tip} | {w['lat'], w['lon'], w['alt']}")
-
-            boresight_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_tip, t_datetime)
-            if boresight_hit is not None:
-
-                # Print where the tip satellite is positioned
-                tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime)
-                print(
-                    f"\t\tTip position at lat={float(tip_lat):.4f}, "
-                    f"lon={float(tip_lon):.4f}, alt={float(tip_alt):.1f}"
-                )
-
-                # Print where center ray intersects Earth
-                lat_b, lon_b, alt_b = boresight_hit
-                print(
-                    f"\t\tTip boresight at lat={float(lat_b):.4f}, "
-                    f"lon={float(lon_b):.4f}, alt={float(alt_b):.1f}"
-                )
-
-        if plot_footprints:
-            all_fov_polygons.append(FovPoints)
+                print(f"\t\tTarget: idx={detect_idx} | gsd={gsd_tip:.2f} | lat={w['lat']:.1f}, lon={w['lon']:.1f}, alt={w['alt']:.1f}" )
 
     for actor in cue_actors:
         n_evaluated = 0
@@ -284,10 +263,9 @@ while elapsed_time <= sim_duration_seconds:
         eo_tools = eo_tools_dict[actor.name]
 
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
-        cue_positions.append(r)
-
         cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
-        cue_lat, cue_lon, cue_alt = float(cue_lat), float(cue_lon), float(cue_alt)  # meters above ellipsoid
+        cue_lat, cue_lon, cue_alt = float(cue_lat), float(cue_lon), float(cue_alt)
+        cue_positions.append(r)
 
         try:
             cue_illuminated = not satellite_in_shadow(r_vec, sun_vec_eci, earth.getEquatorialRadius())
@@ -311,21 +289,18 @@ while elapsed_time <= sim_duration_seconds:
 
                     if in_view:
 
-                        offnadir_cue_deg, vec_brf = eo_tools.off_nadir_pointing_angle(z_brf=z_brf, r_eci=r_vec, v_eci=v_vec, target_geodetic=target_coord, eul_angles_deg=[0.0, 0.0, 0.0], time=t_datetime)
+                        offnadir_cue_deg, vec_brf = eo_tools.off_nadir_pointing_angle(r_eci=r_vec, v_eci=v_vec, target_geodetic=target_coord, eul_angles_deg=eul_ang_cue, time=t_datetime )
 
                         if offnadir_cue_deg <= offnadir_max:
 
-                            yaw, pitch, roll = eo_tools.pointing_attitude(z_brf, vec_brf, phi_rad, [0.0, 0.0, 0.0], in_view)
-                            eul_ang_cue = [yaw, pitch, roll]
+                            eul_ang_cue = eo_tools.pointing_attitude(vec_brf, phi_rad, eul_ang_cue, in_view)
 
-                            print("!! Cue: Target in view", whale_idx, " | Set yaw, pitch, roll to:", eul_ang_cue)
+                            print(f"!! Cue: Target in view {whale_idx} | Set roll, pitch, yaw to {eul_ang_cue[0]:.1f}, {eul_ang_cue[1]:.1f}, {eul_ang_cue[2]:.1f} deg")
                             cue_busy = True
 
                             # ----------------------------
                             h_m = float(np.linalg.norm(np.array(r))) - R_earth
                             gsd_cue = gsd_offnadir(GSD0_cue, h_m, offnadir_cue_deg)
-
-                            print(f"\t Off nadir {offnadir_cue_deg:.2f}, GSD {gsd_cue:.3f}")
 
                             # -------------------------------------
 
@@ -334,6 +309,9 @@ while elapsed_time <= sim_duration_seconds:
                 offnadir_cue_deg = 0.0
 
         try:
+            centerray_hit = eo_tools.get_CenterRay_Intersection_Attitude(r_vec, v_vec, eul_ang_cue, t_datetime).flatten()
+            ctr_lat, ctr_lon, ctr_alt = centerray_hit
+
             FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, eul_ang_cue, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
             FovPoints_cue.append(FovPoints)
 
@@ -362,10 +340,11 @@ while elapsed_time <= sim_duration_seconds:
                     w["tasking_delay"] = tasking_delay_cue
                     detected_targets[whale_idx], tasked_targets[whale_idx] = w, w  # to keep track of history
                     all_targets[whale_idx]["detected"] = 2  # detected by cue
+                    eval_idx = whale_idx
 
                     if logging:
                         log_cue_evaluation(writer_cue, t_datetime, actor, whale_idx, target_coord, r, v,
-                                           offnadir_cue_deg, gsd_cue, in_view, in_footprint, yaw, pitch, roll)
+                                           offnadir_cue_deg, gsd_cue, in_view, in_footprint, eul_ang_cue[0], eul_ang_cue[1], eul_ang_cue[2])
 
                     n_evaluated += 1
                     cue_evaluated = True
@@ -383,36 +362,9 @@ while elapsed_time <= sim_duration_seconds:
                         all_fov_polygons.append(FovPoints)
         
         if verbose == True and n_steps % print_interval == 0:
+            print(f"\t\t{actor.name} | {t_datetime.isoformat()} | lat={cue_lat:.1f}, lon={cue_lon:.1f}, alt={cue_alt:.1f} | illuminated={cue_illuminated}")
             if cue_evaluated == True:
-                print(
-                    f"\t{actor.name} | {t_datetime.isoformat()} | "
-                    f"target={target_coord[:2]} | "
-                    f"off nadir angle={offnadir_cue_deg:.2f}, in_view={in_view}, in_footprint={in_footprint} | gsd={gsd_cue}"
-                )
-
-            if cue_evaluated == False:
-                print(
-                    f"\t{actor.name} | {t_datetime.isoformat()} | "
-                    f"detections={n_evaluated} | illuminated={cue_illuminated} | gsd={gsd_cue}")
-
-            boresight_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_cue, t_datetime)
-            if boresight_hit is not None:
-                # Print where the tip satellite is positioned
-
-                print(
-                    f"\t\tCue position  at lat={float(cue_lat):.4f}, "
-                    f"lon={float(cue_lon):.4f}, alt={float(cue_alt):.1f}"
-                )
-                lat_b, lon_b, alt_b = boresight_hit
-                print(
-                    f"\t\tCue boresight at lat={float(lat_b):.4f}, "
-                    f"lon={float(lon_b):.4f}, alt={float(alt_b):.1f}")
-
-                if cue_evaluated == True:
-                    print(
-                        f"\t\tTarget location at lat={float(target_coord[0]):.4f}, "
-                        f"lon={float(target_coord[1]):.4f}, alt={float(target_coord[2]):.1f}"
-                    )
+                print(f"\t\tTarget: idx={eval_idx} | off nadir angle={offnadir_cue_deg:.1f} | gsd={gsd_cue:.2f} | lat={w['lat']:.1f}, lon={w['lon']:.1f}, alt={w['alt']:.1f}" )
 
     t_mid  = time.time()
 
@@ -445,7 +397,7 @@ while elapsed_time <= sim_duration_seconds:
     t_end = time.time()
 
     if n_steps % print_interval == 0:
-        print(f" {n_steps} Time iteration: {t_mid - t_start:.2f} | Time plot: {t_end - t_mid:.2f}")
+        print(f" {n_steps} Time iteration: {t_mid - t_start:.1f} | Time plot: {t_end - t_mid:.1f}")
 
     sim.advance_time(time_to_advance=sim_step_seconds, current_power_consumption_in_W=0.0)
     elapsed_time += sim_step_seconds

@@ -9,12 +9,12 @@ def build_constellation(params, label, t0_pykep):
         return get_constellation(
             params["a"], params["e"], params["i"], params["RAAN"],
             params["argp"], params["M"], params["nSats"], params["nPlanes"],
-            t0_pykep, label, verbose=True
+            t0_pykep, label, verbose=False
         )
     return [], [], []
 
 def get_constellation(a, e, i_deg, RAAN_deg, argp_deg, M_deg,
-                      nSats, nPlanes, t0, sat_name, verbose=True):
+                      nSats, nPlanes, t0, sat_name, verbose=False):
     # ---extra-params----------------------------------------------------------------------------------------------------
     W_area = 360.0       # RAAN span (deg) across all planes
     # -------------------------------------------------------------------------------------------------------------------

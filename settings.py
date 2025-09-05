@@ -29,12 +29,12 @@ R_earth = 6371e3
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 # Simulation config
-sim_duration_hours = 0.1
+sim_duration_hours = 0.33
 sim_duration_seconds = sim_duration_hours * 3600
-sim_step_seconds = 1
+sim_step_seconds = 60
 
-plot_interval = 10
-print_interval = 10
+plot_interval = 1
+print_interval = 1
 reset_plot_interval = 100000000
 
 # ================================================================================

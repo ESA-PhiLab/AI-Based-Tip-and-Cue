@@ -109,83 +109,90 @@ class EOTools:
     # R_p (Polar Radius) = 6356752 m;
 
     def _find_intersection_in_Geodetic(self, ray_direction, eul_ang, time, r, v):
-        r = np.asarray(r).flatten()
-        v = np.asarray(v).flatten()
-        # Allocation of the spacraft ECI coordinates
-        x_ECI, y_ECI, z_ECI = r[0], r[1], r[2]
-        # Cration of an empty collctor of FOV lines directions in ECI
-        d_in_ECI = []
+        """
+        Intersect BRF rays with the WGS-84 ellipsoid.
+        - Transform BRF rays -> ECI (via attitude) -> ECEF (at 'time').
+        - Solve quadratic in ECEF against (x^2/a^2 + y^2/a^2 + z^2/b^2 = 1).
+        - Convert intersection ECEF -> geodetic (lat, lon, alt).
+        """
 
+        # Ensure 1D vectors
+        r = np.asarray(r, dtype=float).flatten()
+        v = np.asarray(v, dtype=float).flatten()
 
-        # Transformation of the FOV direction from Body Reference Frame to the ECI referenc frame
+        # WGS-84 semi-axes (exact)
+        a = 6378137.0
+        b = 6356752.314245
+
+        # Satellite position in ECEF at this epoch
+        x_ecef, y_ecef, z_ecef = pm.eci2ecef(r[0], r[1], r[2], time)
+        r_ecef = np.array([x_ecef, y_ecef, z_ecef], dtype=float)
+
+        # Build ray directions in ECEF
+        d_ecef_list = []
         for ray in ray_direction:
-            new_vector = BRF2IRF_eul(ray, r, v, eul_ang)
-            d_in_ECI.append(new_vector)
+            # BRF -> IRF (ECI)
+            d_eci = BRF2IRF_eul(np.asarray(ray, dtype=float).flatten(), r, v, eul_ang)
+            d_eci = d_eci / np.linalg.norm(d_eci)
 
-        # Procedure to get the footprint edge-points with the geodetic referenc model WGS84
+            # ECI -> ECEF (pure rotation at 'time')
+            dx_ecef, dy_ecef, dz_ecef = pm.eci2ecef(d_eci[0], d_eci[1], d_eci[2], time)
+            d_ecef = np.array([dx_ecef, dy_ecef, dz_ecef], dtype=float)
+            d_ecef /= np.linalg.norm(d_ecef)
+            d_ecef_list.append(d_ecef)
+
         intersections = []
-        for d in d_in_ECI:
-            dx, dy, dz = d
-            # Coefficients of the solutions obtained from the intersection of the FOV directions with the quadratic ellipsoid mathematical function
-            A = (dx ** 2 / R_e ** 2) + (dy ** 2 / R_e ** 2) + (dz ** 2 / R_p ** 2)
-            B = 2 * ((x_ECI * dx / R_e ** 2) + (y_ECI * dy / R_e ** 2) + (z_ECI * dz / R_p ** 2))
-            C = (x_ECI ** 2 / R_e ** 2) + (y_ECI ** 2 / R_e ** 2) + (z_ECI ** 2 / R_p ** 2) - 1
+        for d_ecef in d_ecef_list:
+            dx, dy, dz = d_ecef
 
-            # Computation of the Delta for the solution
-            delta = B ** 2 - 4 * A * C
+            # Quadratic against ellipsoid in ECEF
+            A = (dx * dx) / (a * a) + (dy * dy) / (a * a) + (dz * dz) / (b * b)
+            B = 2.0 * ((r_ecef[0] * dx) / (a * a) + (r_ecef[1] * dy) / (a * a) + (r_ecef[2] * dz) / (b * b))
+            C = (r_ecef[0] * r_ecef[0]) / (a * a) + (r_ecef[1] * r_ecef[1]) / (a * a) + (r_ecef[2] * r_ecef[2]) / (
+                        b * b) - 1.0
 
+            delta = B * B - 4 * A * C
             if delta < 0:
-                continue  # No sol obtained
-            # Solutions obtained
-            t1 = (-B + np.sqrt(delta)) / (2 * A)
-            t2 = (-B - np.sqrt(delta)) / (2 * A)
-
-            # We select the min t in [t1;t2] value since related to the smallest-distance intersection point with respect the spacecraft
-            if min(t1, t2) > 0:
-                t = min(t1, t2)
-            else:
-                t = max(t1, t2)
-
-            if t < 0:
                 continue
 
-            # Get and append the intersection points
-            intersection_ECI = r + t * d
-            intersection_Geod = Point_ECI2Geodetic(intersection_ECI[0], intersection_ECI[1], intersection_ECI[2], time)
-            intersections.append(intersection_Geod)
+            sqrt_delta = np.sqrt(delta)
+            t1 = (-B + sqrt_delta) / (2 * A)
+            t2 = (-B - sqrt_delta) / (2 * A)
 
-        # print("\t\t Intersections: ", intersections)
+            # Nearest positive root
+            t_candidates = [t for t in (t1, t2) if t > 0]
+            if not t_candidates:
+                continue
+            t = min(t_candidates)
 
-        # Check on the number of intersections! If the intersection points are lower than 4, this means that the FOV does not fully intersect the Earth! (added != 1, so it works for boresight ray)
+            # Intersection point in ECEF
+            p_ecef = r_ecef + t * d_ecef
+
+            # ECEF -> geodetic (WGS-84)
+            lat, lon, alt = pm.ecef2geodetic(p_ecef[0], p_ecef[1], p_ecef[2])
+
+            intersections.append([lat, lon, alt])
+
         if not (len(intersections) == 4 or len(intersections) == 1):
             raise ValueError("Not enough intersections point")
 
-        # Return a matrix with the intersection points
-        intersections_matrix = np.column_stack(intersections)
+        # Stack to 3xN
+        intersections_matrix = np.array(intersections, dtype=float).T  # [lat; lon; alt]
+
+        # Handle longitude wrap-around if FOV spans the dateline
         lats = intersections_matrix[0, :]
         lons = intersections_matrix[1, :]
         alts = intersections_matrix[2, :]
 
-        # (wrap-around check)
         max_lon_diff = np.max([abs(l1 - l2) for l1 in lons for l2 in lons])
-
         if max_lon_diff > 300:
-            # Shifting Point FOV1
             lons_fov1 = np.array([lon - 360 if lon > 0 else lon for lon in lons])
-            fov1 = np.vstack((lats, lons_fov1, alts))  # shape (3, 4)
-
-            # Shifting Point FOV2
+            fov1 = np.vstack((lats, lons_fov1, alts))
             lons_fov2 = np.array([lon + 360 if lon < 0 else lon for lon in lons])
-            fov2 = np.vstack((lats, lons_fov2, alts))  # shape (3, 4)
-
-            # Vertical Concatenation
+            fov2 = np.vstack((lats, lons_fov2, alts))
             intersections_matrix = np.hstack((fov1, fov2))
-
-            # ====================== ADDED ============================================
             print("\t Crossed longitude border, picked largest FOV")
             intersections_matrix = self.pick_west_or_east(intersections_matrix)
-
-            # ==================== ADDED ======================================================
 
         return intersections_matrix
 
@@ -283,7 +290,7 @@ class EOTools:
 
         return df
 
-    def off_nadir_pointing_angle(self, z_brf, r_eci, v_eci, target_geodetic, eul_angles_deg, time):
+    def off_nadir_pointing_angle(self, r_eci, v_eci, target_geodetic, eul_angles_deg, time):
         # geodetic target → ECI
         P_target_eci = Point_Geodetic2ECI(*target_geodetic, time)
         # Distance Computation
@@ -291,10 +298,12 @@ class EOTools:
         # ECI → BRF
         vec_brf = IRF2BRF_eul(vec_eci, r_eci, v_eci, eul_angles_deg)
         # Compute the angle
-        z_brf = z_brf / np.linalg.norm(z_brf)
+        boresight_brf = np.array([0.0, 0.0, 1.0])
+        boresight_brf /= np.linalg.norm(boresight_brf)
+
         vec_brf = vec_brf / np.linalg.norm(vec_brf)
 
-        dot_product = np.clip(z_brf.T @ vec_brf, -1.0, 1.0)
+        dot_product = np.clip(boresight_brf @ vec_brf, -1.0, 1.0)
         angle_rad = np.arccos(dot_product)
         angle_deg = np.rad2deg(angle_rad)
 
@@ -309,32 +318,34 @@ class EOTools:
         in_sight = el > el_min
         return in_sight
 
-    def pointing_attitude(self, l1, l2, phi_rad, attitude, is_in_view):
-
+    def pointing_attitude(self, target_vec_brf, phi_rad, prev_attitude, is_in_view):
         if not is_in_view:
-            return np.nan, np.nan, np.nan
+            return [0.0, 0.0, 0.0]
 
-        l1 = np.asarray(l1).flatten()
-        l2 = np.asarray(l2).flatten()
-        l1 = l1 / np.linalg.norm(l1)
-        l2 = l2 / np.linalg.norm(l2)
+        l1 = np.array([0.0, 0.0, 1.0])  # boresight reference (down)
+        l2 = np.asarray(target_vec_brf).flatten()
+        l1 /= np.linalg.norm(l1)
+        l2 /= np.linalg.norm(l2)
+
         dot = np.clip(np.dot(l1, l2), -1.0, 1.0)
-        cross = np.cross(l1, l2)
+        cross = np.cross(l2, l1)  # <<< FIX HERE
+
         cos_phi_2 = np.cos(phi_rad / 2)
         sin_phi_2 = np.sin(phi_rad / 2)
+
         numerator_vec = cross * cos_phi_2 + (l1 + l2) * sin_phi_2
         numerator_scalar = (1 + dot) * cos_phi_2
         denominator = np.sqrt(2 * (1 + dot))
+
         q_vec = numerator_vec / denominator
         q_scalar = numerator_scalar / denominator
-        vec_fin = np.concatenate((q_vec, [q_scalar]))
-        Rot_SRFa_SRFp = RotMat_by_quat(vec_fin)
-        Rot_LVLH2SRFp = Rot_SRFa_SRFp @ RotMat_LVLH_to_BRF_by_eul(attitude)
-        yaw, pitch, roll = rotation_matrix_to_ypr(Rot_LVLH2SRFp)
-        yaw = np.degrees(yaw)
-        pitch = np.degrees(pitch)
-        roll = np.degrees(roll)
-        return yaw, pitch, roll
+        quat = np.concatenate((q_vec, [q_scalar]))
+
+        Rot_SRFa_SRFp = RotMat_by_quat(quat)
+        Rot_LVLH2SRFp = RotMat_LVLH_to_BRF_by_eul(prev_attitude) @ Rot_SRFa_SRFp
+
+        roll, pitch, yaw = rotation_matrix_to_ypr(Rot_LVLH2SRFp)
+        return [np.degrees(roll), np.degrees(pitch), np.degrees(yaw)]
 
     @staticmethod
     def check_fov_in_polygon(df, simulation_time, fov_vertices):
@@ -599,10 +610,56 @@ class EOTools:
         return FovPoints
 
     def get_CenterRay_Intersection(self, r_vec, v_vec, eul_ang, t_datetime):
-        boresight_ray_BRF = np.array([0.0, 0.0, 1.0])  # Ray pointing to the middle of the image
+        """
+        Intersect the center ray defined as the *geodetic nadir* (ellipsoid normal),
+        so its hit matches the satellite's geodetic lat/lon and alt=0 (to numerical precision).
+        """
+        # Satellite geodetic (lat, lon, h) at epoch
+        sat_lat, sat_lon, _ = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
 
+        # WGS-84 a,b
+        a = 6378137.0
+        b = 6356752.314245
+
+        # Surface point (alt=0) in ECEF at sub-satellite geodetic lat/lon
+        x0, y0, z0 = pm.geodetic2ecef(sat_lat, sat_lon, 0.0)
+
+        # Ellipsoid normal at that surface point (outward); geodetic nadir is inward
+        n_ecef = np.array([x0 / (a * a), y0 / (a * a), z0 / (b * b)], dtype=float)
+        n_ecef /= np.linalg.norm(n_ecef)
+        nadir_ecef = -n_ecef  # point toward Earth
+
+        # Express this ray in BRF coordinates so the generic pipeline can be reused
+        # ECEF -> ECI (direction) at the same epoch
+        nx_eci, ny_eci, nz_eci = pm.ecef2eci(nadir_ecef[0], nadir_ecef[1], nadir_ecef[2], t_datetime)
+        n_eci = np.array([nx_eci, ny_eci, nz_eci], dtype=float)
+        n_eci /= np.linalg.norm(n_eci)
+
+        # ECI direction -> LVLH (components); with eul_ang=[0,0,0], BRF==LVLH
+        ray_brf = IRF2LVLH(n_eci, r_vec, v_vec)
+
+        # Use the general intersection routine
         boresight_hit = self._find_intersection_in_Geodetic(
-            np.array([boresight_ray_BRF]),
+            np.array([ray_brf]),
+            eul_ang,
+            t_datetime,
+            r_vec,
+            v_vec
+        )
+        return boresight_hit
+
+    def get_CenterRay_Intersection_Attitude(self, r_vec, v_vec, eul_ang, t_datetime):
+        """
+        Intersect the boresight ray defined by the spacecraft BRF z-axis
+        after applying the current Euler attitude (roll, pitch, yaw).
+        This is needed for off-nadir pointing tests.
+        """
+        # BRF boresight (z-axis)
+        boresight_brf = np.array([0.0, 0.0, 1.0])
+
+        # Use the general intersection routine with this ray
+        boresight_hit = self._find_intersection_in_Geodetic(
+            np.array([boresight_brf]),
             eul_ang,
             t_datetime,
             r_vec,
