@@ -236,7 +236,7 @@ while elapsed_time <= sim_duration_seconds:
                 target_coord = (whale["lat"], whale["lon"], whale["alt"])
                 in_footprint = eo_tools.check_point_in_footprint(target_coord, FovPoints)
 
-                if in_footprint and whale_idx != detect_idx:        # only detect once
+                if in_footprint and whale_idx not in tasked_targets.keys():        # only detect new targets
                     print("!! Tip: Target detected", whale_idx)
 
                     w = {"lat": target_coord[0], "lon": target_coord[1], "alt": target_coord[2], "detection_time": t_datetime, "detection_satellite": actor.name}
