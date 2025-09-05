@@ -29,7 +29,7 @@ from simulation.logging import init_excel_log, log_tip_detection, log_cue_evalua
 
 show_constellation = False
 plot_propagation = False
-plot_footprints = True
+plot_footprints = False
 show_orbits = False
 generate_image = False
 logging = True
@@ -168,7 +168,8 @@ if plot_propagation:
 
     pl.show(cpos="xy", interactive_update=True, auto_close=False)
 
-
+detect_idx = None
+eval_idx = None
 elapsed_time, n_steps = 0.0, 0
 while elapsed_time <= sim_duration_seconds:
 
@@ -235,7 +236,7 @@ while elapsed_time <= sim_duration_seconds:
                 target_coord = (whale["lat"], whale["lon"], whale["alt"])
                 in_footprint = eo_tools.check_point_in_footprint(target_coord, FovPoints)
 
-                if in_footprint:
+                if in_footprint and whale_idx != detect_idx:        # only detect once
                     print("!! Tip: Target detected", whale_idx)
 
                     w = {"lat": target_coord[0], "lon": target_coord[1], "alt": target_coord[2], "detection_time": t_datetime, "detection_satellite": actor.name}
@@ -333,7 +334,7 @@ while elapsed_time <= sim_duration_seconds:
                 target_coord = (whale["lat"], whale["lon"], whale["alt"])
                 in_footprint = eo_tools.check_point_in_footprint(target_coord, FovPoints)
 
-                if in_footprint:
+                if in_footprint and whale_idx != eval_idx:
 
                     print("!! Cue: Target in footprint", whale_idx, " | Evaluate target")
                     w = {"lat": target_coord[0], "lon": target_coord[1], "alt": target_coord[2], "detection_time": t_datetime, "detection_satellite": actor.name}
