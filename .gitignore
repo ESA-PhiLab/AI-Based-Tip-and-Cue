@@ -20,6 +20,9 @@ PASEOS/*
 
 test*
 
+results/*
+!results/.gitkeep
+
 installation_notes.txt
 
 to_do.txt

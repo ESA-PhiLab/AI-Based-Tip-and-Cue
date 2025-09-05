@@ -4,6 +4,10 @@ import math
 from datetime import timedelta
 import pandas as pd
 
+import os
+import shutil
+import atexit
+
 def init_excel_log(path, header, sheet_name="Log"):
     if os.path.exists(path):
         os.remove(path)
@@ -35,6 +39,8 @@ def append_excel_log(writer, row):
     ws.append(row)
     wb.save(path)
     wb.close()
+
+
 
 
 def log_tip_detection(writer, t_datetime, actor, whale_idx, target_coord, r, v, offnadir_tip_deg, gsd_m,
@@ -120,3 +126,29 @@ def should_log_event(writer, whale_idx, t_datetime, min_gap_sec=600):
         return True
 
     return False
+
+def at_exit(save_name):
+    print("Runtime ended. ")
+    results_dir = os.path.join("results", save_name)
+    os.makedirs(results_dir, exist_ok=True)
+
+    # files to rename + move
+    files_map = {
+        "sim_output_tip.xlsx": f"{save_name}_tip.xlsx",
+        "sim_output_cue.xlsx": f"{save_name}_cue.xlsx",
+    }
+
+    for src, dst in files_map.items():
+        if os.path.exists(src):
+            shutil.move(src, os.path.join(results_dir, dst))
+        else:
+            print(f"Warning: {src} not found, skipping.")
+
+    # also copy settings.py
+    settings_file = "settings.py"
+    if os.path.exists(settings_file):
+        shutil.copy(settings_file, os.path.join(results_dir, settings_file))
+    else:
+        print("Warning: settings.py not found, skipping.")
+
+    print(f"Saved results in results/{save_name}")

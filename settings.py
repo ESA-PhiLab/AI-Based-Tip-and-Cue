@@ -8,6 +8,8 @@ import math
 # ================================================================================
 # SIMULATION SETTINGS
 
+sim_name = "test1"
+
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
 
@@ -27,22 +29,22 @@ R_earth = 6371e3
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 # Simulation config
-sim_duration_hours = 24 * 3
+sim_duration_hours = 0.1
 sim_duration_seconds = sim_duration_hours * 3600
 sim_step_seconds = 1
 
 plot_interval = 10
 print_interval = 10
-reset_plot_interval = 10000
+reset_plot_interval = 100000000
 
 # ================================================================================
 # SATELLITE
 
-nSats_tip = 0
-nSats_cue = 4
+nSats_tip = 1
+nSats_cue = 1
 
-nPlanes_tip = 0
-nPlanes_cue = 4
+nPlanes_tip = 1
+nPlanes_cue = 1
 
 a_tip = 613e3 + R_earth        # Semi-major axis [m]
 e_tip = 0.0004466              # Eccentricity

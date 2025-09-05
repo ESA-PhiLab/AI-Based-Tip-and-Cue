@@ -25,10 +25,10 @@ from simulation.plotting.plot_functions import plot_constallation, plot_orbits, 
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter
 from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets,  init_whales, build_land_mask
 from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, log_tip_detection, log_cue_evaluation, satellite_in_shadow, daylight_mask, convert_M_to_lv
-from simulation.logging import init_excel_log, log_tip_detection, log_cue_evaluation, gsd_offnadir
+from simulation.logging import init_excel_log, log_tip_detection, log_cue_evaluation, gsd_offnadir, at_exit
 
-show_constellation = True
-plot_propagation = True
+show_constellation = False
+plot_propagation = False
 plot_footprints = False
 show_orbits = False
 generate_image = False
@@ -52,6 +52,7 @@ pv.global_theme.allow_empty_mesh = True
 paseos.set_log_level("WARNING")
 
 # Time setup
+print(f"Initiate simulation {sim_name}")
 utc = TimeScalesFactory.getUTC()
 t0_orekit = AbsoluteDate(t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second + t0.microsecond / 1e6, utc)
 t0_pykep = pk.epoch_from_string(t0.strftime("%Y-%m-%d %H:%M:%S"))
@@ -143,12 +144,7 @@ if logging:
     writer_tip = init_excel_log("sim_output_tip.xlsx", header_tip, sheet_name="TipLog")
     writer_cue = init_excel_log("sim_output_cue.xlsx", header_cue, sheet_name="CueLog")
 
-    def close_files():
-        writer_tip.close()
-        writer_cue.close()
-        print("CSV files closed and saved.")
-
-    atexit.register(close_files)
+    atexit.register(at_exit, save_name = sim_name)
 
 os.makedirs(worldmap_dir, exist_ok=True)
 npy_path_full = os.path.join(worldmap_dir, mask_npy)
