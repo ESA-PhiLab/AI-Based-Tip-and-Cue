@@ -31,9 +31,9 @@ t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 # Simulation config
 sim_duration_hours = 24
 sim_duration_seconds = sim_duration_hours * 3600
-sim_step_seconds = 10
+sim_step_seconds = 30
 
-plot_interval = 10
+plot_interval = 1
 print_interval = 10
 reset_plot_interval = 100000000
 
@@ -43,8 +43,8 @@ reset_plot_interval = 100000000
 nSats_tip = 2
 nSats_cue = 2
 
-nPlanes_tip = 4
-nPlanes_cue = 4
+nPlanes_tip = 8
+nPlanes_cue = 8
 
 a_tip = 613e3 + R_earth        # Semi-major axis [m]
 e_tip = 0.0004466              # Eccentricity

@@ -191,7 +191,7 @@ class EOTools:
             lons_fov2 = np.array([lon + 360 if lon < 0 else lon for lon in lons])
             fov2 = np.vstack((lats, lons_fov2, alts))
             intersections_matrix = np.hstack((fov1, fov2))
-            print("\t Crossed longitude border, picked largest FOV")
+            # print("\t Crossed longitude border, picked largest FOV")
             intersections_matrix = self.pick_west_or_east(intersections_matrix)
 
         return intersections_matrix

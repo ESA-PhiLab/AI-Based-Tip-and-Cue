@@ -139,6 +139,7 @@ def at_exit(save_name):
     }
 
     for src, dst in files_map.items():
+        print(src)
         if os.path.exists(src):
             shutil.move(src, os.path.join(results_dir, dst))
         else:

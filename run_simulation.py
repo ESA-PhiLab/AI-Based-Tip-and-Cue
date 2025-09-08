@@ -5,11 +5,9 @@ import pyvista as pv
 import numpy as np
 import pykep as pk
 from datetime import datetime, timedelta
-import csv, atexit
+import atexit
 import time
 import gc
-import pandas as pd
-from openpyxl import Workbook, load_workbook
 import os
 
 from orekit.pyhelpers import setup_orekit_curdir
@@ -23,12 +21,13 @@ from custom_paseos.utils.point_transformation import Point_ECI2Geodetic
 
 from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter
+from simulation.plotting.plot_constellation import plot_constellation_pyvista
 from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets,  init_whales, build_land_mask
-from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, log_tip_detection, log_cue_evaluation, satellite_in_shadow, daylight_mask, convert_M_to_lv
+from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv
 from simulation.logging import init_excel_log, log_tip_detection, log_cue_evaluation, gsd_offnadir, at_exit
 
-show_constellation = False
-plot_propagation = False
+show_constellation = True
+plot_propagation = True
 plot_footprints = False
 show_orbits = False
 generate_image = False
@@ -69,12 +68,11 @@ planet_lst_cue, sats_cue, _ = build_constellation(params_cue, "Cue", t0_pykep)
 all_planets = planet_lst_tip + planet_lst_cue
 
 if show_constellation:
-    plot_constallation(planet_lst_tip, planet_lst_cue, R_earth=R_earth, plot_margin=500e3)
+    plot_constellation_pyvista(planet_lst_tip, planet_lst_cue, t0)
 
 # Create actors
 tip_actors, cue_actors = [], []
 for planet in all_planets:
-
     orbital_elements_true = convert_M_to_lv(planet.orbital_elements, t0_orekit)
 
     propagator = OrekitPropagator(
@@ -103,8 +101,8 @@ all_fov_polygons = []
 
 # EO Tools
 eo_tools_dict = {}
-eo_tools_dict.update(init_eo_tools(tip_actors, fov_tip, [0.0, 0.0, 0.0]))
-eo_tools_dict.update(init_eo_tools(cue_actors, fov_cue, [0.0, 0.0, 0.0]))
+eo_tools_dict.update(init_eo_tools(tip_actors, fov_tip, eul_ang_tip))
+eo_tools_dict.update(init_eo_tools(cue_actors, fov_cue, eul_ang_cue))
 
 if len(tip_actors) != 0:
     sim = paseos.init_sim(local_actor=tip_actors[0])
@@ -129,7 +127,6 @@ if show_orbits:
     }
 else:
     trajectories = None  # no storage
-
 
 if logging:
     header_tip = ["target_id", "date", "actor", "target_lat", "target_lon", "target_alt",
@@ -204,21 +201,16 @@ while elapsed_time <= sim_duration_seconds:
         eo_tools = eo_tools_dict[actor.name]
 
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
-        tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
-        tip_lat, tip_lon, tip_alt = float(tip_lat), float(tip_lon), float(tip_alt)  # meters above ellipsoid
         tip_positions.append(r)
 
-        centerray_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_tip, t_datetime).flatten()
-        ctr_lat, ctr_lon, ctr_alt = centerray_hit.flatten()
+       #  centerray_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_tip, t_datetime).flatten()
+       #  ctr_lat, ctr_lon, ctr_alt = centerray_hit.flatten()
 
         FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, eul_ang_tip, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
         FovPoints_tip.append(FovPoints)
 
         if plot_footprints:
             all_fov_polygons.append(FovPoints)
-
-        h_m = float(np.linalg.norm(np.array(r))) - R_earth
-        gsd_tip = gsd_offnadir(GSD0_tip, h_m, offnadir_tip_deg)
 
         try:
             tip_illuminated = not satellite_in_shadow(r_vec, sun_vec_eci, earth.getEquatorialRadius())
@@ -245,6 +237,9 @@ while elapsed_time <= sim_duration_seconds:
                     all_targets[whale_idx]["detected"] = 1
                     detect_idx = whale_idx
 
+                    h_m = float(np.linalg.norm(np.array(r))) - R_earth
+                    gsd_tip = gsd_offnadir(GSD0_tip, h_m, offnadir_tip_deg)
+
                     if logging:
                         log_tip_detection(writer_tip, t_datetime, actor, whale_idx, target_coord, r, v, offnadir_tip_deg, gsd_tip, in_footprint)
 
@@ -252,6 +247,9 @@ while elapsed_time <= sim_duration_seconds:
                     tip_detected = True
 
         if verbose == True and n_steps % print_interval == 0:
+            tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
+            tip_lat, tip_lon, tip_alt = float(tip_lat), float(tip_lon), float(tip_alt)  # meters above ellipsoid
+
             print(f"\t\t{actor.name} | {t_datetime.isoformat()} | lat={tip_lat:.1f}, lon={tip_lon:.1f}, alt={tip_alt:.1f} | illuminated={tip_illuminated}")
             if tip_detected == True:
                 print(f"\t\tTarget: idx={detect_idx} | gsd={gsd_tip:.2f} | lat={w['lat']:.1f}, lon={w['lon']:.1f}, alt={w['alt']:.1f}" )
@@ -264,8 +262,6 @@ while elapsed_time <= sim_duration_seconds:
         eo_tools = eo_tools_dict[actor.name]
 
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
-        cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
-        cue_lat, cue_lon, cue_alt = float(cue_lat), float(cue_lon), float(cue_alt)
         cue_positions.append(r)
 
         try:
@@ -299,19 +295,13 @@ while elapsed_time <= sim_duration_seconds:
                             print(f"!! Cue: Target in view {whale_idx} | Set roll, pitch, yaw to {eul_ang_cue[0]:.1f}, {eul_ang_cue[1]:.1f}, {eul_ang_cue[2]:.1f} deg")
                             cue_busy = True
 
-                            # ----------------------------
-                            h_m = float(np.linalg.norm(np.array(r))) - R_earth
-                            gsd_cue = gsd_offnadir(GSD0_cue, h_m, offnadir_cue_deg)
-
-                            # -------------------------------------
-
             if not cue_busy:
                 eul_ang_cue = [0.0, 0.0, 0.0]
                 offnadir_cue_deg = 0.0
 
         try:
-            centerray_hit = eo_tools.get_CenterRay_Intersection_Attitude(r_vec, v_vec, eul_ang_cue, t_datetime).flatten()
-            ctr_lat, ctr_lon, ctr_alt = centerray_hit
+          #   centerray_hit = eo_tools.get_CenterRay_Intersection_Attitude(r_vec, v_vec, eul_ang_cue, t_datetime).flatten()
+          #   ctr_lat, ctr_lon, ctr_alt = centerray_hit
 
             FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, eul_ang_cue, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
             FovPoints_cue.append(FovPoints)
@@ -321,9 +311,6 @@ while elapsed_time <= sim_duration_seconds:
             eul_ang_cue = [0.0, 0.0, 0.0]
             offnadir_cue_deg = 0.0
             continue
-
-        h_m = float(np.linalg.norm(np.array(r))) - R_earth
-        gsd_cue = gsd_offnadir(GSD0_cue, h_m, offnadir_cue_deg)
 
         if cue_illuminated:
 
@@ -343,6 +330,9 @@ while elapsed_time <= sim_duration_seconds:
                     all_targets[whale_idx]["detected"] = 2  # detected by cue
                     eval_idx = whale_idx
 
+                    h_m = float(np.linalg.norm(np.array(r))) - R_earth
+                    gsd_cue = gsd_offnadir(GSD0_cue, h_m, offnadir_cue_deg)
+
                     if logging:
                         log_cue_evaluation(writer_cue, t_datetime, actor, whale_idx, target_coord, r, v,
                                            offnadir_cue_deg, gsd_cue, in_view, in_footprint, eul_ang_cue[0], eul_ang_cue[1], eul_ang_cue[2])
@@ -352,6 +342,9 @@ while elapsed_time <= sim_duration_seconds:
 
                     if generate_image:
                         print("Generate image")
+                        cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
+                        cue_lat, cue_lon, cue_alt = float(cue_lat), float(cue_lon), float(cue_alt)
+
                         DN255_rgb_offnadir, DN255_rgb_sunglint, radiance_sunglint, DN255_combined = generate_image(
                             img_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1],
                             target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
@@ -363,6 +356,9 @@ while elapsed_time <= sim_duration_seconds:
                         all_fov_polygons.append(FovPoints)
         
         if verbose == True and n_steps % print_interval == 0:
+            cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
+            cue_lat, cue_lon, cue_alt = float(cue_lat), float(cue_lon), float(cue_alt)
+
             print(f"\t\t{actor.name} | {t_datetime.isoformat()} | lat={cue_lat:.1f}, lon={cue_lon:.1f}, alt={cue_alt:.1f} | illuminated={cue_illuminated}")
             if cue_evaluated == True:
                 print(f"\t\tTarget: idx={eval_idx} | off nadir angle={offnadir_cue_deg:.1f} | gsd={gsd_cue:.2f} | lat={w['lat']:.1f}, lon={w['lon']:.1f}, alt={w['alt']:.1f}" )
