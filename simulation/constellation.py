@@ -1,130 +1,260 @@
 import numpy as np
 import pykep as pk
-
 import re
 from collections import defaultdict
+from math import sin, cos, sqrt, atan2
+import math
 
-def _interleaved_plane_index(k, P):
+# Orekit imports
+from org.orekit.frames import FramesFactory
+from org.orekit.orbits import KeplerianOrbit
+from org.orekit.orbits import WalkerConstellation
+WalkerPattern = WalkerConstellation.Pattern
+
+from org.orekit.time import AbsoluteDate, TimeScalesFactory
+from org.orekit.utils import Constants, PVCoordinates
+from org.hipparchus.geometry.euclidean.threed import Vector3D
+
+from java.util import ArrayList
+from org.orekit.orbits import WalkerConstellationSlot
+
+
+# ---------------------------
+# Helpers
+# ---------------------------
+
+
+def _pick_valid_F(nSats, nPlanes, F_user=None):
     """
-    Map plane counter k = 0..P-1 to an interleaved index k'
-    that alternates opposite sides of the RAAN circle.
-    Even P: 0, P/2, 1, P/2+1, 2, P/2+2, ...
-    Odd  P: 0, ceil(P/2), 1, ceil(P/2)+1, ...
+    Pick a valid Walker-Delta phasing factor F.
+    Rule: gcd(F, S) == 1, where S = nSats per plane.
+    If user F is provided and valid, return it.
+    Otherwise return the smallest valid F >= 1.
     """
-    if P <= 1:
-        return 0
-    if P % 2 == 0:
-        half = P // 2
-        return (k // 2) if (k % 2 == 0) else (half + k // 2)
+    if nPlanes <= 0 or nSats <= 0:
+        return 1
+    S = int(nSats / nPlanes)
+    if S <= 1:
+        return 1
+
+    # If user provided a valid F, keep it
+    if F_user is not None and 1 <= F_user < S and math.gcd(F_user, S) == 1:
+        return F_user
+
+    # Otherwise pick the smallest valid F
+    for F in range(1, S):
+        if math.gcd(F, S) == 1:
+            return F
+    return 1
+
+def pykep_to_orekit(t0_pykep):
+    """
+    Convert pykep.epoch -> Orekit AbsoluteDate (UTC).
+    Uses .to_datetime() if available; otherwise falls back to mjd2000 offset.
+    """
+    utc = TimeScalesFactory.getUTC()
+    if hasattr(t0_pykep, "to_datetime"):
+        t0_dt = t0_pykep.to_datetime()
+        return AbsoluteDate(
+            t0_dt.year, t0_dt.month, t0_dt.day,
+            t0_dt.hour, t0_dt.minute,
+            t0_dt.second + t0_dt.microsecond / 1e6,
+            utc
+        )
     else:
-        half_up = (P + 1) // 2
-        return (k // 2) if (k % 2 == 0) else (half_up + k // 2) % P
+        days_from_j2000 = t0_pykep.mjd2000
+        j2000_tt = AbsoluteDate(2000, 1, 1, 12, 0, 0.0, TimeScalesFactory.getTT())
+        return j2000_tt.shiftedBy(days_from_j2000 * 86400.0)
+
+
+def solve_kepler_equation(M, e, tol=1e-12, max_iter=50):
+    """
+    Solve Kepler's equation M = E - e*sinE for E (elliptic).
+    Inputs/outputs in radians.
+    """
+    E = M if e < 0.8 else np.pi
+    for _ in range(max_iter):
+        f = E - e * sin(E) - M
+        fp = 1.0 - e * cos(E)
+        dE = -f / fp
+        E = E + dE
+        if abs(dE) < tol:
+            break
+    return E
+
+
+def keplerian_to_pv(a_m, e, i_rad, raan_rad, argp_rad, M_rad, mu):
+    """
+    Classical Keplerian elements -> PV in ECI.
+    a [m], e [-], i, RAAN, argp, M [rad], mu [m^3/s^2]
+    Returns: r_vec [m], v_vec [m/s]
+    """
+    # 1) Solve for eccentric anomaly E
+    E = solve_kepler_equation(M_rad % (2.0*np.pi), e)
+
+    # 2) Position/velocity in perifocal (PQW)
+    cosE, sinE = cos(E), sin(E)
+    # true anomaly
+    cos_nu = (cosE - e) / (1.0 - e * cosE)
+    sin_nu = (sqrt(1.0 - e**2) * sinE) / (1.0 - e * cosE)
+    nu = atan2(sin_nu, cos_nu)
+
+    p = a_m * (1.0 - e**2)
+    r_pqw = np.array([p * cos(nu) / (1.0 + e * cos(nu)),
+                      p * sin(nu) / (1.0 + e * cos(nu)),
+                      0.0])
+    v_pqw = np.array([-sqrt(mu / p) * sin(nu),
+                       sqrt(mu / p) * (e + cos(nu)),
+                       0.0])
+
+    # 3) Rotation PQW -> ECI (Rz(RAAN) * Rx(i) * Rz(ω))
+    cO, sO = cos(raan_rad), sin(raan_rad)
+    ci, si = cos(i_rad),   sin(i_rad)
+    cw, sw = cos(argp_rad), sin(argp_rad)
+
+    RzO = np.array([[ cO, -sO, 0.0],
+                    [ sO,  cO, 0.0],
+                    [0.0, 0.0, 1.0]])
+    Rxi = np.array([[1.0, 0.0, 0.0],
+                    [0.0,  ci, -si],
+                    [0.0,  si,  ci]])
+    Rzw = np.array([[ cw, -sw, 0.0],
+                    [ sw,  cw, 0.0],
+                    [0.0, 0.0, 1.0]])
+
+    Q = RzO @ Rxi @ Rzw
+    r_eci = Q @ r_pqw
+    v_eci = Q @ v_pqw
+    return r_eci, v_eci
+
+
+def vec3(x, y=None, z=None):
+    """
+    Robust Vector3D wrapper.
+    """
+    if y is None and z is None:
+        x, y, z = x
+    return Vector3D(float(x), float(y), float(z))
+
+
+
+# ---------------------------
+# Constellation entry points
+# ---------------------------
 
 def build_constellation(params, label, t0_pykep):
-    if params["nSats"] != 0 and params["nPlanes"] != 0:
-        F = int(params.get("F", 1))  # Walker phasing factor (choose gcd(F, nSats)=1 ideally)
+    """
+    Build constellation using Orekit WalkerConstellation (Delta pattern).
+    Picks a valid phasing factor F if not specified.
+    """
+    nSats = int(params.get("nSats", 0))
+    nPlanes = int(params.get("nPlanes", 0))
+    if nSats != 0 and nPlanes != 0:
+        F_user = params.get("F", None)
+        F = _pick_valid_F(nSats, nPlanes, int(F_user) if F_user is not None else None)
+
+        print(f"Generated {label} constellation with nPlanes {nPlanes}, nSats {nSats}, F {F}")
         return get_constellation(
             params["a"], params["e"], params["i"], params["RAAN"],
-            params["argp"], params["M"], params["nSats"], params["nPlanes"],
+            params["argp"], params["M"], nSats, nPlanes,
             t0_pykep, label, F=F, verbose=False
         )
     return [], [], []
 
+
 def get_constellation(a, e, i_deg, RAAN_deg, argp_deg, M_deg,
-                      nSats, nPlanes, t0, sat_name, F=1, verbose=False):
+                      nSats, nPlanes, t0_pykep, sat_name, F=11, verbose=False):
     """
-    Walker-Delta constellation:
-    - RAANs evenly spaced over W_area (default 360 deg).
-    - Mean-longitude phasing with factor F, then recover M per plane.
-    - Interleaved plane indexing to avoid mirrored-plane coincidences.
+    Walker-Delta constellation using Orekit WalkerConstellation.
+    Returns the same format as the PyKEP implementation:
+      - planet_list: list of pk.planet.keplerian
+      - satellites: list of (pos [m], vel [m/s])
+      - period: orbital period [s]
     """
-    # ---config----------------------------------------------------------------------------------------------------------
-    W_area = 360.0  # total RAAN span in degrees
-    # -------------------------------------------------------------------------------------------------------------------
+
+    frame = FramesFactory.getEME2000()
+    orekit_epoch = pykep_to_orekit(t0_pykep)
+    mu = Constants.WGS84_EARTH_MU  # [m^3/s^2]
 
     # Angles to radians
-    i = i_deg * pk.DEG2RAD
-    W0 = RAAN_deg * pk.DEG2RAD
-    w = argp_deg * pk.DEG2RAD
-    M0 = M_deg * pk.DEG2RAD
+    i = np.deg2rad(i_deg)
+    raan = np.deg2rad(RAAN_deg)
+    argp = np.deg2rad(argp_deg)
+    M = np.deg2rad(M_deg)
 
-    mu_central_body = pk.MU_EARTH
-    mu_self = 1.0
-    radius = 1.0
-    safe_radius = 1.0
+    # Reference orbit from elements
+    a_m = float(a)
+    r_eci, v_eci = keplerian_to_pv(a_m, e, i, raan, argp, M, mu)
+    pv_ref = PVCoordinates(vec3(r_eci), vec3(v_eci))
+    ref_orbit = KeplerianOrbit(pv_ref, frame, orekit_epoch, mu)
 
-    # Derived quantities
+    # Walker (Delta pattern)
     P = int(nPlanes)
     S = int(nSats)
-    N = S * P
-    if P <= 0 or S <= 0:
-        return [], [], []
+    T = P * S
+    walker = WalkerConstellation(T, P, int(F), WalkerPattern.DELTA)
 
-    # RAAN spacing between planes
-    pStep = (W_area * pk.DEG2RAD) / float(P)
-
-    # In-plane spacing in mean longitude
-    sStep = 2.0 * np.pi / float(S)
-
-    # Inter-plane phasing in mean longitude
-    interPlaneStep = (2.0 * np.pi * F) / float(N)
+    # Build slots
+    regularSlots = walker.buildRegularSlots(ref_orbit)
+    slot_list_list = list(ArrayList.cast_(regularSlots))
+    slot_list_list = [list(ArrayList.cast_(slot_list)) for slot_list in slot_list_list]
+    slot_list_list = [[WalkerConstellationSlot.cast_(slot) for slot in slot_list]
+                      for slot_list in slot_list_list]
 
     planet_list = []
-    elements_list = []
+    satellites = []
 
-    # Reference mean longitude that preserves your M0 at plane 0, sat 0
-    lambda0 = (M0 + w + W0) % (2.0 * np.pi)
+    for p_idx, slots_in_plane in enumerate(slot_list_list):
+        for s_idx, slot in enumerate(slots_in_plane):
+            sat_orbit = slot.getOrbit()
+            pv = sat_orbit.getPVCoordinates()
 
-    for plane_count in range(P):
-        # Interleaved plane index for better spatial alternation
-        k_prime = _interleaved_plane_index(plane_count, P)
+            pos = np.array([pv.getPosition().getX(),
+                            pv.getPosition().getY(),
+                            pv.getPosition().getZ()])
+            vel = np.array([pv.getVelocity().getX(),
+                            pv.getVelocity().getY(),
+                            pv.getVelocity().getZ()])
 
-        # RAAN of this plane
-        W = (W0 + k_prime * pStep) % (2.0 * np.pi)
+            sat_orbit = slot.getOrbit()
+            kep_orbit = KeplerianOrbit.cast_(sat_orbit)  # cast to KeplerianOrbit
 
-        for sat_count in range(S):
-            # Target mean longitude for this satellite (Walker phasing)
-            lam = (lambda0 + sat_count * sStep + k_prime * interPlaneStep) % (2.0 * np.pi)
+            a_out = kep_orbit.getA()
+            e_out = kep_orbit.getE()
+            i_out = kep_orbit.getI()
+            raan_out = kep_orbit.getRightAscensionOfAscendingNode()
+            argp_out = kep_orbit.getPerigeeArgument()
+            M_out = kep_orbit.getMeanAnomaly()
 
-            # Recover mean anomaly that achieves the desired lambda in this plane
-            M = (lam - W - w) % (2.0 * np.pi)
-
+            # Wrap into PyKEP planet.keplerian (same as old API)
             planet = pk.planet.keplerian(
-                t0,
-                [a, e, i, W, w, M],
-                mu_central_body,
-                mu_self,
-                radius,
-                safe_radius,
-                f"{sat_name}_plane{plane_count}_sat{sat_count}",
+                t0_pykep,
+                [a_out, e_out, i_out, raan_out, argp_out, M_out],
+                pk.MU_EARTH,   # central body mu
+                1.0,           # mu_self
+                1.0,           # radius
+                1.0,           # safe radius
+                f"{sat_name}_plane{p_idx}_sat{s_idx}"
             )
+
             planet_list.append(planet)
-            elements_list.append([a, e, i, W, w, M])
+            satellites.append((pos, vel))
 
     # Orbital period (all identical)
-    period = planet_list[0].compute_period(t0) if planet_list else None
+    period = planet_list[0].compute_period(t0_pykep) if planet_list else None
 
     if verbose:
-        print(f"Created {len(elements_list)} satellites...")
-        print("Computing constellation's positions and velocities...")
-
-    satellites = []
-    for elements in elements_list:
-        pos, v = pk.par2ic(elements, pk.MU_EARTH)
-        satellites.append((np.asarray(pos), np.asarray(v)))
-
-    if verbose:
-        print("Done!")
+        print(f"Created {len(planet_list)} satellites with Orekit WalkerConstellation (Δ)")
 
     return planet_list, satellites, period
 
+
+
+
+
 def analyze_keplerian_constellation(planets):
     """
-    Analyzes a list of pykep.planet.keplerian objects to extract:
-    - Total number of planes (max plane index + 1)
-    - Satellites per plane (max satellite index + 1)
-    - Mapping of plane_id -> [sat_ids]
-    - Highest semi-major axis in AU
+    Analyze constellation metadata from Orekit-based planet_list.
     """
     pattern = r"plane(\d+)_sat(\d+)"
     plane_sat_map = defaultdict(list)
@@ -132,31 +262,28 @@ def analyze_keplerian_constellation(planets):
     max_sat_id = -1
     max_semi_major_axis = float("-inf")
 
-    for planet in planets:
-        name = planet.name
-        if name is None:
-            continue
+    for entry in planets:
+        name = entry.get("name", None)
+        orbit = entry.get("orbit", None)
 
         # Semi-major axis
         try:
-            sma = planet.orbital_elements[0]  # AU
+            sma = orbit.getA()  # meters
             if sma >= max_semi_major_axis:
                 max_semi_major_axis = sma
         except Exception:
             pass
 
-        # Extract IDs from name
-        match = re.search(pattern, name)
-        if match:
-            plane_id = int(match.group(1))
-            sat_id = int(match.group(2))
-            plane_sat_map[plane_id].append(sat_id)
-            max_plane_id = max(max_plane_id, plane_id)
-            max_sat_id = max(max_sat_id, sat_id)
-        else:
-            print(f"Warning: name '{name}' doesn't match expected pattern")
+        # Extract IDs from name (planeX_satY)
+        if name is not None:
+            match = re.search(pattern, name)
+            if match:
+                plane_id = int(match.group(1))
+                sat_id = int(match.group(2))
+                plane_sat_map[plane_id].append(sat_id)
+                max_plane_id = max(max_plane_id, plane_id)
+                max_sat_id = max(max_sat_id, sat_id)
 
     num_planes = max_plane_id + 1 if max_plane_id >= 0 else 0
     sats_per_plane = max_sat_id + 1 if max_sat_id >= 0 else 0
-
     return num_planes, sats_per_plane, max_semi_major_axis

@@ -10,13 +10,15 @@ import time
 import gc
 import os
 
+
+
+
 from orekit.pyhelpers import setup_orekit_curdir
 
 from paseos import ActorBuilder, SpacecraftActor
 import paseos
 
 from custom_paseos.propagation.orekit_propagator import OrekitPropagator
-from simulation.constellation import build_constellation
 from custom_paseos.utils.point_transformation import Point_ECI2Geodetic
 
 from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints
@@ -43,6 +45,8 @@ from org.orekit.bodies import CelestialBodyFactory
 from org.orekit.utils import IERSConventions
 from org.orekit.frames import FramesFactory
 from org.orekit.time import AbsoluteDate, TimeScalesFactory
+
+from simulation.constellation import build_constellation
 
 from astropy.utils.iers import conf
 conf.auto_max_age = None  # allow predictive values older than 30 days

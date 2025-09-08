@@ -49,9 +49,9 @@ nPlanes_cue = 8
 a_tip = 613e3 + R_earth        # Semi-major axis [m]
 e_tip = 0.0004466              # Eccentricity
 i_tip_deg = 97.8739            # Inclination [deg]
-RAAN_tip_deg = 305.5939        # RAAN [deg]
-argp_tip_deg = 201.0444         # Argument of periapsis [deg]
-M_tip_deg = 180+ 159.0587           # Mean anomaly [deg]
+RAAN_tip_deg = 0.0  # 305.5939        # RAAN [deg]
+argp_tip_deg = 0.0 #201.0444         # Argument of periapsis [deg]
+M_tip_deg = 45.0 #180+ 159.0587           # Mean anomaly [deg]
 
 delta_t_cue = 5*60  # seconds
 tasking_delay_tip = 3 * 60  # Time delay between tip and cue transfer

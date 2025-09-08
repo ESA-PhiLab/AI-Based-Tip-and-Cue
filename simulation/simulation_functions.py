@@ -55,7 +55,6 @@ def propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits):
         trajectories[actor.name]["r"][n_steps] = r
         trajectories[actor.name]["v"][n_steps] = v
 
-
     r_vec = np.array(r).reshape(3, 1)
     v_vec = np.array(v).reshape(3, 1)
 
