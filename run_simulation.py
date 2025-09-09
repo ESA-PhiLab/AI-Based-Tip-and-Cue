@@ -306,7 +306,7 @@ while elapsed_time <= sim_duration_seconds:
                     print(f"!! Cue: Set roll, pitch, yaw target back to default {eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f} deg")
 
         if model_attitude_control:
-            if not np.allclose(eo_tools.eul_ang_deg, eul_ang_cue_target, atol=1e-4, rtol=0):
+            if not np.allclose(eo_tools.eul_ang_deg, eul_ang_cue_target, atol=1e-6, rtol=0):
 
                 ctrls = controllers[actor.name]
                 guid = ctrls["guidance"]

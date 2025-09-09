@@ -63,9 +63,9 @@ RAAN_tip_deg = 324.9696                   # RAAN [deg]
 argp_tip_deg = 140.5945                   # Argument of periapsis [deg]
 M_tip_deg    = 219.5701 - 140                  # Mean anomaly [deg]
 
-delta_t_cue = 5*60          # Time spacing between tip and cue satellite
-tasking_delay_tip = 3 * 60  # Time delay between tip and cue transfer
-tasking_delay_cue = 10      # Time delay after detection by cue
+delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
+tasking_delay_tip = 60      # Time delay between tip and cue transfer [sec]
+tasking_delay_cue = 10      # Time delay after detection by cue [sec]
 
 rp = R_earth + hp
 ra = R_earth + ha

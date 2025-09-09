@@ -155,10 +155,6 @@ def plot_all_fov_footprints(all_fov_polygons, known_targets):
     ax_map.gridlines(draw_labels=True, linestyle="--", linewidth=0.5, color='gray')
     ax_map.set_global()
 
-    for target_geodetic in known_targets:
-        ax_map.plot(target_geodetic[1], target_geodetic[0], marker='o', color='green', markersize=4,
-                    transform=ccrs.PlateCarree())
-        # ax_map.text(target_geodetic[1] - 7.5, target_geodetic[0] - 7.5, "Target", color='green', transform=ccrs.PlateCarree())
 
     # Now draw all stored footprints
     for intersections in all_fov_polygons:
@@ -187,6 +183,12 @@ def plot_all_fov_footprints(all_fov_polygons, known_targets):
             ax_map.scatter(longitudes, latitudes, color='black', s=0.001, transform=ccrs.PlateCarree())
 
     # Legend once
+
+    for target_geodetic in known_targets:
+        ax_map.plot(target_geodetic[1], target_geodetic[0], marker='o', color='green', markersize=4,
+                    transform=ccrs.PlateCarree())
+        # ax_map.text(target_geodetic[1] - 7.5, target_geodetic[0] - 7.5, "Target", color='green', transform=ccrs.PlateCarree())
+
     fov_line = Line2D([0], [0], color='red', lw=2, label='Field of View')
     ax_map.legend(handles=[fov_line], loc='lower left')
 
