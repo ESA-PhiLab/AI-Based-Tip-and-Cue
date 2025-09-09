@@ -10,9 +10,6 @@ import time
 import gc
 import os
 
-
-
-
 from orekit.pyhelpers import setup_orekit_curdir
 
 from paseos import ActorBuilder, SpacecraftActor
@@ -28,7 +25,7 @@ from simulation.propagate_whales import update_whales, load_land_mask, generate_
 from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv
 from simulation.logging import init_excel_log, log_tip_detection, log_cue_evaluation, gsd_offnadir, at_exit
 
-show_constellation = True
+show_constellation = False
 plot_propagation = True
 plot_footprints = False
 show_orbits = False
@@ -118,6 +115,8 @@ else:
     for actor in cue_actors[1:]:
         sim.add_known_actor(actor)
 
+sim_duration_seconds = sim_duration_hours * 3600
+
 n_steps_total = int(sim_duration_seconds / sim_step_seconds) + 1
 print("Total number of simulation steps:", n_steps_total)
 
@@ -144,6 +143,7 @@ if logging:
     writer_cue = init_excel_log("sim_output_cue.xlsx", header_cue, sheet_name="CueLog")
 
     atexit.register(at_exit, save_name = sim_name)
+    print("Initiated logging files")
 
 os.makedirs(worldmap_dir, exist_ok=True)
 npy_path_full = os.path.join(worldmap_dir, mask_npy)
@@ -367,19 +367,12 @@ while elapsed_time <= sim_duration_seconds:
             if cue_evaluated == True:
                 print(f"\t\tTarget: idx={eval_idx} | off nadir angle={offnadir_cue_deg:.1f} | gsd={gsd_cue:.2f} | lat={w['lat']:.1f}, lon={w['lon']:.1f}, alt={w['alt']:.1f}" )
 
-    t_mid  = time.time()
-
-    if n_steps % 10 == 0:
+    if n_steps % 100 == 0:
         gc.collect()
 
+    t_mid  = time.time()
+
     if plot_propagation and n_steps % plot_interval == 0:
-        if n_steps % reset_plot_interval == 0 and n_steps > 0:
-            last_theta = earth_state.get("last_theta", None)
-            (earth_actor, earth_state,
-             whales_plot_all, whales_plot_evaluated, whales_plot_tasked,
-             cloud_tip_sats, cloud_cue_sats,
-             tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
-             sun_light, eval_pts, task_pts) = reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=last_theta)
 
         eval_pts, task_pts = update_plotter(
             pl,

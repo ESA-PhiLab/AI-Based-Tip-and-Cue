@@ -24,38 +24,46 @@ crop_black_border = True
 generate_radiation = True
 flat_dem = False
 exclude_dark = True
+sim_time = 'fast'
 
-R_earth = 6371e3
+R_earth = 6378137.0  # m
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
-
-# Simulation config
 sim_duration_hours = 24
-sim_duration_seconds = sim_duration_hours * 3600
-sim_step_seconds = 30
 
-plot_interval = 1
-print_interval = 10
-reset_plot_interval = 100000000
+if sim_time == 'slow':
+    sim_step_seconds = 1
+    plot_interval = 10
+    print_interval = 10
+
+if sim_time == 'fast':
+    sim_step_seconds = 30
+    plot_interval = 1
+    print_interval = 10
 
 # ================================================================================
 # SATELLITE
 
-nSats_tip = 2
-nSats_cue = 2
+nSats_tip = 1
+nSats_cue = 1
 
-nPlanes_tip = 8
-nPlanes_cue = 8
+nPlanes_tip = 1
+nPlanes_cue = 1
 
-a_tip = 613e3 + R_earth        # Semi-major axis [m]
-e_tip = 0.0004466              # Eccentricity
-i_tip_deg = 97.8739            # Inclination [deg]
-RAAN_tip_deg = 0.0  # 305.5939        # RAAN [deg]
-argp_tip_deg = 0.0 #201.0444         # Argument of periapsis [deg]
-M_tip_deg = 45.0 #180+ 159.0587           # Mean anomaly [deg]
+hp = 616.1e3                              # perigee altitude [m]        Like WV-3, from: https://www.n2yo.com/satellite/?s=40115
+ha = 624.4e3                              # apogee altitude [m]
+i_tip_deg    = 97.8717                    # Inclination [deg]
+RAAN_tip_deg = 324.9696                   # RAAN [deg]
+argp_tip_deg = 140.5945                   # Argument of periapsis [deg]
+M_tip_deg    = 219.5701 - 140                  # Mean anomaly [deg]
 
-delta_t_cue = 5*60  # seconds
+delta_t_cue = 5*60          # Time spacing between tip and cue satellite
 tasking_delay_tip = 3 * 60  # Time delay between tip and cue transfer
 tasking_delay_cue = 10      # Time delay after detection by cue
+
+rp = R_earth + hp
+ra = R_earth + ha
+a_tip = 0.5 * (ra + rp)                   # Semi-major axis [m]
+e_tip = (ra - rp) / (ra + rp)             # Eccentricity [-]
 
 a_cue = a_tip                     # Semi-major axis [m]
 e_cue = e_tip                     # Eccentricity
