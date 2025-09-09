@@ -53,12 +53,13 @@ class EOTools:
     # Spacecraft_actor.
     _actor = None
     # Actor attitude in deg
-    _actor_attitude_in_deg = None
-    # Actor pointing vector expressed in inertial frame.
-    _actor_pointing_vector_eci = None
-    # Actor pointing vector expressed in body reference frame
-    _actor_pointing_vector_body = None
-    # Earth Polar Radius
+    eul_ang_deg = None
+
+    fov_angles = None
+
+    phi_deg = None      # Rotation angle about own FOV axis (pointing_vec_brf)
+
+    busy = False
 
     """
     This class is provided with all the functions needed to perform the dedicated Earth-Observation activities
@@ -67,10 +68,9 @@ class EOTools:
     def __init__(
             self,
             local_actor,
-            actor_initial_attitude_in_deg: list[float] = [0.0, 0.0, 0.0],
-            actor_FOV_ACT_in_deg: list[float] = [1.0],
-            actor_FOV_ALT_in_deg: list[float] = [1.0],
-            actor_pointing_vector_body: list[float] = [0.0, 0.0, 1.0],
+            initial_eul_ang_deg: list[float] = [0.0, 0.0, 0.0],
+            fov_act_deg: list[float] = [1.0],
+            fov_alt_deg: list[float] = [1.0],
     ):
 
         assert isinstance(local_actor, SpacecraftActor), (
@@ -81,12 +81,12 @@ class EOTools:
         self._actor = local_actor
 
         # Convert attitude in np.ndarray
-        self._actor_attitude_in_deg = np.array(actor_initial_attitude_in_deg)
+        self.eul_ang_deg = np.array(initial_eul_ang_deg)
         # Convert pointing vector in np.ndarray
-        self._actor_pointing_vector_body = np.array(actor_pointing_vector_body) / np.linalg.norm(
-            np.array(actor_pointing_vector_body))
         # Creation of the FOV
-        self.fov_angles = [actor_FOV_ACT_in_deg[0], actor_FOV_ALT_in_deg[0]]
+        self.fov_angles = [fov_act_deg[0], fov_alt_deg[0]]
+
+        self.phi_deg = 0.0
 
     # Module to create a Piramidal 3D FOV in the BRF. Thi module allows to create the piramidal shape of a rectangular footprint in the BRF.
     # Note that this module allows to have the directions of the 3D prismatic FOV lines in the BRF, to get the intersection with a geoidetic reference model.
@@ -108,7 +108,7 @@ class EOTools:
     # R_e (Equatorial Radius) = 6378137 m;
     # R_p (Polar Radius) = 6356752 m;
 
-    def _find_intersection_in_Geodetic(self, ray_direction, eul_ang, time, r, v):
+    def _find_intersection_in_Geodetic(self, ray_direction, time, r, v):
         """
         Intersect BRF rays with the WGS-84 ellipsoid.
         - Transform BRF rays -> ECI (via attitude) -> ECEF (at 'time').
@@ -132,7 +132,7 @@ class EOTools:
         d_ecef_list = []
         for ray in ray_direction:
             # BRF -> IRF (ECI)
-            d_eci = BRF2IRF_eul(np.asarray(ray, dtype=float).flatten(), r, v, eul_ang)
+            d_eci = BRF2IRF_eul(np.asarray(ray, dtype=float).flatten(), r, v, self.eul_ang_deg)
             d_eci = d_eci / np.linalg.norm(d_eci)
 
             # ECI -> ECEF (pure rotation at 'time')
@@ -290,24 +290,27 @@ class EOTools:
 
         return df
 
-    def off_nadir_pointing_angle(self, r_eci, v_eci, target_geodetic, eul_angles_deg, time):
+    def off_nadir_pointing_angle(self, r_eci, v_eci, target_geodetic, time):
         # geodetic target → ECI
+
+        eul_ang_ref = [0.0, 0.0, 0.0]
         P_target_eci = Point_Geodetic2ECI(*target_geodetic, time)
         # Distance Computation
         vec_eci = P_target_eci - r_eci
         # ECI → BRF
-        vec_brf = IRF2BRF_eul(vec_eci, r_eci, v_eci, eul_angles_deg)
+        pointing_vec_brf_target = IRF2BRF_eul(vec_eci, r_eci, v_eci, eul_ang_ref)
+
         # Compute the angle
         boresight_brf = np.array([0.0, 0.0, 1.0])
         boresight_brf /= np.linalg.norm(boresight_brf)
 
-        vec_brf = vec_brf / np.linalg.norm(vec_brf)
+        pointing_vec_brf_target = pointing_vec_brf_target / np.linalg.norm(pointing_vec_brf_target)
 
-        dot_product = np.clip(boresight_brf @ vec_brf, -1.0, 1.0)
-        angle_rad = np.arccos(dot_product)
-        angle_deg = np.rad2deg(angle_rad)
+        dot_product = np.clip(boresight_brf @ pointing_vec_brf_target, -1.0, 1.0)
+        offnadir_angle_rad = np.arccos(dot_product)
+        offnadir_angle_deg = np.rad2deg(offnadir_angle_rad)
 
-        return float(angle_deg), vec_brf
+        return float(offnadir_angle_deg), pointing_vec_brf_target
 
     def is_in_sight(self, target_geodetic, r_eci, v_eci, time, el_min):
         lat, lon, alt = target_geodetic
@@ -318,20 +321,22 @@ class EOTools:
         in_sight = el > el_min
         return in_sight
 
-    def pointing_attitude(self, target_vec_brf, phi_rad, prev_attitude, is_in_view):
+    def pointing_attitude_brf(self, pointing_vec_brf_target, is_in_view):
         if not is_in_view:
             return [0.0, 0.0, 0.0]
 
+        eul_ang_ref = [0.0, 0.0, 0.0]
+        phi_deg_ref = 0.0
         l1 = np.array([0.0, 0.0, 1.0])  # boresight reference (down)
-        l2 = np.asarray(target_vec_brf).flatten()
+        l2 = np.asarray(pointing_vec_brf_target).flatten()
         l1 /= np.linalg.norm(l1)
         l2 /= np.linalg.norm(l2)
 
         dot = np.clip(np.dot(l1, l2), -1.0, 1.0)
         cross = np.cross(l2, l1)  # <<< FIX HERE
 
-        cos_phi_2 = np.cos(phi_rad / 2)
-        sin_phi_2 = np.sin(phi_rad / 2)
+        cos_phi_2 = np.cos(phi_deg_ref * np.pi / 180 / 2)
+        sin_phi_2 = np.sin(phi_deg_ref * np.pi / 180 / 2)
 
         numerator_vec = cross * cos_phi_2 + (l1 + l2) * sin_phi_2
         numerator_scalar = (1 + dot) * cos_phi_2
@@ -342,10 +347,11 @@ class EOTools:
         quat = np.concatenate((q_vec, [q_scalar]))
 
         Rot_SRFa_SRFp = RotMat_by_quat(quat)
-        Rot_LVLH2SRFp = RotMat_LVLH_to_BRF_by_eul(prev_attitude) @ Rot_SRFa_SRFp
+        Rot_LVLH2SRFp = RotMat_LVLH_to_BRF_by_eul(eul_ang_ref) @ Rot_SRFa_SRFp
 
         roll, pitch, yaw = rotation_matrix_to_ypr(Rot_LVLH2SRFp)
         return [np.degrees(roll), np.degrees(pitch), np.degrees(yaw)]
+
 
     @staticmethod
     def check_fov_in_polygon(df, simulation_time, fov_vertices):
@@ -601,15 +607,15 @@ class EOTools:
         return np.array(rays)
 
     # taken from TestNum10.py
-    def get_FovPoints(self, r_vec, v_vec, eul_ang, t_datetime):
+    def get_FovPoints(self, r_vec, v_vec, t_datetime):
 
         ray_directions = self.get_fov_vectors_in_BRF()
-        intersections_matrix = self._find_intersection_in_Geodetic(ray_directions, eul_ang, t_datetime, r_vec, v_vec)
+        intersections_matrix = self._find_intersection_in_Geodetic(ray_directions, t_datetime, r_vec, v_vec)
         FovPoints = intersections_matrix[:2, :].T
 
         return FovPoints
 
-    def get_CenterRay_Intersection(self, r_vec, v_vec, eul_ang, t_datetime):
+    def get_CenterRay_Intersection(self, r_vec, v_vec, t_datetime):
         """
         Intersect the center ray defined as the *geodetic nadir* (ellipsoid normal),
         so its hit matches the satellite's geodetic lat/lon and alt=0 (to numerical precision).
@@ -641,14 +647,14 @@ class EOTools:
         # Use the general intersection routine
         boresight_hit = self._find_intersection_in_Geodetic(
             np.array([ray_brf]),
-            eul_ang,
+            self.eul_ang_deg,
             t_datetime,
             r_vec,
             v_vec
         )
         return boresight_hit
 
-    def get_CenterRay_Intersection_Attitude(self, r_vec, v_vec, eul_ang, t_datetime):
+    def get_CenterRay_Intersection_Attitude(self, r_vec, v_vec, t_datetime):
         """
         Intersect the boresight ray defined by the spacecraft BRF z-axis
         after applying the current Euler attitude (roll, pitch, yaw).
@@ -660,7 +666,7 @@ class EOTools:
         # Use the general intersection routine with this ray
         boresight_hit = self._find_intersection_in_Geodetic(
             np.array([boresight_brf]),
-            eul_ang,
+            self.eul_ang_deg,
             t_datetime,
             r_vec,
             v_vec
@@ -692,6 +698,62 @@ class EOTools:
         else:
             return west_pts  # more to the west
 
+
+    def _wrap_deg180(self, a):
+        """Wrap angles (deg) elementwise to [-180, 180]."""
+        a = (a + 180.0) % 360.0 - 180.0
+        a[a == 180.0] = -180.0
+        return a
+
+    def compute_delta_euler_step(self,
+        eul_ang_cue_target,
+        rot_rate_max,
+        sim_step_seconds,
+        deadband_deg=1e-6):
+
+        """
+        Compute per-timestep delta [d_roll, d_pitch, d_yaw] in degrees, moving from
+        eul_ang_deg toward eul_ang_cue_target, limited by a maximum TOTAL rotation rate
+        (deg/s) across all axes combined. Allows 'diagonal' rotation by scaling the full vector.
+
+        Parameters
+        ----------
+        eul_ang_deg : array-like, shape (3,)
+            Current Euler angles [roll, pitch, yaw] in degrees.
+        eul_ang_cue_target : array-like, shape (3,)
+            Target Euler angles [roll, pitch, yaw] in degrees.
+        max_total_sensor_rot_deg_per_sec : float
+            Maximum combined rotation rate (deg/s) across all axes.
+        sim_step_seconds : float
+            Simulation time step in seconds.
+        deadband_deg : float, optional
+            If the remaining difference norm is below this, return zeros.
+
+        Returns
+        -------
+        np.ndarray, shape (3,)
+            Delta to apply this timestep in degrees [d_roll, d_pitch, d_yaw].
+        """
+
+        current = np.asarray(self.eul_ang_deg, dtype=float).reshape(3)
+        target  = np.asarray(eul_ang_cue_target, dtype=float).reshape(3)
+
+        if rot_rate_max <= 0.0 or sim_step_seconds <= 0.0:
+            return np.zeros(3, dtype=float)
+
+        # Shortest-path difference
+        diff = self._wrap_deg180(target - current)
+        diff_mag = float(np.linalg.norm(diff))
+
+        if diff_mag <= deadband_deg:
+            return np.zeros(3, dtype=float)
+
+        max_step_mag = rot_rate_max * sim_step_seconds
+
+        if diff_mag <= max_step_mag:
+            return diff
+
+        return diff * (max_step_mag / diff_mag)
 
 
 

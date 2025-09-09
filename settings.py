@@ -24,11 +24,11 @@ crop_black_border = True
 generate_radiation = True
 flat_dem = False
 exclude_dark = True
-sim_time = 'fast'
+sim_time = 'slow'
 
 R_earth = 6378137.0  # m
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
-sim_duration_hours = 24
+sim_duration_hours = 0.25
 
 if sim_time == 'slow':
     sim_step_seconds = 1
@@ -107,6 +107,7 @@ land_avoid_max_tries = 12
 
 elevation_min = 10.0 # degrees
 offnadir_max = 50.0     # max 62.5 deg
+rot_rate_max = 2.0 # deg / s
 
 resolution = 124  # pixels of render
 sample_count = 512  # 8192 min, 2048 * 2**7 max

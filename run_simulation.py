@@ -26,11 +26,11 @@ from simulation.simulation_functions import init_eo_tools, cleanup_tasked_target
 from simulation.logging import init_excel_log, log_tip_detection, log_cue_evaluation, gsd_offnadir, at_exit
 
 show_constellation = False
-plot_propagation = True
-plot_footprints = False
+plot_propagation = False
+plot_footprints = True
 show_orbits = False
 generate_image = False
-logging = True
+logging = False
 verbose = False
 
 # Initialize Orekit
@@ -93,17 +93,16 @@ for planet in all_planets:
 
     (tip_actors if "Tip" in planet.name else cue_actors).append(actor)
 
-eul_ang_tip = [0.0, 0.0, 0.0]
-eul_ang_cue = [0.0, 0.0, 0.0]
+eul_ang_tip_target = [0.0, 0.0, 0.0]
+eul_ang_cue_target = [0.0, 0.0, 0.0]
 offnadir_cue_deg = 0.0
 offnadir_tip_deg = 0.0
-phi_rad = 0.0
 all_fov_polygons = []
 
 # EO Tools
 eo_tools_dict = {}
-eo_tools_dict.update(init_eo_tools(tip_actors, fov_tip, eul_ang_tip))
-eo_tools_dict.update(init_eo_tools(cue_actors, fov_cue, eul_ang_cue))
+eo_tools_dict.update(init_eo_tools(tip_actors, fov_tip, eul_ang_tip_target))
+eo_tools_dict.update(init_eo_tools(cue_actors, fov_cue, eul_ang_cue_target))
 
 if len(tip_actors) != 0:
     sim = paseos.init_sim(local_actor=tip_actors[0])
@@ -207,14 +206,14 @@ while elapsed_time <= sim_duration_seconds:
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
         tip_positions.append(r)
 
-       #  centerray_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, eul_ang_tip, t_datetime).flatten()
+       #  centerray_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, t_datetime).flatten()
        #  ctr_lat, ctr_lon, ctr_alt = centerray_hit.flatten()
 
-        FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, eul_ang_tip, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
+        FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
         FovPoints_tip.append(FovPoints)
 
-        if plot_footprints:
-            all_fov_polygons.append(FovPoints)
+       #  if plot_footprints:
+       #      all_fov_polygons.append(FovPoints)
 
         try:
             tip_illuminated = not satellite_in_shadow(r_vec, sun_vec_eci, earth.getEquatorialRadius())
@@ -262,7 +261,6 @@ while elapsed_time <= sim_duration_seconds:
         n_evaluated = 0
         in_view = False
         cue_evaluated = False
-        cue_busy = False
         eo_tools = eo_tools_dict[actor.name]
 
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
@@ -290,31 +288,40 @@ while elapsed_time <= sim_duration_seconds:
 
                     if in_view:
 
-                        offnadir_cue_deg, vec_brf = eo_tools.off_nadir_pointing_angle(r_eci=r_vec, v_eci=v_vec, target_geodetic=target_coord, eul_angles_deg=eul_ang_cue, time=t_datetime )
+                        offnadir_cue_deg, pointing_vec_brf_target = eo_tools.off_nadir_pointing_angle(r_eci=r_vec, v_eci=v_vec, target_geodetic=target_coord, time=t_datetime )
 
                         if offnadir_cue_deg <= offnadir_max:
 
-                            eul_ang_cue = eo_tools.pointing_attitude(vec_brf, phi_rad, eul_ang_cue, in_view)
+                            eul_ang_cue_target = eo_tools.pointing_attitude_brf(pointing_vec_brf_target, in_view)
 
-                            print(f"!! Cue: Target in view {whale_idx} | Set roll, pitch, yaw to {eul_ang_cue[0]:.1f}, {eul_ang_cue[1]:.1f}, {eul_ang_cue[2]:.1f} deg")
-                            cue_busy = True
+                            print(f"!! Cue: Target in view {whale_idx} | Set roll, pitch, yaw to {eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f} deg")
+                            eo_tools.busy = True
 
-            if not cue_busy:
-                eul_ang_cue = [0.0, 0.0, 0.0]
+            if not eo_tools.busy:
+                eul_ang_cue_target = [0.0, 0.0, 0.0]
+                print(f"!! Cue: Set roll, pitch, yaw target back to default {eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f} deg")
                 offnadir_cue_deg = 0.0
 
         try:
-          #   centerray_hit = eo_tools.get_CenterRay_Intersection_Attitude(r_vec, v_vec, eul_ang_cue, t_datetime).flatten()
+          #   centerray_hit = eo_tools.get_CenterRay_Intersection_Attitude(r_vec, v_vec, t_datetime).flatten()
           #   ctr_lat, ctr_lon, ctr_alt = centerray_hit
+          
+            delta_move_eul = eo_tools.compute_delta_euler_step(eul_ang_cue_target, rot_rate_max, sim_step_seconds)
+            eo_tools.eul_ang_deg += delta_move_eul
+            print(f"!! Cue: Moved roll, pitch, yaw by {delta_move_eul[0]:.1f}, {delta_move_eul[1]:.1f}, {delta_move_eul[2]:.1f} deg")
 
-            FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, eul_ang_cue, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
+            FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
             FovPoints_cue.append(FovPoints)
+
+            if plot_footprints:
+                all_fov_polygons.append(FovPoints)
 
         except:
             print("!! Cue: target out of sight, continue to the next step")
-            eul_ang_cue = [0.0, 0.0, 0.0]
+            eul_ang_cue_target = [0.0, 0.0, 0.0]
             offnadir_cue_deg = 0.0
             continue
+
 
         if cue_illuminated:
 
@@ -339,7 +346,7 @@ while elapsed_time <= sim_duration_seconds:
 
                     if logging:
                         log_cue_evaluation(writer_cue, t_datetime, actor, whale_idx, target_coord, r, v,
-                                           offnadir_cue_deg, gsd_cue, in_view, in_footprint, eul_ang_cue[0], eul_ang_cue[1], eul_ang_cue[2])
+                                           offnadir_cue_deg, gsd_cue, in_view, in_footprint, eo_tools.eul_ang_deg[0], eo_tools.eul_ang_deg[1], eo_tools.eul_ang_deg[2])
 
                     n_evaluated += 1
                     cue_evaluated = True
@@ -355,9 +362,12 @@ while elapsed_time <= sim_duration_seconds:
 
                     evaluated_targets[whale_idx] = w
                     del tasked_targets[whale_idx]
+                    eo_tools.busy = False
 
                     if plot_footprints:
                         all_fov_polygons.append(FovPoints)
+
+        eo_tools_dict[actor.name] = eo_tools
         
         if verbose == True and n_steps % print_interval == 0:
             cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
@@ -368,7 +378,7 @@ while elapsed_time <= sim_duration_seconds:
                 print(f"\t\tTarget: idx={eval_idx} | off nadir angle={offnadir_cue_deg:.1f} | gsd={gsd_cue:.2f} | lat={w['lat']:.1f}, lon={w['lon']:.1f}, alt={w['alt']:.1f}" )
 
     if n_steps % 100 == 0:
-        gc.collect()
+        gc.collect()        # Empty garbage
 
     t_mid  = time.time()
 

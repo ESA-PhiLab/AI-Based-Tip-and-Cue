@@ -23,15 +23,14 @@ from org.orekit.frames import FramesFactory
 
 
 
-def init_eo_tools(actors, fov_angle, eul_angles):
+def init_eo_tools(actors, fov_deg, eul_ang_deg):
     tools = {}
     for actor in actors:
         tools[actor.name] = EOTools(
             local_actor=actor,
-            actor_initial_attitude_in_deg=eul_angles,
-            actor_FOV_ACT_in_deg=[fov_angle],
-            actor_FOV_ALT_in_deg=[fov_angle],
-            actor_pointing_vector_body=[0.0, 0.0, 1.0]
+            initial_eul_ang_deg=eul_ang_deg,
+            fov_act_deg=[fov_deg],
+            fov_alt_deg=[fov_deg],
         )
     return tools
 
@@ -157,3 +156,5 @@ def convert_M_to_lv(orbital_elements, epoch):
     lv_deg = math.degrees(temp_orbit.getTrueAnomaly())
 
     return [a, e, i, argp, raan, lv_deg]
+
+
