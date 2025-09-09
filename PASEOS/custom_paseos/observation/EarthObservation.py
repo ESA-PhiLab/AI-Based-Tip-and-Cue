@@ -312,6 +312,42 @@ class EOTools:
 
         return float(offnadir_angle_deg), pointing_vec_brf_target
 
+    def set_max_offnadir(self, pointing_vec_brf_target: np.ndarray,
+                         offnadir_angle_deg: float,
+                         offnadir_max: float) -> tuple[float, np.ndarray]:
+
+        # Boresight direction (camera looking along +Z)
+        boresight_brf = np.array([0.0, 0.0, 1.0])
+        boresight_brf /= np.linalg.norm(boresight_brf)
+
+        if offnadir_angle_deg <= offnadir_max:
+            # No adjustment needed
+            return offnadir_angle_deg, pointing_vec_brf_target
+
+        # Compute rotation axis (perpendicular to both vectors)
+        rot_axis = np.cross(boresight_brf, pointing_vec_brf_target)
+        norm_axis = np.linalg.norm(rot_axis)
+        if norm_axis < 1e-8:
+            # Target is aligned or anti-aligned, choose arbitrary perpendicular axis
+            rot_axis = np.array([1.0, 0.0, 0.0])
+        else:
+            rot_axis /= norm_axis
+
+        # Convert max angle to radians
+        max_angle_rad = np.deg2rad(offnadir_max)
+
+        # Rodrigues' rotation formula to rotate boresight
+        cos_a = np.cos(max_angle_rad)
+        sin_a = np.sin(max_angle_rad)
+        K = np.array([[0, -rot_axis[2], rot_axis[1]],
+                      [rot_axis[2], 0, -rot_axis[0]],
+                      [-rot_axis[1], rot_axis[0], 0]])
+
+        R = np.eye(3) + sin_a * K + (1 - cos_a) * (K @ K)
+        new_pointing_vec = R @ boresight_brf
+
+        return offnadir_max, new_pointing_vec / np.linalg.norm(new_pointing_vec)
+
     def is_in_sight(self, target_geodetic, r_eci, v_eci, time, el_min):
         lat, lon, alt = target_geodetic
         Ecef_satellite = pm.eci2ecef(r_eci[0], r_eci[1], r_eci[2], time)
@@ -321,9 +357,7 @@ class EOTools:
         in_sight = el > el_min
         return in_sight
 
-    def pointing_attitude_brf(self, pointing_vec_brf_target, is_in_view):
-        if not is_in_view:
-            return [0.0, 0.0, 0.0]
+    def pointing_attitude_brf(self, pointing_vec_brf_target):
 
         eul_ang_ref = [0.0, 0.0, 0.0]
         phi_deg_ref = 0.0
@@ -697,65 +731,6 @@ class EOTools:
             return east_pts  # more to the east
         else:
             return west_pts  # more to the west
-
-
-    def _wrap_deg180(self, a):
-        """Wrap angles (deg) elementwise to [-180, 180]."""
-        a = (a + 180.0) % 360.0 - 180.0
-        a[a == 180.0] = -180.0
-        return a
-
-    def compute_delta_euler_step(self,
-        eul_ang_cue_target,
-        rot_rate_max,
-        sim_step_seconds,
-        deadband_deg=1e-6):
-
-        """
-        Compute per-timestep delta [d_roll, d_pitch, d_yaw] in degrees, moving from
-        eul_ang_deg toward eul_ang_cue_target, limited by a maximum TOTAL rotation rate
-        (deg/s) across all axes combined. Allows 'diagonal' rotation by scaling the full vector.
-
-        Parameters
-        ----------
-        eul_ang_deg : array-like, shape (3,)
-            Current Euler angles [roll, pitch, yaw] in degrees.
-        eul_ang_cue_target : array-like, shape (3,)
-            Target Euler angles [roll, pitch, yaw] in degrees.
-        max_total_sensor_rot_deg_per_sec : float
-            Maximum combined rotation rate (deg/s) across all axes.
-        sim_step_seconds : float
-            Simulation time step in seconds.
-        deadband_deg : float, optional
-            If the remaining difference norm is below this, return zeros.
-
-        Returns
-        -------
-        np.ndarray, shape (3,)
-            Delta to apply this timestep in degrees [d_roll, d_pitch, d_yaw].
-        """
-
-        current = np.asarray(self.eul_ang_deg, dtype=float).reshape(3)
-        target  = np.asarray(eul_ang_cue_target, dtype=float).reshape(3)
-
-        if rot_rate_max <= 0.0 or sim_step_seconds <= 0.0:
-            return np.zeros(3, dtype=float)
-
-        # Shortest-path difference
-        diff = self._wrap_deg180(target - current)
-        diff_mag = float(np.linalg.norm(diff))
-
-        if diff_mag <= deadband_deg:
-            return np.zeros(3, dtype=float)
-
-        max_step_mag = rot_rate_max * sim_step_seconds
-
-        if diff_mag <= max_step_mag:
-            return diff
-
-        return diff * (max_step_mag / diff_mag)
-
-
 
 
 

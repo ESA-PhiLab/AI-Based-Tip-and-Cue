@@ -12,6 +12,7 @@ from org.orekit.orbits import CartesianOrbit, KeplerianOrbit
 from org.hipparchus.geometry.euclidean.threed import Vector3D
 
 from custom_paseos.utils.point_transformation import Point_Geodetic2ECEF
+from custom_paseos.attitude.controller import StabilizedAttitudeController, SO3PIDACS
 from custom_paseos.propagation.orekit_propagator import OrekitPropagator
 from paseos import ActorBuilder, SpacecraftActor
 
@@ -21,19 +22,79 @@ from org.orekit.orbits import KeplerianOrbit, PositionAngleType
 from org.orekit.utils import Constants
 from org.orekit.frames import FramesFactory
 
+def init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, eul_ang_tip_target, eul_ang_cue_target):
 
+    eo_tools_dict = {}
 
-def init_eo_tools(actors, fov_deg, eul_ang_deg):
-    tools = {}
-    for actor in actors:
-        tools[actor.name] = EOTools(
+    for actor in tip_actors:
+        eo_tools_dict[actor.name] = EOTools(
             local_actor=actor,
-            initial_eul_ang_deg=eul_ang_deg,
-            fov_act_deg=[fov_deg],
-            fov_alt_deg=[fov_deg],
+            initial_eul_ang_deg=eul_ang_tip_target,
+            fov_act_deg=[fov_tip],
+            fov_alt_deg=[fov_tip],
         )
-    return tools
 
+    for actor in cue_actors:
+        eo_tools_dict[actor.name] = EOTools(
+            local_actor=actor,
+            initial_eul_ang_deg=eul_ang_cue_target,
+            fov_act_deg=[fov_cue],
+            fov_alt_deg=[fov_cue],
+        )
+
+    return eo_tools_dict
+
+
+def _build_one(actor_list, eo_tools_dict, p):
+
+    # Unpack with safe defaults in case a key is missing
+    cutoff_freq_gnc   = p.get("cutoff_freq_gnc")
+    anti_windup_gain  = p.get("anti_windup_gain")
+    Kp_acs            = p.get("Kp_acs")
+    Kd_acs            = p.get("Kd_acs")
+    Ki_acs            = p.get("Ki_acs")
+
+    ang_vel_max_gnc   = p.get("ang_vel_max_gnc")
+    ang_vel_max_acs   = p.get("ang_vel_max_acs")
+
+    ang_accel_max_gnc = p.get("ang_accel_max_gnc")
+    tau_max_acs       = p.get("tau_max_acs")
+    J_sat             = np.asarray(p.get("J_sat"), dtype=float)
+
+    out = {}
+    for actor in actor_list:
+        eo_tools = eo_tools_dict[actor.name]
+
+        guidance = StabilizedAttitudeController(
+            initial_eul_ang_deg=eo_tools.eul_ang_deg,
+            cutoff_freq_gnc=cutoff_freq_gnc,
+            ang_accel_max_gnc=ang_accel_max_gnc,
+            ang_vel_max_gnc=ang_vel_max_gnc,
+        )
+
+        acs = SO3PIDACS(
+            eul_ang_deg_init=eo_tools.eul_ang_deg,
+            J_sat=J_sat,
+            Kp_acs=Kp_acs,
+            Kd_acs=Kd_acs,
+            Ki_acs=Ki_acs,
+            tau_max_acs=tau_max_acs,
+            ang_vel_max_acs=ang_vel_max_acs, anti_windup_gain=anti_windup_gain
+        )
+
+        out[actor.name] = {"guidance": guidance, "acs": acs}
+    return out
+
+def init_attitude_controllers(tip_actors, cue_actors, eo_tools_dict,
+                              controller_params_tip, controller_params_cue):
+
+    controllers = {}
+    if tip_actors != None:
+        controllers.update(_build_one(tip_actors, eo_tools_dict, controller_params_tip))
+
+    if cue_actors != None:
+        controllers.update(_build_one(cue_actors, eo_tools_dict, controller_params_cue))
+    return controllers
 
 def cleanup_tasked_targets(tasked_targets, current_time, timeout):
 

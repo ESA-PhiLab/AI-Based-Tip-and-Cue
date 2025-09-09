@@ -1,12 +1,14 @@
 import os
 from offnadir_imaging.functions.get_satellite_data import get_satellite, get_spatial_res
-from custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath
+from custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath, estimate_box_inertia
+from custom_paseos.attitude.tune_pid import tune_pid_with_limits
+
 from datetime import datetime, timezone
 import numpy as np
 import math
 
 # ================================================================================
-# SIMULATION SETTINGS
+# SIMULATION
 
 sim_name = "test1"
 
@@ -24,7 +26,7 @@ crop_black_border = True
 generate_radiation = True
 flat_dem = False
 exclude_dark = True
-sim_time = 'slow'
+sim_time = 'custom'
 
 R_earth = 6378137.0  # m
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
@@ -40,8 +42,13 @@ if sim_time == 'fast':
     plot_interval = 1
     print_interval = 10
 
+else:
+    sim_step_seconds = 1
+    plot_interval = 1
+    print_interval = 10
+
 # ================================================================================
-# SATELLITE
+# ORBIT
 
 nSats_tip = 1
 nSats_cue = 1
@@ -74,17 +81,70 @@ argp_cue_deg = argp_tip_deg       # Argument of periapsis [deg]
 delta_M_cue = 360.0 * (delta_t_cue / compute_orbital_period(a_tip))
 M_cue_deg = M_tip_deg - delta_M_cue
 
-satellite_mass = 9.54
-area_d = 0.164
-area_s = 0.162
+# ================================================================================
+# SATELLITE
+
+sat_mass = 2800.0         # kg
+sat_length, sat_width, sat_height = 4.5, 2.4, 2.2   # m (length, width, height)
+area_d = 5.0    # drag area
+area_s = 12.0   # sat area + solar panels
 cr_s = 1.5
 cd = 2.2
+J_sat = estimate_box_inertia(sat_mass, sat_length, sat_width, sat_height)                               # Principal moments of inertia Cue satellite (kg m^2/s)
+
+# ================================================================================
+# SENSOR
+
+elevation_min = 10.0 # degrees
+offnadir_max = 50.0     # max 62.5 deg
+
+resolution = 124  # pixels of render
+sample_count = 512  # 8192 min, 2048 * 2**7 max
+
+swath_tip = 290  * 10**3  # m
+swath_cue = 13.1 * 10**3  # m
+
+fov_tip = math.degrees(2 * math.atan(swath_tip / (2 * (a_tip - R_earth))) )         # deg
+fov_cue = math.degrees(2 * math.atan(swath_cue / (2 * (a_cue - R_earth))) )         # deg
+
+GSD0_tip = 10.0       # m
+GSD0_cue = 0.31     # m
+
+try:
+    satellite = get_satellite(img_path, csv_path)
+
+except:
+    print("Got default settings")
+    satellite = 'WV3'
+
+# ================================================================================
+# ATTITUDE
+
+cutoff_freq_gnc = 0.5                           # Low-pass cutoff for target smoothing, planning / guidance constraint (Hz)
+anti_windup_gain = 0.2
+
+ang_vel_max_gnc = 1.6                           # Maximum spacecraft rotational rate, planning / guidance constraint (deg/s)
+ang_vel_max_acs = 3.0                           # Maximum spacecraft rotational rate, bus/ actuator constraint (deg/s)
+
+ang_accel_max_gnc = 0.5                                            # Angular acceleration limit, planning (deg/s^2)
+tau_max_acs = 35.0                                                 # Max total actuator torque magnitude (N·m)
+ang_accel_max_acs = (tau_max_acs / J_sat) * (180.0 / np.pi)        # Angular acceleration limit, actuators (deg/s^2)
+
+wn_final, (Kp_acs, Kd_acs, Ki_acs) = tune_pid_with_limits(
+        J_sat=J_sat,
+        ang_vel_max_acs=ang_vel_max_acs,
+        tau_max_acs=tau_max_acs,
+        zeta=1.0,
+        wn_init=0.4,
+        pi_ratio=3.0,
+        theta_step_deg=20.0
+    )
 
 # ================================================================================
 # WHALES
 
-worldmap_dir = "dataset/worldmaps"     # Folder with GSHHS shapefiles; mask .tif/.npy will be stored here
-res_deg = 0.05                     # Raster resolution for land mask (deg/pixel)
+worldmap_dir = "dataset/worldmaps"      # Folder with GSHHS shapefiles; mask .tif/.npy will be stored here
+res_deg = 0.05                          # Raster resolution for land mask (deg/pixel)
 mask_tif = "land_mask.tif"
 mask_npy = "land_mask.npy"
 
@@ -101,32 +161,6 @@ speed_mean_reversion_per_s = 1.0 / 900.0
 speed_noise_sigma = 0.30
 turn_std_deg_per_sqrt_s = 2.0
 land_avoid_max_tries = 12
-
-# ================================================================================
-# SENSOR
-
-elevation_min = 10.0 # degrees
-offnadir_max = 50.0     # max 62.5 deg
-rot_rate_max = 2.0 # deg / s
-
-resolution = 124  # pixels of render
-sample_count = 512  # 8192 min, 2048 * 2**7 max
-
-swath_tip = 290  * 10**3  # m
-swath_cue = 13.1 * 10**3  # m
-
-fov_tip = math.degrees(2 * math.atan(swath_tip / (2 * (a_tip - R_earth))) )         # deg
-fov_cue = math.degrees(2 * math.atan(swath_cue / (2 * (a_cue - R_earth))) )         # deg
-
-GSD0_tip = 10       # m
-GSD0_cue = 0.31     # m
-
-try:
-    satellite = get_satellite(img_path, csv_path)
-
-except:
-    print("Got default settings")
-    satellite = 'WV3'
 
 # ================================================================================
 # WAVES
@@ -192,6 +226,19 @@ whale_propagation["speed_mean_reversion_per_s"] = speed_mean_reversion_per_s
 whale_propagation["speed_noise_sigma"] = speed_noise_sigma
 whale_propagation["turn_std_deg_per_sqrt_s"] = turn_std_deg_per_sqrt_s
 whale_propagation["land_avoid_max_tries"] = land_avoid_max_tries
+
+controller_params = {}
+controller_params["cutoff_freq_gnc"]   = cutoff_freq_gnc
+controller_params["anti_windup_gain"]   = anti_windup_gain
+controller_params["Kp_acs"]            = Kp_acs
+controller_params["Kd_acs"]            = Kd_acs
+controller_params["Ki_acs"]            = Ki_acs
+controller_params["ang_vel_max_gnc"]   = ang_vel_max_gnc
+controller_params["ang_vel_max_acs"]   = ang_vel_max_acs
+controller_params["ang_accel_max_gnc"] = ang_accel_max_gnc
+controller_params["tau_max_acs"]       = tau_max_acs
+controller_params["J_sat"]             = J_sat
+controller_params["ang_accel_max_acs"] = ang_accel_max_acs
 
 
 

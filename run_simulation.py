@@ -17,14 +17,16 @@ import paseos
 
 from custom_paseos.propagation.orekit_propagator import OrekitPropagator
 from custom_paseos.utils.point_transformation import Point_ECI2Geodetic
+from custom_paseos.attitude.controller import StabilizedAttitudeController, SO3PIDACS
 
+from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets,  init_whales, build_land_mask
+from simulation.simulation_functions import init_eo_tools, init_attitude_controllers, cleanup_tasked_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv
 from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter
 from simulation.plotting.plot_constellation import plot_constellation_pyvista
-from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets,  init_whales, build_land_mask
-from simulation.simulation_functions import init_eo_tools, cleanup_tasked_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv
 from simulation.logging import init_excel_log, log_tip_detection, log_cue_evaluation, gsd_offnadir, at_exit
 
+model_attitude_control = True
 show_constellation = False
 plot_propagation = False
 plot_footprints = True
@@ -79,7 +81,7 @@ for planet in all_planets:
     propagator = OrekitPropagator(
         orbital_elements=orbital_elements_true,
         epoch=t0_orekit,
-        satellite_mass=satellite_mass,
+        satellite_mass=sat_mass,
         area_s=area_s, cr_s=cr_s, area_d=area_d, cd=cd
     )
 
@@ -95,14 +97,13 @@ for planet in all_planets:
 
 eul_ang_tip_target = [0.0, 0.0, 0.0]
 eul_ang_cue_target = [0.0, 0.0, 0.0]
-offnadir_cue_deg = 0.0
+offnadir_cue_deg_target = 0.0
 offnadir_tip_deg = 0.0
 all_fov_polygons = []
 
 # EO Tools
-eo_tools_dict = {}
-eo_tools_dict.update(init_eo_tools(tip_actors, fov_tip, eul_ang_tip_target))
-eo_tools_dict.update(init_eo_tools(cue_actors, fov_cue, eul_ang_cue_target))
+eo_tools_dict = init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, eul_ang_tip_target, eul_ang_cue_target)
+controllers = init_attitude_controllers(None, cue_actors, eo_tools_dict, None, controller_params)         # Only initialize controller for cue
 
 if len(tip_actors) != 0:
     sim = paseos.init_sim(local_actor=tip_actors[0])
@@ -286,29 +287,52 @@ while elapsed_time <= sim_duration_seconds:
                     target_coord = (whale["lat"], whale["lon"], whale["alt"])
                     in_view = eo_tools.is_in_sight(target_coord, r_vec, v_vec, t_datetime, el_min=elevation_min)
 
-                    if in_view:
+                    # if in_view:
 
-                        offnadir_cue_deg, pointing_vec_brf_target = eo_tools.off_nadir_pointing_angle(r_eci=r_vec, v_eci=v_vec, target_geodetic=target_coord, time=t_datetime )
+                    offnadir_cue_deg_target, pointing_vec_brf_target = eo_tools.off_nadir_pointing_angle(r_eci=r_vec, v_eci=v_vec, target_geodetic=target_coord, time=t_datetime )
 
-                        if offnadir_cue_deg <= offnadir_max:
+                    if offnadir_cue_deg_target > offnadir_max:
+                        offnadir_cue_deg_target, pointing_vec_brf_target = eo_tools.set_max_offnadir(pointing_vec_brf_target, offnadir_cue_deg_target, offnadir_max)
 
-                            eul_ang_cue_target = eo_tools.pointing_attitude_brf(pointing_vec_brf_target, in_view)
+                    eul_ang_cue_target = eo_tools.pointing_attitude_brf(pointing_vec_brf_target)
 
-                            print(f"!! Cue: Target in view {whale_idx} | Set roll, pitch, yaw to {eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f} deg")
-                            eo_tools.busy = True
+                    print(f"!! Cue: Target in view {whale_idx} | Set roll, pitch, yaw to {eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f} deg")
+                    eo_tools.busy = True
 
             if not eo_tools.busy:
-                eul_ang_cue_target = [0.0, 0.0, 0.0]
-                print(f"!! Cue: Set roll, pitch, yaw target back to default {eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f} deg")
-                offnadir_cue_deg = 0.0
+                if np.any(eul_ang_cue_target != [0.0, 0.0, 0.0]):
+                    eul_ang_cue_target = [0.0, 0.0, 0.0]
+                    offnadir_cue_deg_target = 0.0
+                    print(f"!! Cue: Set roll, pitch, yaw target back to default {eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f} deg")
+
+        if model_attitude_control:
+            if not np.allclose(eo_tools.eul_ang_deg, eul_ang_cue_target, atol=1e-4, rtol=0):
+
+                ctrls = controllers[actor.name]
+                guid = ctrls["guidance"]
+                acs = ctrls["acs"]
+
+                eul_target_stab = guid.update_target(
+                    eul_ang_cue_target,  # raw target from pointing logic
+                    sim_step_seconds,
+                    eo_tools.eul_ang_deg  # current attitude for shortest-path wrapping
+                )
+
+                eul_new_deg = acs.step(eul_target_stab, sim_step_seconds)
+
+                delta_move_eul = eul_new_deg - eo_tools.eul_ang_deg
+                eo_tools.eul_ang_deg = eul_new_deg
+
+                # delta_move_eul = eo_tools.compute_delta_euler_step(eul_ang_cue_target, ang_vel_max_gnc, sim_step_seconds)
+                # eo_tools.eul_ang_deg += delta_move_eul
+                print(f"!! Cue: Moved roll, pitch, yaw by {delta_move_eul[0]:.1f}, {delta_move_eul[1]:.1f}, {delta_move_eul[2]:.1f} deg")
+
+        else:
+            eo_tools.eul_ang_deg = eul_ang_cue_target
 
         try:
           #   centerray_hit = eo_tools.get_CenterRay_Intersection_Attitude(r_vec, v_vec, t_datetime).flatten()
           #   ctr_lat, ctr_lon, ctr_alt = centerray_hit
-          
-            delta_move_eul = eo_tools.compute_delta_euler_step(eul_ang_cue_target, rot_rate_max, sim_step_seconds)
-            eo_tools.eul_ang_deg += delta_move_eul
-            print(f"!! Cue: Moved roll, pitch, yaw by {delta_move_eul[0]:.1f}, {delta_move_eul[1]:.1f}, {delta_move_eul[2]:.1f} deg")
 
             FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
             FovPoints_cue.append(FovPoints)
@@ -319,7 +343,7 @@ while elapsed_time <= sim_duration_seconds:
         except:
             print("!! Cue: target out of sight, continue to the next step")
             eul_ang_cue_target = [0.0, 0.0, 0.0]
-            offnadir_cue_deg = 0.0
+            offnadir_cue_deg_target = 0.0
             continue
 
 
@@ -340,6 +364,8 @@ while elapsed_time <= sim_duration_seconds:
                     detected_targets[whale_idx], tasked_targets[whale_idx] = w, w  # to keep track of history
                     all_targets[whale_idx]["detected"] = 2  # detected by cue
                     eval_idx = whale_idx
+
+                    offnadir_cue_deg, pointing_vec_brf_target = eo_tools.off_nadir_pointing_angle(r_eci=r_vec, v_eci=v_vec, target_geodetic=target_coord, time=t_datetime)
 
                     h_m = float(np.linalg.norm(np.array(r))) - R_earth
                     gsd_cue = gsd_offnadir(GSD0_cue, h_m, offnadir_cue_deg)
