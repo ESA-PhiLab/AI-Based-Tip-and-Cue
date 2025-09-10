@@ -21,7 +21,7 @@ import pyproj
 from pyproj import Geod
 import warnings
 from custom_paseos.utils.constants import R_p, R_e
-from datetime import datetime
+from datetime import datetime, timedelta
 from PIL import Image
 from matplotlib.lines import Line2D
 from shapely.geometry import Polygon, Point
@@ -87,6 +87,7 @@ class EOTools:
         self.fov_angles = [fov_act_deg[0], fov_alt_deg[0]]
 
         self.phi_deg = 0.0
+        self.eul_ang_target = [0.0, 0.0, 0.0]
 
     # Module to create a Piramidal 3D FOV in the BRF. Thi module allows to create the piramidal shape of a rectangular footprint in the BRF.
     # Note that this module allows to have the directions of the 3D prismatic FOV lines in the BRF, to get the intersection with a geoidetic reference model.
@@ -290,11 +291,11 @@ class EOTools:
 
         return df
 
-    def off_nadir_pointing_angle(self, r_eci, v_eci, target_geodetic, time):
+    def off_nadir_pointing_angle(self, r_eci, v_eci, target_geodetic, t_datetime):
         # geodetic target → ECI
 
         eul_ang_ref = [0.0, 0.0, 0.0]
-        P_target_eci = Point_Geodetic2ECI(*target_geodetic, time)
+        P_target_eci = Point_Geodetic2ECI(*target_geodetic, t_datetime)
         # Distance Computation
         vec_eci = P_target_eci - r_eci
         # ECI → BRF
@@ -356,6 +357,147 @@ class EOTools:
         az, el, _ = pm.enu2aer(e, n, u)
         in_sight = el > el_min
         return in_sight
+
+
+    # ----------------------- ADDED ------------------------------------------------
+    @staticmethod
+    def _kepler_propagate_universal(r0, v0, dt, mu=3.986004418e14):
+        """
+        Two-body Kepler propagation via universal variables (short dt, coarse checks).
+        Returns r(dt), v(dt).
+        """
+        r0 = np.asarray(r0, dtype=float).flatten()
+        v0 = np.asarray(v0, dtype=float).flatten()
+
+        r0n = float(np.linalg.norm(r0))
+        v0n = float(np.linalg.norm(v0))
+        alpha = 2.0 / r0n - (v0n * v0n) / mu
+
+        def stumpff_C(z):
+            if z > 0:
+                s = np.sqrt(z)
+                return (1 - np.cos(s)) / z
+            if z < 0:
+                s = np.sqrt(-z)
+                return (np.cosh(s) - 1) / (-z)
+            return 0.5
+
+        def stumpff_S(z):
+            if z > 0:
+                s = np.sqrt(z)
+                return (s - np.sin(s)) / (s ** 3)
+            if z < 0:
+                s = np.sqrt(-z)
+                return (np.sinh(s) - s) / (s ** 3)
+            return 1.0 / 6.0
+
+        # Initial guess for chi
+        chi = np.sqrt(mu) * abs(alpha) * dt if alpha != 0 else np.sqrt(mu) * dt / r0n
+
+        # Newton iterations
+        for _ in range(6):
+            z = alpha * chi * chi
+            C = stumpff_C(z)
+            S = stumpff_S(z)
+            rv0 = float(np.dot(r0, v0))
+            F = (r0n * chi * chi * C) + (rv0 / np.sqrt(mu)) * chi * (1 - z * S) + r0n * (1 - z * C) - np.sqrt(mu) * dt
+            dF = (r0n * chi * (1 - z * S)) + (rv0 / np.sqrt(mu)) * (1 - z * C) + r0n * (-z * S) * chi
+            chi -= F / dF
+
+        z = alpha * chi * chi
+        C = stumpff_C(z)
+        S = stumpff_S(z)
+        f = 1 - (chi * chi * C) / r0n
+        g = dt - (chi ** 3) * S / np.sqrt(mu)
+        r = f * r0 + g * v0
+        rn = float(np.linalg.norm(r))
+        fdot = (np.sqrt(mu) / (r0n * rn)) * (z * S - 1) * chi
+        gdot = 1 - (chi * chi * C) / rn
+        v = fdot * r0 + gdot * v0
+        return r, v
+
+    def _target_state_eci(self, target_geodetic, t_datetime):
+        """
+        Target position and inertial velocity (due to Earth rotation) in ECI.
+        """
+        lat, lon, alt = target_geodetic
+        x, y, z = pm.geodetic2ecef(lat, lon, alt)
+        rx, ry, rz = pm.ecef2eci(x, y, z, t_datetime)
+        r_tgt_eci = np.array([rx, ry, rz], dtype=float).flatten()
+
+        omega_earth = np.array([0.0, 0.0, 7.2921150e-5])  # rad/s
+        v_tgt_eci = np.cross(omega_earth, r_tgt_eci).flatten()
+        return r_tgt_eci, v_tgt_eci
+
+    def fast_inclusion_marker(self, target_geodetic, r_eci, v_eci, t_datetime, t_ahead,
+                              el_min_deg=0.0, confirm=True):
+        """
+        Very fast yes/no: could the target be visible within [time, time+t_ahead]?
+        """
+        # Immediate pass
+        if self.is_in_sight(target_geodetic, r_eci, v_eci, t_datetime, el_min_deg):
+            return True
+
+        r_tgt, v_tgt = self._target_state_eci(target_geodetic, t_datetime)
+        dr = np.asarray(r_eci, float).flatten() - r_tgt
+        v_rel = np.asarray(v_eci, float).flatten() - v_tgt
+
+        drn = float(np.linalg.norm(dr))
+        if drn < 1.0:
+            return False
+
+        rr = float(np.dot(dr / drn, v_rel))  # range-rate
+        if rr >= 0.0:
+            return False
+
+        vrel2 = float(np.dot(v_rel, v_rel))
+        if vrel2 < 1e-12:
+            return False
+
+        t_star = -float(np.dot(dr, v_rel)) / vrel2
+        if not (0.0 < t_star <= t_ahead):
+            return False
+
+        if not confirm:
+            return True
+
+        # Cheap confirmation: check elevation at time + t*
+        r_star = np.asarray(r_eci, float).flatten() + np.asarray(v_eci, float).flatten() * t_star
+        t_future = t_datetime + timedelta(seconds=float(t_star))
+        return self.is_in_sight(target_geodetic, r_star, v_eci, t_future, el_min_deg)
+
+    def will_be_visible_within(self, target_geodetic, r_eci, v_eci, t_datetime,
+                               t_ahead, el_min_deg=10.0, step=600.0):
+        """
+        Returns (visible, time_to_visibility).
+
+        - visible: True if satellite will see target within t_ahead
+        - time_to_visibility: 0.0 if already visible, >0 if visible later, None if never visible
+        """
+        # 1) Immediate
+        if self.is_in_sight(target_geodetic, r_eci, v_eci, t_datetime, el_min_deg):
+            return True, 0.0
+
+        # 2) Fast inclusion marker
+        if self.fast_inclusion_marker(target_geodetic, r_eci, v_eci, t_datetime, t_ahead, el_min_deg, confirm=True):
+            # We only know it's visible within horizon, exact time requires coarse scan
+            # Continue to coarse scan
+            pass
+
+        # 3) Coarse scan
+        t = 0.0
+        r, v = np.asarray(r_eci, float).flatten(), np.asarray(v_eci, float).flatten()
+        while t < t_ahead:
+            h = min(step, t_ahead - t)
+            r, v = self._kepler_propagate_universal(r, v, h)
+            t += h
+            time_step = t_datetime + timedelta(seconds=float(t))
+            if self.is_in_sight(target_geodetic, r, v, time_step, el_min_deg):
+                return True, t  # visible in t seconds
+
+        return False, None
+
+    # ---------------------- ADDED --------------------------------------------------
 
     def pointing_attitude_brf(self, pointing_vec_brf_target):
 

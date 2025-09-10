@@ -1,6 +1,6 @@
 import os
 from offnadir_imaging.functions.get_satellite_data import get_satellite, get_spatial_res
-from custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath, estimate_box_inertia
+from custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath, estimate_box_inertia, pass_time_from_nadir
 from custom_paseos.attitude.tune_pid import tune_pid_with_limits
 
 from datetime import datetime, timezone
@@ -30,7 +30,7 @@ sim_time = 'custom'
 
 R_earth = 6378137.0  # m
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
-sim_duration_hours = 0.25
+sim_duration_hours = 0.35
 
 if sim_time == 'slow':
     sim_step_seconds = 1
@@ -38,7 +38,7 @@ if sim_time == 'slow':
     print_interval = 10
 
 if sim_time == 'fast':
-    sim_step_seconds = 30
+    sim_step_seconds = 600
     plot_interval = 1
     print_interval = 10
 
@@ -50,11 +50,11 @@ else:
 # ================================================================================
 # ORBIT
 
-nSats_tip = 1
-nSats_cue = 1
+nSats_tip = 2
+nSats_cue = 2
 
-nPlanes_tip = 1
-nPlanes_cue = 1
+nPlanes_tip = 2
+nPlanes_cue = 2
 
 hp = 616.1e3                              # perigee altitude [m]        Like WV-3, from: https://www.n2yo.com/satellite/?s=40115
 ha = 624.4e3                              # apogee altitude [m]
@@ -66,6 +66,7 @@ M_tip_deg    = 219.5701 - 140                  # Mean anomaly [deg]
 delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
 tasking_delay_tip = 60      # Time delay between tip and cue transfer [sec]
 tasking_delay_cue = 10      # Time delay after detection by cue [sec]
+avg_time_delay = delta_t_cue
 
 rp = R_earth + hp
 ra = R_earth + ha
