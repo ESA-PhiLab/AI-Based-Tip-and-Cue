@@ -22,13 +22,13 @@ from custom_paseos.attitude.controller import StabilizedAttitudeController, SO3P
 from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets, init_whales, build_land_mask
 from simulation.simulation_functions import init_eo_tools, init_attitude_controllers, cleanup_tasked_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost
 from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints
-from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter
+from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate
 from simulation.plotting.plot_constellation import plot_constellation_pyvista
 from simulation.logging import init_excel_log, log_tip_detection, log_cue_evaluation, gsd_offnadir, at_exit, Logger
 
 model_attitude_control = True
 show_constellation = False
-plot_propagation = False
+plot_propagation = True
 plot_footprints = False
 show_orbits = False
 generate_image = False
@@ -48,7 +48,6 @@ from org.orekit.time import AbsoluteDate, TimeScalesFactory
 from simulation.constellation import build_constellation
 
 from astropy.utils.iers import conf
-
 conf.auto_max_age = None  # allow predictive values older than 30 days
 
 pv.global_theme.allow_empty_mesh = True
@@ -174,6 +173,9 @@ if plot_propagation:
      eval_pts, task_pts) = reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=None)
 
     pl.show(cpos="xy", interactive_update=True, auto_close=False)
+
+    pv_framerate, frames_per_orbit = compute_movie_framerate(a_cue, sim_step_seconds, plot_interval, movie_orbit_sec)
+    pl.open_movie( "simulation.mp4",  framerate=pv_framerate)
 
 detect_idx = None
 eval_idx = None
@@ -502,6 +504,8 @@ while elapsed_time <= sim_duration_seconds:
             FovPoints_tip, FovPoints_cue
         )
 
+        pl.write_frame()
+
     t_end = time.time()
 
     if n_steps % print_interval == 0:
@@ -510,6 +514,9 @@ while elapsed_time <= sim_duration_seconds:
     sim.advance_time(time_to_advance=sim_step_seconds, current_power_consumption_in_W=0.0)
     elapsed_time += sim_step_seconds
     n_steps += 1
+
+if plot_propagation:
+    pl.close()
 
 if show_orbits:
     plot_orbits(trajectories)

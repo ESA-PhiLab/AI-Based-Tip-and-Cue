@@ -10,7 +10,7 @@ import math
 # ================================================================================
 # SIMULATION
 
-sim_name = "TC_constellation_nSats2_nPlanes4"
+sim_name = 'test1' #"TC_constellation_nSats2_nPlanes4"
 
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
@@ -26,18 +26,19 @@ crop_black_border = True
 generate_radiation = True
 flat_dem = False
 exclude_dark = True
-sim_time = 'fast'
+sim_time = 'slow'
 
 R_earth = 6378137.0  # m
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
-sim_duration_hours = 0.2
+sim_duration_hours = 0.05
+movie_orbit_sec = 8.0
 
 if sim_time == 'slow':
     sim_step_seconds = 1
     plot_interval = 10
     print_interval = 10
 
-if sim_time == 'fast':
+elif sim_time == 'fast':
     sim_step_seconds = 60
     plot_interval = 1
     print_interval = 10
@@ -53,8 +54,8 @@ else:
 nSats_tip = 2
 nSats_cue = 2
 
-nPlanes_tip = 4
-nPlanes_cue = 4
+nPlanes_tip = 2
+nPlanes_cue = 2
 
 hp = 616.1e3                              # perigee altitude [m]        Like WV-3, from: https://www.n2yo.com/satellite/?s=40115
 ha = 624.4e3                              # apogee altitude [m]

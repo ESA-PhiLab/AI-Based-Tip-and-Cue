@@ -9,6 +9,7 @@ import shutil
 import atexit
 
 import sys
+import time, shutil, os
 
 def init_excel_log(path, header, sheet_name="Log"):
     if os.path.exists(path):
@@ -129,6 +130,19 @@ def should_log_event(writer, whale_idx, t_datetime, min_gap_sec=600):
 
     return False
 
+
+def safe_move(move_file, results_dir, retries=5, delay=1.0):
+    dest = os.path.join(results_dir, move_file)
+    for i in range(retries):
+        try:
+            shutil.move(move_file, dest)
+            print(f"Moved {move_file} -> {dest}")
+            return
+        except PermissionError as e:
+            print(f"Retry {i+1}/{retries}: could not move {move_file}, still locked.")
+            time.sleep(delay)
+    print(f"Warning: could not move {move_file} after {retries} retries.")
+
 def at_exit(save_name):
     print("Runtime ended. ")
     results_dir = os.path.join("results", save_name)
@@ -147,23 +161,29 @@ def at_exit(save_name):
         else:
             print(f"Warning: {src} not found, skipping.")
 
-    # also copy settings.py
-    settings_file = "settings.py"
-    if os.path.exists(settings_file):
-        shutil.copy(settings_file, os.path.join(results_dir, settings_file))
+    copy_file = "settings.py"
+    if os.path.exists(copy_file):
+        shutil.copy(copy_file, os.path.join(results_dir, copy_file))
     else:
-        print("Warning: settings.py not found, skipping.")
+        print(f"Warning: {copy_file} not found, skipping.")
+
+    move_file ="simulation.mp4"
+    if os.path.exists(move_file):
+        try:
+            safe_move(move_file, results_dir)
+        except PermissionError as e:
+            print(f"PermissionError: could not move {move_file}: {e}")
+    else:
+        print(f"Warning: {move_file} not found, skipping.")
 
     sys.stdout.log.close()
-    output_file = "output.log"
-    if os.path.exists(output_file):
-        shutil.move(output_file, os.path.join(results_dir, output_file))
+    move_file = "output.log"
+    if os.path.exists(move_file):
+        safe_move(move_file, results_dir)
     else:
-        print("Warning: output.log not found, skipping.")
+        print(f"Warning: {move_file} not found, skipping.")
 
     print(f"Saved results in results/{save_name}")
-
-
 
 
 

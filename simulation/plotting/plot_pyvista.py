@@ -14,6 +14,7 @@ import pymap3d as pm
 
 from settings import R_earth
 from custom_paseos.utils.point_transformation import Point_Geodetic2ECEF, Point_ECI2Geodetic
+from custom_paseos.utils.help_functions import compute_orbital_period
 
 # --- Orekit (used for precise Sun position in EME2000/ECI) ---
 import orekit  # VM must be initialized by caller before using these functions
@@ -43,7 +44,7 @@ def make_plotter() -> pv.Plotter:
     pl = pv.Plotter(lighting="none")
     cubemap = examples.download_cubemap_space_4k()
     pl.add_actor(cubemap.to_skybox())
-    pl.set_environment_texture(cubemap, True)
+    pl.set_environment_texture(cubemap, is_srgb=True)
 
     earth = examples.planets.load_earth(radius=R_earth)  # radius in meters
     earth_texture = examples.load_globe_texture()
@@ -114,7 +115,7 @@ def init_fov_layers(
     tip_edge_color: str = "white",
     cue_edge_color: str = "white",
     opacity: float = 0.35,
-    line_width: float = 2.0,
+    line_width: float = 3.0,
 ):
     placeholder_latlon = np.array([[0.0, 0.0], [0.0, 1e-6], [1e-6, 0.0]], dtype=float)
 
@@ -201,10 +202,10 @@ def _eci_to_greenwich_angle_rad(t: datetime) -> float:
 
 
 def make_plotter_eci():
-    pl = pv.Plotter(lighting="none")
+    pl = pv.Plotter(lighting="none", window_size=(1920, 1072))
     cubemap = examples.download_cubemap_space_4k()
     pl.add_actor(cubemap.to_skybox())
-    pl.set_environment_texture(cubemap, True)
+    pl.set_environment_texture(cubemap, is_srgb=True)
 
     earth_mesh = examples.planets.load_earth(radius=R_earth)
     earth_tex = examples.load_globe_texture()
@@ -412,13 +413,15 @@ def init_sun_light(pl: pv.Plotter) -> pv.Light:
     """
     Create a directional light representing the Sun. Must be updated each frame with update_sun_light_eci().
     """
-    light = pv.Light()
-    light.positional = False            # directional
+    light = pv.Light(light_type='scene light', color='white')
     light.intensity = 1.0
-    light.color = "white"
-    light.focal_point = (0.0, 0.0, 0.0) # point toward Earth's center
+    #light.ambient_color = 'white'
+    light.diffuse_color = 'white'
+    # light.specular_color = 'white'
+    light.focal_point = (0.0, 0.0, 0.0)
+
     pl.add_light(light)
-    return light
+    return light  # <-- make sure this line is here
 
 
 def update_sun_light_eci(light: pv.Light, t: datetime, distance_scale: float = 1e8) -> None:
@@ -457,7 +460,7 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
     # --- Background (stars/space) ---
     cubemap = examples.download_cubemap_space_4k()
     pl.add_actor(cubemap.to_skybox())
-    pl.set_environment_texture(cubemap, True)
+    pl.set_environment_texture(cubemap, is_srgb=True)
 
     # --- Earth ---
     earth_mesh = examples.planets.load_earth(radius=R_earth)
@@ -552,4 +555,14 @@ def update_plotter(pl,
     pl.update()
 
     return eval_pts, task_pts
+
+def compute_movie_framerate(a, sim_step_seconds, plot_interval, movie_orbit_sec):
+    T_orbit = compute_orbital_period(a)  # orbital period [s]
+    steps_per_orbit = T_orbit / sim_step_seconds
+    frames_per_orbit = steps_per_orbit / plot_interval
+    framerate = frames_per_orbit / movie_orbit_sec
+    framerate = int(framerate)
+    if framerate < 1:
+        framerate = 1
+    return framerate, frames_per_orbit
 
