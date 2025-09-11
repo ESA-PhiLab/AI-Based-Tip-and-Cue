@@ -20,7 +20,7 @@ from custom_paseos.utils.point_transformation import Point_ECI2Geodetic, Point_G
 from custom_paseos.attitude.controller import StabilizedAttitudeController, SO3PIDACS
 
 from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets, init_whales, build_land_mask
-from simulation.simulation_functions import init_eo_tools, init_attitude_controllers, cleanup_tasked_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv
+from simulation.simulation_functions import init_eo_tools, init_attitude_controllers, cleanup_tasked_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost
 from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter
 from simulation.plotting.plot_constellation import plot_constellation_pyvista
@@ -32,8 +32,8 @@ plot_propagation = False
 plot_footprints = True
 show_orbits = False
 generate_image = False
-logging = False
-verbose = True
+logging = True
+verbose = False
 
 # Initialize Orekit
 vm = orekit.initVM()
@@ -55,7 +55,7 @@ pv.global_theme.allow_empty_mesh = True
 paseos.set_log_level("WARNING")
 
 # Time setup
-print(f"Initiate simulation {sim_name}")
+print(f"Initiate simulation {sim_name} | Attitude control {model_attitude_control} | Logging {logging}")
 utc = TimeScalesFactory.getUTC()
 t0_orekit = AbsoluteDate(t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second + t0.microsecond / 1e6, utc)
 t0_pykep = pk.epoch_from_string(t0.strftime("%Y-%m-%d %H:%M:%S"))
@@ -258,7 +258,13 @@ while elapsed_time <= sim_duration_seconds:
                             best_cue = cue_actor.name
 
                     w["assigned_cue"] = best_cue
-                    print(f"!! {actor.name}: Assigned target {whale_idx} to {best_cue}")
+                    print(f"!! {actor.name}: Assigned Target {whale_idx} to {best_cue}")
+
+                    eo_tools_dict[best_cue].task_queue.append({
+                        "target_id": whale_idx,
+                        "coord": target_coord,
+                        "assign_time": t_datetime
+                    })
 
                     tasked_targets[whale_idx], detected_targets[whale_idx] = w, w
                     all_targets[whale_idx]["detected"] = 1
@@ -312,33 +318,69 @@ while elapsed_time <= sim_duration_seconds:
                 if t_datetime > detection_time + timedelta(seconds=tasking_delay):  # Skip if not yet transmitted
 
                     target_coord = (whale["lat"], whale["lon"], whale["alt"])
-                    in_view = eo_tools.is_in_sight(target_coord, r_vec, v_vec, t_datetime, el_min=elevation_min)
-                    will_be_in_view, _ = eo_tools.will_be_visible_within(target_coord, r_vec, v_vec, t_datetime, delta_t_cue, el_min_deg=elevation_min, step=60.0)
 
-                    if in_view or will_be_in_view:
+                    # If no current task, check the queue
+                    if eo_tools.current_task is None and eo_tools.task_queue:
 
-                        offnadir_cue_deg_target, pointing_vec_brf_target = eo_tools.off_nadir_pointing_angle(r_eci=r_vec, v_eci=v_vec, target_geodetic=target_coord, t_datetime=t_datetime)
+                        # Filter tasks that will actually become visible soon
+                        ready_tasks = []
+                        for task in eo_tools.task_queue:
+                            will_be_visible, _ = eo_tools.will_be_visible_within(
+                                task["coord"], r_vec, v_vec, t_datetime,
+                                delta_t_cue, el_min_deg=elevation_min, step=60.0
+                            )
+                            if will_be_visible:
+                                ready_tasks.append(task)
 
-                        if offnadir_cue_deg_target > offnadir_max:
-                            offnadir_cue_deg_target, pointing_vec_brf_target = eo_tools.set_max_offnadir(pointing_vec_brf_target, offnadir_cue_deg_target, offnadir_max)
+                        if ready_tasks:
+                            # Pick the ready task with least pointing cost
+                            eo_tools.current_task = min(
+                                ready_tasks,
+                                key=lambda task: pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime)
+                            )
+                            eo_tools.task_queue.remove(eo_tools.current_task)
+                            print(f"!! {actor.name}: Starting task for Target {eo_tools.current_task['target_id']}")
 
-                        eo_tools.eul_ang_target = eo_tools.pointing_attitude_brf(pointing_vec_brf_target)
+                    # If still no current task, assign this whale now
+                    if eo_tools.current_task is None and whale["assigned_cue"] == actor.name:
+                        eo_tools.current_task = {
+                            "target_id": whale_idx,
+                            "coord": target_coord
+                        }
+                        print(f"!! {actor.name}: New task assigned for Target {whale_idx}")
 
-                        if not eo_tools.busy:
-                            print(f"!! {actor.name}: Target in view {whale_idx} | Set roll, pitch, yaw to {eo_tools.eul_ang_target[0]:.1f}, {eo_tools.eul_ang_target[1]:.1f}, {eo_tools.eul_ang_target[2]:.1f} deg")
+                    # Work on the current task if one exists
+                    if eo_tools.current_task:
+                        task_id = eo_tools.current_task["target_id"]
+                        task_coord = eo_tools.current_task["coord"]
 
-                        eo_tools.busy = True
+                        in_view = eo_tools.is_in_sight(task_coord, r_vec, v_vec, t_datetime, el_min=elevation_min)
+                        will_be_in_view, _ = eo_tools.will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_cue, el_min_deg=elevation_min, step=60.0)
 
-                    # Reset if assigned but not in view anymore
-                    if whale["assigned_cue"] == actor.name and not (in_view or will_be_in_view):
-                        eo_tools.busy = False
-                        eo_tools.eul_ang_target = eul_ang_cue_default
-                        offnadir_cue_deg_target = 0.0
+                        if in_view or will_be_in_view:
 
-            if not eo_tools.busy:
+                            offnadir_cue_deg_target, pointing_vec_brf_target = eo_tools.off_nadir_pointing_angle(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime)
+
+                            if offnadir_cue_deg_target > offnadir_max:
+                                offnadir_cue_deg_target, pointing_vec_brf_target = eo_tools.set_max_offnadir(pointing_vec_brf_target, offnadir_cue_deg_target, offnadir_max)
+
+                            if eo_tools.eul_ang_target == eul_ang_cue_default:
+                                eo_tools.eul_ang_target = eo_tools.pointing_attitude_brf(pointing_vec_brf_target)       # compute double, only for print
+                                print(f"!! {actor.name}: Target {whale_idx} in reach | Set roll, pitch, yaw to {eo_tools.eul_ang_target[0]:.1f}, {eo_tools.eul_ang_target[1]:.1f}, {eo_tools.eul_ang_target[2]:.1f} deg")
+
+                            eo_tools.eul_ang_target = eo_tools.pointing_attitude_brf(pointing_vec_brf_target)
+
+                        else:
+                            # Task finished → reset and pick next later
+                            print(f"!! {actor.name}: Target {task_id} out of view")
+                            eo_tools.current_task = None
+                            eo_tools.eul_ang_target = eul_ang_cue_default
+                            offnadir_cue_deg_target = 0.0
+
+            if eo_tools.current_task == None:
                 if np.any(eo_tools.eul_ang_target != eul_ang_cue_default):
-                    if np.any(eo_tools.eul_ang_target != eul_ang_cue_default):
-                        print(f"!! {actor.name}: Set roll, pitch, yaw target back to default {eo_tools.eul_ang_target[0]:.1f}, {eo_tools.eul_ang_target[1]:.1f}, {eo_tools.eul_ang_target[2]:.1f} deg")
+
+                    print(f"!! {actor.name}: Set roll, pitch, yaw target back to default {eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg")
 
                     eo_tools.eul_ang_target = eul_ang_cue_default
                     offnadir_cue_deg_target = 0.0
@@ -374,7 +416,7 @@ while elapsed_time <= sim_duration_seconds:
                 all_fov_polygons.append(FovPoints)
 
         except:
-            print(f"!! {actor.name}: target out of sight, continue to the next step")
+            print(f"!! {actor.name}: no FOV intersection, continue to the next step")
             eo_tools.eul_ang_target = eul_ang_cue_default
             offnadir_cue_deg_target = 0.0
             continue
@@ -420,7 +462,7 @@ while elapsed_time <= sim_duration_seconds:
 
                     evaluated_targets[whale_idx] = w
                     del tasked_targets[whale_idx]
-                    eo_tools.busy = False
+                    eo_tools.current_task = None
 
                     if plot_footprints:
                         all_fov_polygons.append(FovPoints)

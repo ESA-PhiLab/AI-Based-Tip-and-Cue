@@ -553,4 +553,3 @@ def update_plotter(pl,
 
     return eval_pts, task_pts
 
-

@@ -249,9 +249,6 @@ def get_constellation(a, e, i_deg, RAAN_deg, argp_deg, M_deg,
     return planet_list, satellites, period
 
 
-
-
-
 def analyze_keplerian_constellation(planets):
     """
     Analyze constellation metadata from Orekit-based planet_list.

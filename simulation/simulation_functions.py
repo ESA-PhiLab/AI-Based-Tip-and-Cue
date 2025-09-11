@@ -16,20 +16,23 @@ from custom_paseos.attitude.controller import StabilizedAttitudeController, SO3P
 from custom_paseos.propagation.orekit_propagator import OrekitPropagator
 from paseos import ActorBuilder, SpacecraftActor
 
+import numpy as np
+from custom_paseos.utils.point_transformation import Point_Geodetic2ECI
+
 
 import math
 from org.orekit.orbits import KeplerianOrbit, PositionAngleType
 from org.orekit.utils import Constants
 from org.orekit.frames import FramesFactory
 
-def init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, eul_ang_tip_target, eul_ang_cue_target):
+def init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, eul_ang_tip_init, eul_ang_cue_init):
 
     eo_tools_dict = {}
 
     for actor in tip_actors:
         eo_tools_dict[actor.name] = EOTools(
             local_actor=actor,
-            initial_eul_ang_deg=eul_ang_tip_target,
+            initial_eul_ang_deg=eul_ang_tip_init,
             fov_act_deg=[fov_tip],
             fov_alt_deg=[fov_tip],
         )
@@ -37,7 +40,7 @@ def init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, eul_ang_tip_target, 
     for actor in cue_actors:
         eo_tools_dict[actor.name] = EOTools(
             local_actor=actor,
-            initial_eul_ang_deg=eul_ang_cue_target,
+            initial_eul_ang_deg=eul_ang_cue_init,
             fov_act_deg=[fov_cue],
             fov_alt_deg=[fov_cue],
         )
@@ -218,4 +221,29 @@ def convert_M_to_lv(orbital_elements, epoch):
 
     return [a, e, i, argp, raan, lv_deg]
 
+
+def pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime):
+    """
+    Compute the angular cost of retargeting to this task.
+    Lower = easier to point.
+
+    task: dict with at least "coord" (lat, lon, alt)
+    eo_tools: EO tools object for the satellite
+    r_vec, v_vec: satellite state vectors in ECI
+    t_datetime: datetime of evaluation
+    """
+    # Convert target to pointing vector
+    _, pointing_vec_brf = eo_tools.off_nadir_pointing_angle(
+        r_eci=r_vec,
+        v_eci=v_vec,
+        target_geodetic=task["coord"],
+        t_datetime=t_datetime
+    )
+
+    # Desired Euler angles for that target
+    eul_target = eo_tools.pointing_attitude_brf(pointing_vec_brf)
+
+    # Difference from current pointing
+    delta = np.abs(np.array(eul_target) - np.array(eo_tools.eul_ang_deg))
+    return np.linalg.norm(delta)
 

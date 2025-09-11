@@ -51,15 +51,14 @@ from custom_paseos.utils.point_transformation import (
 
 class EOTools:
     # Spacecraft_actor.
+
     _actor = None
-    # Actor attitude in deg
     eul_ang_deg = None
-
     fov_angles = None
-
     phi_deg = None      # Rotation angle about own FOV axis (pointing_vec_brf)
+    task_queue = []
+    current_task = None
 
-    busy = False
 
     """
     This class is provided with all the functions needed to perform the dedicated Earth-Observation activities
@@ -88,6 +87,9 @@ class EOTools:
 
         self.phi_deg = 0.0
         self.eul_ang_target = [0.0, 0.0, 0.0]
+
+        self.task_queue = []
+        self.current_task = None
 
     # Module to create a Piramidal 3D FOV in the BRF. Thi module allows to create the piramidal shape of a rectangular footprint in the BRF.
     # Note that this module allows to have the directions of the 3D prismatic FOV lines in the BRF, to get the intersection with a geoidetic reference model.
