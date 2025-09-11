@@ -154,16 +154,16 @@ def at_exit(save_name):
     else:
         print("Warning: settings.py not found, skipping.")
 
-    # also copy settings.py
-    output_file = "output.txt"
+    sys.stdout.log.close()
+    output_file = "output.log"
     if os.path.exists(output_file):
         shutil.move(output_file, os.path.join(results_dir, output_file))
     else:
-        print("Warning: output.py not found, skipping.")
+        print("Warning: output.log not found, skipping.")
 
     print(f"Saved results in results/{save_name}")
 
-    sys.stdout.log.close()
+
 
 
 
