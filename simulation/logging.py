@@ -8,6 +8,8 @@ import os
 import shutil
 import atexit
 
+import sys
+
 def init_excel_log(path, header, sheet_name="Log"):
     if os.path.exists(path):
         os.remove(path)
@@ -152,4 +154,29 @@ def at_exit(save_name):
     else:
         print("Warning: settings.py not found, skipping.")
 
+    # also copy settings.py
+    output_file = "output.txt"
+    if os.path.exists(output_file):
+        shutil.move(output_file, os.path.join(results_dir, output_file))
+    else:
+        print("Warning: output.py not found, skipping.")
+
     print(f"Saved results in results/{save_name}")
+
+    sys.stdout.log.close()
+
+
+
+class Logger:
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log = open(filename, "a")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+

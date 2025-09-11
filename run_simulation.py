@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import atexit
 import time
 import gc
-import os
+import os, sys
 
 from orekit.pyhelpers import setup_orekit_curdir
 
@@ -24,12 +24,12 @@ from simulation.simulation_functions import init_eo_tools, init_attitude_control
 from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter
 from simulation.plotting.plot_constellation import plot_constellation_pyvista
-from simulation.logging import init_excel_log, log_tip_detection, log_cue_evaluation, gsd_offnadir, at_exit
+from simulation.logging import init_excel_log, log_tip_detection, log_cue_evaluation, gsd_offnadir, at_exit, Logger
 
 model_attitude_control = True
 show_constellation = False
 plot_propagation = False
-plot_footprints = True
+plot_footprints = False
 show_orbits = False
 generate_image = False
 logging = True
@@ -55,6 +55,11 @@ pv.global_theme.allow_empty_mesh = True
 paseos.set_log_level("WARNING")
 
 # Time setup
+# Redirect both stdout and stderr
+if logging:
+    sys.stdout = Logger("output.log")
+    sys.stderr = sys.stdout
+
 print(f"Initiate simulation {sim_name} | Attitude control {model_attitude_control} | Logging {logging}")
 utc = TimeScalesFactory.getUTC()
 t0_orekit = AbsoluteDate(t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second + t0.microsecond / 1e6, utc)
