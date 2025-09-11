@@ -552,7 +552,7 @@ def update_plotter(pl,
         FovPoints_tip, FovPoints_cue, t_datetime
     )
 
-    step_text.SetText(0, f"Step: {n_steps}")
+    step_text.SetText(1, f"Step: {n_steps}")
 
     # Refresh scene
     pl.update()

@@ -26,11 +26,11 @@ crop_black_border = True
 generate_radiation = True
 flat_dem = False
 exclude_dark = True
-sim_time = 'custom'
+sim_time = 'fast'
 
 R_earth = 6378137.0  # m
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
-sim_duration_hours = 2
+sim_duration_hours = 0.5
 movie_orbit_sec = 8.0
 
 if sim_time == 'slow':
