@@ -144,7 +144,7 @@ def safe_move(move_file, results_dir, retries=5, delay=1.0):
     print(f"Warning: could not move {move_file} after {retries} retries.")
 
 def at_exit(save_name):
-    print("Runtime ended. ")
+    print("Save files")
     results_dir = os.path.join("results", save_name)
     os.makedirs(results_dir, exist_ok=True)
 
@@ -177,6 +177,7 @@ def at_exit(save_name):
         print(f"Warning: {move_file} not found, skipping.")
 
     sys.stdout.log.close()
+    time.sleep(0.1)
     move_file = "output.log"
     if os.path.exists(move_file):
         safe_move(move_file, results_dir)

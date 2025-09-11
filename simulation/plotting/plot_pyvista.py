@@ -501,14 +501,15 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
     sun_light = init_sun_light(pl)
 
     # --- Text ---
-    pl.add_text("Tip and Cue Simulation", font_size=12)
+    # pl.add_text("Tip and Cue Simulation", font_size=12)
+    step_text = pl.add_text("Step: 0", font_size=10, position="lower_right")
 
     return (earth_actor, earth_state,
             whales_plot_all, whales_plot_evaluated, whales_plot_tasked,
             cloud_tip_sats, cloud_cue_sats,
             tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
             sun_light,
-            eval_pts, task_pts)
+            eval_pts, task_pts, step_text)
 
 
 def update_plotter(pl,
@@ -521,7 +522,7 @@ def update_plotter(pl,
                    tip_positions, cue_positions,
                    all_targets, evaluated_targets, tasked_targets,
                    eval_pts, task_pts,
-                   FovPoints_tip, FovPoints_cue):
+                   FovPoints_tip, FovPoints_cue, step_text, n_steps):
     """
     Update all actors in the plotter for the current simulation step.
     """
@@ -550,6 +551,8 @@ def update_plotter(pl,
         cue_fill_meshes, cue_edge_meshes,
         FovPoints_tip, FovPoints_cue, t_datetime
     )
+
+    step_text.SetText(0, f"Step: {n_steps}")
 
     # Refresh scene
     pl.update()

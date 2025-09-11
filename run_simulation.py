@@ -170,16 +170,18 @@ if plot_propagation:
      cloud_tip_sats, cloud_cue_sats,
      tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
      sun_light,
-     eval_pts, task_pts) = reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=None)
+     eval_pts, task_pts, step_text) = reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=None)
 
     pl.show(cpos="xy", interactive_update=True, auto_close=False)
-
     pv_framerate, frames_per_orbit = compute_movie_framerate(a_cue, sim_step_seconds, plot_interval, movie_orbit_sec)
     pl.open_movie( "simulation.mp4",  framerate=pv_framerate)
 
 detect_idx = None
 eval_idx = None
 elapsed_time, n_steps = 0.0, 0
+
+
+t_sim_start = time.time()
 while elapsed_time <= sim_duration_seconds:
 
     t_start = time.time()
@@ -373,7 +375,7 @@ while elapsed_time <= sim_duration_seconds:
 
                             if eo_tools.eul_ang_target == eul_ang_cue_default:
                                 eo_tools.eul_ang_target = eo_tools.pointing_attitude_brf(pointing_vec_brf_target)       # compute double, only for print
-                                print(f"!! {actor.name}: Target {whale_idx} in reach | Set roll, pitch, yaw to {eo_tools.eul_ang_target[0]:.1f}, {eo_tools.eul_ang_target[1]:.1f}, {eo_tools.eul_ang_target[2]:.1f} deg")
+                                print(f"!! {actor.name}: Target {task_id} in reach | Set roll, pitch, yaw to {eo_tools.eul_ang_target[0]:.1f}, {eo_tools.eul_ang_target[1]:.1f}, {eo_tools.eul_ang_target[2]:.1f} deg")
 
                             eo_tools.eul_ang_target = eo_tools.pointing_attitude_brf(pointing_vec_brf_target)
 
@@ -501,7 +503,7 @@ while elapsed_time <= sim_duration_seconds:
             tip_positions, cue_positions,
             all_targets, evaluated_targets, tasked_targets,
             eval_pts, task_pts,
-            FovPoints_tip, FovPoints_cue
+            FovPoints_tip, FovPoints_cue, step_text, n_steps
         )
 
         pl.write_frame()
@@ -509,11 +511,15 @@ while elapsed_time <= sim_duration_seconds:
     t_end = time.time()
 
     if n_steps % print_interval == 0:
-        print(f" {n_steps} Time iteration: {t_mid - t_start:.1f} | Time plot: {t_end - t_mid:.1f}")
+        print(f" {n_steps} Time iteration: {t_mid - t_start:.2f} | Time plot: {t_end - t_mid:.2f}")
 
     sim.advance_time(time_to_advance=sim_step_seconds, current_power_consumption_in_W=0.0)
     elapsed_time += sim_step_seconds
     n_steps += 1
+
+t_sim_end = time.time()
+total_sim_time = t_sim_end - t_sim_start
+print(f"Total simulation time: {total_sim_time:.1f} | Time per iteration: {total_sim_time/n_steps:.2f} | plot_propagation {plot_propagation} \n")
 
 if plot_propagation:
     pl.close()
