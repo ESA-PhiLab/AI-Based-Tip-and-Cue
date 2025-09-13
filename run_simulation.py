@@ -127,8 +127,8 @@ sim_duration_seconds = sim_duration_hours * 3600
 
 n_steps_total = int(sim_duration_seconds / sim_step_seconds) + 1
 n_snapshots = n_steps_total // plot_fov_interval + 1
-fov_polygons_tip = [None] * n_snapshots  # fixed length list
-fov_polygons_cue = [None] * n_snapshots  # fixed length list
+fov_polygons_tip = [None] * n_snapshots * nPlanes_tip * nSats_tip  # fixed length list
+fov_polygons_cue = [None] * n_snapshots * nPlanes_cue * nSats_cue  # fixed length list
 
 if show_orbits:
     trajectories = {
@@ -583,6 +583,8 @@ print(f"Observation efficiency Cue:       {observation_efficiency_cue * 100:.2f}
 print(f"Confirmation efficiency Cue:      {confirmation_efficiency * 100:.2f}% of whales ({n_whales} total)\n")
 
 if plot_footprints:
+
+    t1 = time.time()
     fov_polygons_tip = [f for f in fov_polygons_tip if f is not None]
     fov_polygons_cue = [f for f in fov_polygons_cue if f is not None]
 
@@ -595,6 +597,9 @@ if plot_footprints:
     print(f"Per orbit coverage:               {area_covered_per_orbit_km2:,.0f} km² "
           f"({area_covered_per_orbit_fraction_total * 100:.2f}% of Earth, "
           f"({area_covered_per_orbit_fraction_mission * 100:.2f}% of possible surface)")
+
+    t2 = time.time()
+    print(f"FOV footprints computation time: {t2-t1:1f}")
 
 else:
     area_covered_km2 = area_covered_per_orbit_km2 = None
@@ -674,10 +679,14 @@ if logging:
 
     wb.save("sim_output.xlsx")
 
+at_exit(save_name=sim_name, pl=pl if plot_propagation else None, verbose=False)
 
 if plot_footprints:
+    t1 = time.time()
     plot_all_fov_footprints(fov_polygons_tip, known_targets, extension="tip", show_plot=False)
     plot_all_fov_footprints(fov_polygons_cue, known_targets, extension="cue", show_plot=False)
+    t2 = time.time()
+    print(f"FOV footprints plotting time: {t2 - t1:1f}")
 
 if show_orbits:
     plot_orbits(trajectories)

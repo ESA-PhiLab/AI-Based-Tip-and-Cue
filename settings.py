@@ -11,7 +11,7 @@ import math
 # ================================================================================
 # SIMULATION
 
-sim_name = 'test1' # "TC_nSats1_nPlanes1_30degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
+sim_name =  "TC_nSats1_nPlanes1_30degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
 
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
@@ -29,7 +29,7 @@ flat_dem = False
 exclude_dark = True
 sim_time = 'fast'
 
-sim_duration_hours = 0.15
+sim_duration_hours = 0.3
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 if sim_time == 'slow':
@@ -56,11 +56,11 @@ else:
 # ================================================================================
 # ORBIT
 
-nSats_tip = 1
-nSats_cue = 1
+nSats_tip = 2
+nSats_cue = 2
 
-nPlanes_tip = 1
-nPlanes_cue = 1
+nPlanes_tip = 2
+nPlanes_cue = 2
 
 hp = 616.1e3                              # perigee altitude [m]        Like WV-3, from: https://www.n2yo.com/satellite/?s=40115
 ha = 624.4e3                              # apogee altitude [m]
@@ -108,6 +108,7 @@ offnadir_max = 30.0     # max 62.5 deg
 resolution = 124  # pixels of render
 sample_count = 512  # 8192 min, 2048 * 2**7 max
 
+swath_tip = 290  * 10**3  # m
 swath_tip = 290  * 10**3  # m
 swath_cue = 13.1 * 10**3  # m
 

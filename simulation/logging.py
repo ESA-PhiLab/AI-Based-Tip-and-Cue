@@ -179,8 +179,10 @@ def safe_move(src, dst, retries=5, delay=1.0):
     return False
 
 
-def at_exit(save_name, pl=None):
-    print("Save files")
+def at_exit(save_name, pl=None, verbose=True):
+
+    if verbose:
+        print("Save files")
     results_dir = os.path.join("results", save_name)
     os.makedirs(results_dir, exist_ok=True)
 
@@ -188,9 +190,11 @@ def at_exit(save_name, pl=None):
         try:
             pl.close()
             time.sleep(0.1)
-            print("Closed pyvista plotter")
+            if verbose:
+                print("Closed pyvista plotter")
         except Exception as e:
-            print(f"Could not close pyvista plotter: {e}")
+            if verbose:
+                print(f"Could not close pyvista plotter: {e}")
 
     rename_map = {
         "sim_output.xlsx": f"results_{save_name}.xlsx",
@@ -209,29 +213,34 @@ def at_exit(save_name, pl=None):
                 sys.stderr = sys.__stderr__
                 time.sleep(0.1)
             except Exception as e:
-                print(f"Could not close print logs: {e}")
+                if verbose:
+                    print(f"Could not close print logs: {e}")
 
         if os.path.exists(src):
             dst = os.path.join(results_dir, new_name)
             if safe_move(src, dst) and "results_" in new_name:
                 combined_excel = dst
         else:
-            print(f"Warning: {src} not found, skipping.")
+            if verbose:
+                print(f"Warning: {src} not found, skipping.")
 
     copy_file = "settings.py"
     if os.path.exists(copy_file):
         dst = os.path.join(results_dir, copy_file)
         shutil.copy(copy_file, dst)
-        print(f"Copied {copy_file} to {dst.replace(os.sep, '/')}")
+        if verbose:
+            print(f"Copied {copy_file} to {dst.replace(os.sep, '/')}")
     else:
-        print(f"Warning: {copy_file} not found, skipping.")
+        if verbose:
+            print(f"Warning: {copy_file} not found, skipping.")
 
     time.sleep(0.1)
 
     if combined_excel and os.path.exists(combined_excel):
         plot_offnadir_distribution(combined_excel, results_dir, save_name, bin_size_deg=5)
         plot_latency_distribution(combined_excel, results_dir, save_name, bin_size_sec=30)
-        print("Created offnadir and latency distribution plots")
+        if verbose:
+            print("Created offnadir and latency distribution plots")
 
     print(f"Saved results in {results_dir.replace(os.sep, '/')}")
 
