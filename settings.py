@@ -2,6 +2,7 @@ import os
 from offnadir_imaging.functions.get_satellite_data import get_satellite, get_spatial_res
 from custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath, estimate_box_inertia, pass_time_from_nadir
 from custom_paseos.attitude.tune_pid import tune_pid_with_limits
+from custom_paseos.utils.constants import R_earth
 
 from datetime import datetime, timezone
 import numpy as np
@@ -10,7 +11,7 @@ import math
 # ================================================================================
 # SIMULATION
 
-sim_name = "test_mov1" # 'TC_nSats1_nPlanes1'
+sim_name = 'test1' # "TC_nSats1_nPlanes1_30degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
 
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
@@ -28,25 +29,29 @@ flat_dem = False
 exclude_dark = True
 sim_time = 'fast'
 
-R_earth = 6378137.0  # m
+sim_duration_hours = 0.15
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
-sim_duration_hours = 0.5
-movie_orbit_sec = 8.0
 
 if sim_time == 'slow':
     sim_step_seconds = 1
-    plot_interval = 60
+    plot_fov_interval =  1
+    plot_pyvista_interval = 30
     print_interval = 10
+    movie_orbit_sec = 8.0
 
 elif sim_time == 'fast':
-    sim_step_seconds = 60
-    plot_interval = 1
+    sim_step_seconds = 5
+    plot_fov_interval = 1
+    plot_pyvista_interval = 6
     print_interval = 10
+    movie_orbit_sec = 60.0  # 8.0
 
 else:
     sim_step_seconds = 1
-    plot_interval = 20
+    plot_fov_interval = 1
+    plot_pyvista_interval = 1
     print_interval = 10
+    movie_orbit_sec = 8.0
 
 # ================================================================================
 # ORBIT
@@ -98,7 +103,7 @@ J_sat = estimate_box_inertia(sat_mass, sat_length, sat_width, sat_height)       
 # SENSOR
 
 elevation_min = 10.0 # degrees
-offnadir_max = 50.0     # max 62.5 deg
+offnadir_max = 30.0     # max 62.5 deg
 
 resolution = 124  # pixels of render
 sample_count = 512  # 8192 min, 2048 * 2**7 max
@@ -109,8 +114,8 @@ swath_cue = 13.1 * 10**3  # m
 fov_tip = math.degrees(2 * math.atan(swath_tip / (2 * (a_tip - R_earth))) )         # deg
 fov_cue = math.degrees(2 * math.atan(swath_cue / (2 * (a_cue - R_earth))) )         # deg
 
-GSD0_tip = 10.0       # m
-GSD0_cue = 0.31     # m
+gsd0_tip = 10.0       # m
+gsd0_cue = 0.31     # m
 
 try:
     satellite = get_satellite(img_path, csv_path)
@@ -153,7 +158,7 @@ mask_npy = "land_mask.npy"
 n_whales = 300
 whale_seed = 17
 max_abs_lat = 70.0                 # Optional: exclude very high latitudes (avoid polar mask artifacts)
-detection_time_limit = 20*60       # Detection time limit
+observation_time_limit = 20*60       # Detection time limit
 
 # Whale kinematics
 speed_mean = 1.5
@@ -218,7 +223,7 @@ bools['generate_radiation'] = generate_radiation
 sensor_characteristics = {}
 sensor_characteristics['resolution'] = resolution
 sensor_characteristics['sample_count'] = sample_count
-sensor_characteristics['GSD'] = GSD0_cue
+sensor_characteristics['GSD'] = gsd0_cue
 
 whale_propagation = {}
 whale_propagation["speed_mean"] = speed_mean

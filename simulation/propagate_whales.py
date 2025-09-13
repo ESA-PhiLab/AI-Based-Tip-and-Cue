@@ -1,9 +1,7 @@
-# whales_ocean_sim_realtime.py
-# Ocean-only "whale" targets with realistic speeds/headings.
-# Real-time update (meters per real second), mask-based land avoidance, and PyVista globe rendering.
+# propagate_whales.py
+# Whale simulation with land avoidance, geodesic motion, and unified Whale class.
 
 import os
-import time
 import math
 import random
 import numpy as np
@@ -11,13 +9,11 @@ import pandas as pd
 import geopandas as gpd
 import rasterio
 from rasterio import features
-import matplotlib.pyplot as plt
-import pyvista as pv
-from pyvista import examples
-from datetime import datetime, timezone
+from datetime import datetime
+from dataclasses import dataclass, field
+from typing import Optional
 
 from settings import R_earth, max_abs_lat
-
 
 # --------------------------- UTILS ---------------------------
 
@@ -28,16 +24,13 @@ def clamp_lat_deg(lat: float) -> float:
     return max(-90.0, min(90.0, lat))
 
 def direct_geodesic(lat_deg: float, lon_deg: float, bearing_deg: float, distance_m: float) -> tuple[float, float]:
-    """
-    Move along a great-circle from (lat, lon) by 'distance_m' at 'bearing_deg' (0=N, 90=E).
-    Spherical Earth model. Returns (lat2_deg, lon2_deg).
-    """
+    """Move along a great-circle from (lat, lon) by distance_m at bearing_deg (0=N, 90=E)."""
     if distance_m == 0.0:
         return lat_deg, lon_deg
     lat1 = math.radians(lat_deg)
     lon1 = math.radians(lon_deg)
     brng = math.radians(bearing_deg)
-    ang = distance_m / R_earth  # central angle (radians)
+    ang = distance_m / R_earth
 
     sin_lat2 = math.sin(lat1) * math.cos(ang) + math.cos(lat1) * math.sin(ang) * math.cos(brng)
     sin_lat2 = max(-1.0, min(1.0, sin_lat2))
@@ -47,22 +40,16 @@ def direct_geodesic(lat_deg: float, lon_deg: float, bearing_deg: float, distance
     x = math.cos(ang) - math.sin(lat1) * math.sin(lat2)
     lon2 = lon1 + math.atan2(y, x)
 
-    lat2_deg = math.degrees(lat2)
-    lon2_deg = wrap_lon_deg(math.degrees(lon2))
-    return lat2_deg, lon2_deg
+    return math.degrees(lat2), wrap_lon_deg(math.degrees(lon2))
 
 # --------------------------- LAND MASK ---------------------------
 
 def build_land_mask(shp_dir: str, res_deg: float, tif_name: str, npy_name: str) -> np.ndarray:
-    """
-    Rasterize GSHHG Level 1 (land masses) + Level 5 (Antarctica ice front) into a binary mask.
-    Output: numpy array with shape (height, width), values: land=1, water=0.
-    """
     lon_min, lon_max = -180.0, 180.0
     lat_min, lat_max = -90.0, 90.0
 
     gdf_l1 = gpd.read_file(os.path.join(shp_dir, "GSHHS_f_L1.shp"))
-    gdf_l5 = gpd.read_file(os.path.join(shp_dir, "GSHHS_f_L5.shp"))  # Antarctica ice front -> treat as land
+    gdf_l5 = gpd.read_file(os.path.join(shp_dir, "GSHHS_f_L5.shp"))
     land = gpd.GeoDataFrame(pd.concat([gdf_l1, gdf_l5], ignore_index=True), crs=gdf_l1.crs)
 
     width = int(round((lon_max - lon_min) / res_deg))
@@ -101,97 +88,96 @@ def is_water(lat: float, lon: float, mask: np.ndarray, res_deg: float) -> bool:
     col = int((lon + 180.0) / res_deg)
     row = max(0, min(mask.shape[0] - 1, row))
     col = max(0, min(mask.shape[1] - 1, col))
-    return mask[row, col] == 0  # 0 = water, 1 = land
+    return mask[row, col] == 0
+
+# --------------------------- WHALE CLASS ---------------------------
+
+@dataclass
+class Whale:
+    id: int
+    lat: float
+    lon: float
+    alt: float = 0.0
+    speed: float = field(default_factory=lambda: random.uniform(0.5, 3.0))
+    heading: float = field(default_factory=lambda: random.uniform(0.0, 360.0))
+
+    observed: int = 0
+    confirmed: int = 0
+
+    tip_time: Optional[datetime] = None
+    tip_actor: Optional[str] = None
+    cue_time: Optional[datetime] = None
+    cue_actor: Optional[str] = None
+
+    assigned_cue: Optional[str] = None
+    tasking_delay: float = 0.0
+    tasking_delay_cue: float = 0.0
+
+    tip_observation_counter: int = 0
+    cue_observation_counter: int = 0
+
+    def step(self, mask: np.ndarray, res_deg: float, dt_sec: float, whale_propagation: dict):
+        """Advance whale position with OU speed, diffusive heading, and land avoidance."""
+        if dt_sec <= 0.0:
+            return
+
+        v = self.speed
+        k = whale_propagation["speed_mean_reversion_per_s"]
+        noise = random.gauss(0.0, whale_propagation["speed_noise_sigma"] * math.sqrt(dt_sec))
+        v = v + k * (whale_propagation["speed_mean"] - v) * dt_sec + noise
+        v = max(whale_propagation["speed_min"], min(whale_propagation["speed_max"], v))
+
+        h = (self.heading + random.gauss(0.0, whale_propagation["turn_std_deg_per_sqrt_s"] * math.sqrt(dt_sec))) % 360.0
+
+        dist = v * dt_sec
+        lat0, lon0 = self.lat, self.lon
+        lat1, lon1 = direct_geodesic(lat0, lon0, h, dist)
+
+        if abs(lat1) > max_abs_lat:
+            h = (h + 180.0) % 360.0
+            lat1, lon1 = direct_geodesic(lat0, lon0, h, dist)
+
+        tries = 0
+        while (not is_water(lat1, lon1, mask, res_deg)) or (abs(lat1) > 89.9):
+            delta = random.uniform(30.0, 150.0) * (1 if random.random() < 0.5 else -1)
+            h = (h + delta) % 360.0
+            dist *= 0.7
+            lat1, lon1 = direct_geodesic(lat0, lon0, h, dist)
+            tries += 1
+            if tries >= whale_propagation["land_avoid_max_tries"]:
+                lat1, lon1 = lat0, lon0
+                break
+
+        self.lat, self.lon, self.speed, self.heading = lat1, lon1, v, h
+
+    def position(self) -> tuple[float, float, float]:
+        return self.lat, self.lon, self.alt
 
 # --------------------------- INITIAL TARGETS ---------------------------
 
-def generate_random_water_targets(n: int, mask: np.ndarray, res_deg: float, seed_val: int | None = None,
-                                  max_abs_lat_val: float | None = max_abs_lat) -> list[tuple[float, float, float]]:
+def generate_random_water_targets(n: int, mask: np.ndarray, res_deg: float, seed_val: Optional[int] = None,
+                                  max_abs_lat_val: float = max_abs_lat) -> list[tuple[float, float, float]]:
     if seed_val is not None:
         random.seed(seed_val)
     targets = []
     while len(targets) < n:
         lon = random.uniform(-180.0, 180.0)
-        z = random.uniform(-1.0, 1.0)  # uniform in sin(lat)
+        z = random.uniform(-1.0, 1.0)
         lat = math.degrees(math.asin(z))
-        if max_abs_lat_val is not None and abs(lat) > max_abs_lat_val:
+        if abs(lat) > max_abs_lat_val:
             continue
         if is_water(lat, lon, mask, res_deg):
-            targets.append((lat, lon, 0.0))  # alt in meters
+            targets.append((lat, lon, 0.0))
     return targets
 
-# --------------------------- WHALE STATE & DYNAMICS ---------------------------
-
-def init_whales(known_targets: list[tuple[float, float, float]], seed_val: int | None = None) -> dict[int, dict]:
+def init_whales(known_targets: list[tuple[float, float, float]], seed_val: Optional[int] = None) -> dict[int, Whale]:
     if seed_val is not None:
         random.seed(seed_val)
-    whales = {}
+    whales: dict[int, Whale] = {}
     for idx, (lat, lon, alt_m) in enumerate(known_targets):
-        whales[idx] = {
-            "lat": lat,
-            "lon": lon,
-            "alt": alt_m,                   # meters
-            "speed": random.uniform(0.5, 3.0),  # m/s
-            "heading": random.uniform(0.0, 360.0),  # deg (0=N, 90=E)
-            "detected": 0       # 0 = not detected, 1 = detected by tip, 2 = detected by cue
-        }
+        whales[idx] = Whale(id=idx, lat=lat, lon=lon, alt=alt_m)
     return whales
 
-def step_whale(whale: dict, mask: np.ndarray, res_deg: float, dt_sec: float, whale_propagation: dict) -> None:
-
-    """
-    Advance a whale by dt_sec seconds with OU speed, diffusive heading, and land avoidance.
-    All distances in meters.
-    """
-    if dt_sec <= 0.0:
-        return
-
-    # Speed (Ornstein–Uhlenbeck)
-    v = whale["speed"]
-    k = whale_propagation["speed_mean_reversion_per_s"]
-    noise = random.gauss(0.0, whale_propagation["speed_noise_sigma"] * math.sqrt(dt_sec))
-    v = v + k * (whale_propagation["speed_mean"] - v) * dt_sec + noise
-    v = max(whale_propagation["speed_min"], min(whale_propagation["speed_max"], v))
-
-    # Heading diffusion
-    h = whale["heading"]
-    h = (h + random.gauss(0.0, whale_propagation["turn_std_deg_per_sqrt_s"] * math.sqrt(dt_sec))) % 360.0
-
-    # Proposed move
-    dist = v * dt_sec  # meters
-    lat0, lon0 = whale["lat"], whale["lon"]
-    lat1, lon1 = direct_geodesic(lat0, lon0, h, dist)
-
-    # Keep within latitude limits
-    if abs(lat1) > max_abs_lat:
-        h = (h + 180.0) % 360.0
-        lat1, lon1 = direct_geodesic(lat0, lon0, h, dist)
-
-    # Land avoidance: steer around and shorten step if necessary
-    tries = 0
-    while (not is_water(lat1, lon1, mask, res_deg)) or (abs(lat1) > 89.9):
-        delta = random.uniform(30.0, 150.0) * (1 if random.random() < 0.5 else -1)
-        h = (h + delta) % 360.0
-        dist *= 0.7
-        lat1, lon1 = direct_geodesic(lat0, lon0, h, dist)
-        tries += 1
-        if tries >= whale_propagation["land_avoid_max_tries"]:
-            lat1, lon1 = lat0, lon0  # stay put
-            break
-
-    whale["lat"], whale["lon"] = lat1, lon1
-    whale["speed"], whale["heading"] = v, h
-
-    return whale
-
-def update_whales(all_targets, tasked_targets, mask, res_deg, dt, whale_propagation):
-
-    for whale_idx, w in all_targets.items():
-        w = step_whale(w, mask, res_deg, dt_sec=dt, whale_propagation=whale_propagation)
-        all_targets[whale_idx] = w
-
-        if whale_idx in tasked_targets.keys():
-           tasked_targets[whale_idx]["lat"] = w['lat']
-           tasked_targets[whale_idx]["lon"] = w['lon']
-           tasked_targets[whale_idx]["alt"] = w['alt']
-
+def update_whales(all_targets: dict[int, Whale], mask: np.ndarray, res_deg: float, dt: float, whale_propagation: dict):
+    for whale in all_targets.values():
+        whale.step(mask, res_deg, dt_sec=dt, whale_propagation=whale_propagation)

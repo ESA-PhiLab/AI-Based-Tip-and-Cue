@@ -3,31 +3,45 @@ from openpyxl import Workbook, load_workbook
 import math
 from datetime import timedelta
 import pandas as pd
+import inspect
 
 import os
 import shutil
 import atexit
+import numpy as np
 
 import sys
 import time, shutil, os
 
+import matplotlib.pyplot as plt
+import pandas as pd
+
+from matplotlib.ticker import MultipleLocator
+import matplotlib
+import matplotlib.pyplot as plt
+
+plt.style.use("seaborn-v0_8-whitegrid")
+matplotlib.use("TkAgg")
+
+
+from simulation.plotting.plot_functions import plot_offnadir_distribution, plot_latency_distribution
+
 def init_excel_log(path, header, sheet_name="Log"):
     if os.path.exists(path):
-        os.remove(path)
+        wb = load_workbook(path)
+        if sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            wb.remove(ws)
+        ws = wb.create_sheet(sheet_name)
+    else:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = sheet_name
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = sheet_name
     ws.append(header)
     wb.save(path)
     wb.close()
-
-    # return writer metadata
-    return {
-        "path": path,
-        "sheet": sheet_name,
-        "header": header
-    }
+    return {"path": path, "sheet": sheet_name, "header": header}
 
 
 def append_excel_log(writer, row):
@@ -44,37 +58,54 @@ def append_excel_log(writer, row):
     wb.close()
 
 
+def log_tip_observation(writer, target_id, tip_observation_date, tip_actor, offnadir_deg, gsd_m,
+                      target_lat, target_lon, target_alt, tip_lat, tip_lon, tip_alt,
+                      x, y, z, vx, vy, vz, tip_observation_counter):
+    """Log a tip observation event matching header_tip."""
 
-
-def log_tip_detection(writer, t_datetime, actor, whale_idx, target_coord, r, v, offnadir_tip_deg, gsd_m,
-                      in_footprint):
-    if should_log_event(writer, whale_idx, t_datetime, min_gap_sec=1000):
-        row = [whale_idx,
-            t_datetime.isoformat(), actor.name,
-            target_coord[0], target_coord[1], target_coord[2],
-            r[0], r[1], r[2],
-            v[0], v[1], v[2],
-            offnadir_tip_deg,
-            gsd_m, int(in_footprint)
-        ]
+    if should_log_event(writer, target_id, tip_observation_date, min_gap_sec=1000):
+        row = [target_id,
+               tip_observation_date.isoformat(timespec="seconds") + "Z", tip_actor,
+               offnadir_deg, gsd_m,
+               target_lat, target_lon, target_alt,
+               tip_lat, tip_lon, tip_alt,
+               x, y, z, vx, vy, vz,
+               tip_observation_counter]
         append_excel_log(writer, row)
 
 
-def log_cue_evaluation(writer, t_datetime, actor, whale_idx, target_coord, r, v,
-                       offnadir_cue_deg, gsd_m, in_view, in_footprint, yaw, pitch, roll):
+def log_cue_observation(writer, target_id, cue_observation_date, cue_actor, offnadir_deg, gsd_m,
+                      target_lat, target_lon, target_alt, cue_lat, cue_lon, cue_alt,
+                      x, y, z, vx, vy, vz, roll, pitch, yaw, cue_observation_counter):
+    """Log a cue observation event matching header_cue."""
 
-    if should_log_event(writer, whale_idx, t_datetime, min_gap_sec=1000):
-        row = [
-            whale_idx,
-            t_datetime.isoformat(), actor.name,
-            target_coord[0], target_coord[1], target_coord[2],
-            r[0], r[1], r[2],
-            v[0], v[1], v[2],
-            offnadir_cue_deg, gsd_m,
-            int(in_view), int(in_footprint),
-            yaw, pitch, roll
-        ]
+    if should_log_event(writer, target_id, cue_observation_date, min_gap_sec=1000):
+        row = [target_id,
+               cue_observation_date.isoformat(timespec="seconds") + "Z", cue_actor,
+               offnadir_deg, gsd_m,
+               target_lat, target_lon, target_alt,
+               cue_lat, cue_lon, cue_alt,
+               x, y, z, vx, vy, vz,
+               roll, pitch, yaw,
+               cue_observation_counter]
         append_excel_log(writer, row)
+
+
+def log_combined_observation(writer, target_id, tip_observation_date, tip_actor, cue_observation_date, cue_actor,
+                           offnadir_deg, gsd_m, latency, target_lat, target_lon, target_alt,
+                           cue_lat, cue_lon, cue_alt, tip_observation_counter, cue_observation_counter):
+    """Log a combined tip+cue event matching header_combined."""
+
+    if should_log_event(writer, target_id, cue_observation_date, min_gap_sec=1000):
+        row = [target_id,
+               tip_observation_date.isoformat(timespec="seconds") + "Z", tip_actor,
+               cue_observation_date.isoformat(timespec="seconds") + "Z", cue_actor,
+               offnadir_deg, gsd_m, latency,
+               target_lat, target_lon, target_alt,
+               cue_lat, cue_lon, cue_alt,
+               tip_observation_counter, cue_observation_counter]
+        append_excel_log(writer, row)
+
 
 
 def gsd_offnadir(Pn_m, H_m, offnadir_deg):
@@ -95,6 +126,7 @@ def gsd_offnadir(Pn_m, H_m, offnadir_deg):
     Ptheta_m : float
         Off-nadir ground sampling distance [m]
     """
+
     theta = math.radians(offnadir_deg)
 
     # Step 1: pixel angular width beta from nadir GSD
@@ -131,66 +163,88 @@ def should_log_event(writer, whale_idx, t_datetime, min_gap_sec=600):
     return False
 
 
-def safe_move(move_file, results_dir, retries=5, delay=1.0):
-    dest = os.path.join(results_dir, move_file)
+def safe_move(src, dst, retries=5, delay=1.0):
     for i in range(retries):
         try:
-            shutil.move(move_file, dest)
-            print(f"Moved {move_file} -> {dest}")
-            return
-        except PermissionError as e:
-            print(f"Retry {i+1}/{retries}: could not move {move_file}, still locked.")
+            shutil.move(src, dst)
+            print(f"Moved {src} to {dst.replace(os.sep, '/')}")
+            return True
+        except PermissionError:
+            print(f"Retry {i+1}/{retries}: could not move {src}, still locked.")
             time.sleep(delay)
-    print(f"Warning: could not move {move_file} after {retries} retries.")
+        except Exception as e:
+            print(f"Error moving {src} to {dst}: {e}")
+            return False
+    print(f"Warning: could not move {src} after {retries} retries.")
+    return False
 
-def at_exit(save_name):
+
+def at_exit(save_name, pl=None):
     print("Save files")
     results_dir = os.path.join("results", save_name)
     os.makedirs(results_dir, exist_ok=True)
 
-    # files to rename + move
-    files_map = {
-        "sim_output_tip.xlsx": f"{save_name}_tip.xlsx",
-        "sim_output_cue.xlsx": f"{save_name}_cue.xlsx",
+    if pl is not None:
+        try:
+            pl.close()
+            time.sleep(0.1)
+            print("Closed pyvista plotter")
+        except Exception as e:
+            print(f"Could not close pyvista plotter: {e}")
+
+    rename_map = {
+        "sim_output.xlsx": f"results_{save_name}.xlsx",
+        "simulation.mp4": f"mov_{save_name}.mov",
+        "output.log": f"logs_{save_name}.log",
+        f"footprints_tip.html": f"footprints_tip_{save_name}.html",
+        f"footprints_cue.html": f"footprints_cue_{save_name}.html"
     }
 
-    for src, dst in files_map.items():
-        print(src)
+    combined_excel = None
+    for src, new_name in rename_map.items():
+        if src == "output.log" and isinstance(sys.stdout, Logger):
+            try:
+                sys.stdout.close()
+                sys.stdout = sys.__stdout__
+                sys.stderr = sys.__stderr__
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"Could not close print logs: {e}")
+
         if os.path.exists(src):
-            shutil.move(src, os.path.join(results_dir, dst))
+            dst = os.path.join(results_dir, new_name)
+            if safe_move(src, dst) and "results_" in new_name:
+                combined_excel = dst
         else:
             print(f"Warning: {src} not found, skipping.")
 
     copy_file = "settings.py"
     if os.path.exists(copy_file):
-        shutil.copy(copy_file, os.path.join(results_dir, copy_file))
+        dst = os.path.join(results_dir, copy_file)
+        shutil.copy(copy_file, dst)
+        print(f"Copied {copy_file} to {dst.replace(os.sep, '/')}")
     else:
         print(f"Warning: {copy_file} not found, skipping.")
 
-    move_file ="simulation.mp4"
-    if os.path.exists(move_file):
-        try:
-            safe_move(move_file, results_dir)
-        except PermissionError as e:
-            print(f"PermissionError: could not move {move_file}: {e}")
-    else:
-        print(f"Warning: {move_file} not found, skipping.")
-
-    sys.stdout.log.close()
     time.sleep(0.1)
-    move_file = "output.log"
-    if os.path.exists(move_file):
-        safe_move(move_file, results_dir)
-    else:
-        print(f"Warning: {move_file} not found, skipping.")
 
-    print(f"Saved results in results/{save_name}")
+    if combined_excel and os.path.exists(combined_excel):
+        plot_offnadir_distribution(combined_excel, results_dir, save_name, bin_size_deg=5)
+        plot_latency_distribution(combined_excel, results_dir, save_name, bin_size_sec=30)
+        print("Created offnadir and latency distribution plots")
 
+    print(f"Saved results in {results_dir.replace(os.sep, '/')}")
 
+def compute_stats(series: pd.Series):
+    """Return mean, min, max, std for a pandas Series (ignoring NaN)."""
+    s = series.dropna()
+    if s.empty:
+        return float("nan"), float("nan"), float("nan"), float("nan")
+    return s.mean(), s.min(), s.max(), s.std()
 
 class Logger:
     def __init__(self, filename):
-        self.terminal = sys.stdout
+        self.terminal = sys.__stdout__
         self.log = open(filename, "a")
 
     def write(self, message):
@@ -200,4 +254,12 @@ class Logger:
     def flush(self):
         self.terminal.flush()
         self.log.flush()
+
+    def close(self):
+        try:
+            self.log.close()
+        except:
+            pass
+
+
 

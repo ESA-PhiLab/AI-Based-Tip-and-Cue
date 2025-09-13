@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
 import pykep as pk
@@ -12,6 +13,15 @@ import matplotlib.image as mpimg
 from PIL import Image
 import os
 
+import mpld3
+import os
+
+from matplotlib.ticker import MultipleLocator, FuncFormatter
+import matplotlib
+import matplotlib.pyplot as plt
+
+plt.style.use("seaborn-v0_8-whitegrid")
+matplotlib.use("TkAgg")
 
 def plot_earth(ax, radius=6371e3, color='lightgray', alpha=0.3, resolution=50):
     """Plots a wireframe Earth sphere on the given 3D axes."""
@@ -62,6 +72,8 @@ def plot_constallation(planet_list_tip, planet_list_cue, R_earth=6371e3, plot_ma
     ax.legend(handles=legend_elements)
 
     plt.show()
+
+
 
 def plot_orbits(trajectories):
     fig, ax = plt.subplots(1, 2, figsize=(12, 6))
@@ -141,9 +153,7 @@ def plot_fov_on_map(intersections, ax):
     fov_line = Line2D([0], [0], color='red', lw=2, label='Field of View')
     ax.legend(handles=[fov_line], loc='lower left')
 
-def plot_all_fov_footprints(all_fov_polygons, known_targets):
-
-    # Setup figure and map background (same as in your function)
+def plot_all_fov_footprints(all_fov_polygons, known_targets, extension = "", show_plot=True):
     Image.MAX_IMAGE_PIXELS = None
     fig, ax_map = plt.subplots(figsize=(10, 5), subplot_kw={'projection': ccrs.PlateCarree()})
     folder_worldmap = os.path.dirname(os.path.realpath(__file__))
@@ -155,13 +165,10 @@ def plot_all_fov_footprints(all_fov_polygons, known_targets):
     ax_map.gridlines(draw_labels=True, linestyle="--", linewidth=0.5, color='gray')
     ax_map.set_global()
 
-
-    # Now draw all stored footprints
     for intersections in all_fov_polygons:
-        if intersections.shape[1] != 2:
-            raise ValueError("Input Matrix should have 2 columns (lat, lon, alt)")
-
         n_points = intersections.shape[0]
+        if intersections.shape[1] != 2:
+            raise ValueError("Input Matrix should have 2 columns (lat, lon)")
         if n_points == 4:
             fovs = [intersections]
         elif n_points == 8:
@@ -170,28 +177,131 @@ def plot_all_fov_footprints(all_fov_polygons, known_targets):
             raise ValueError("Edge-points of the footprint should be 4 or 8.")
 
         for fov in fovs:
-            latitudes = fov[:, 0]
-            longitudes = fov[:, 1]
-
-            # close the polygon
-            latitudes = np.append(latitudes, latitudes[0])
-            longitudes = np.append(longitudes, longitudes[0])
-
-            # Plot and fill
+            latitudes = np.append(fov[:, 0], fov[0, 0])
+            longitudes = np.append(fov[:, 1], fov[0, 1])
             ax_map.plot(longitudes, latitudes, color='red', linestyle='-', transform=ccrs.PlateCarree())
             ax_map.fill(longitudes, latitudes, color='red', alpha=0.1, transform=ccrs.PlateCarree())
-            ax_map.scatter(longitudes, latitudes, color='black', s=0.001, transform=ccrs.PlateCarree())
-
-    # Legend once
 
     for target_geodetic in known_targets:
-        ax_map.plot(target_geodetic[1], target_geodetic[0], marker='o', color='green', markersize=4,
-                    transform=ccrs.PlateCarree())
-        # ax_map.text(target_geodetic[1] - 7.5, target_geodetic[0] - 7.5, "Target", color='green', transform=ccrs.PlateCarree())
+        ax_map.plot(target_geodetic[1], target_geodetic[0], marker='o', color='green',
+                    markersize=4, transform=ccrs.PlateCarree())
 
     fov_line = Line2D([0], [0], color='red', lw=2, label='Field of View')
     ax_map.legend(handles=[fov_line], loc='lower left')
 
-    ax_map.set_title("All FOV Footprints")
-    plt.show()
+    ax_map.set_title("Satellite Footprints")
+
+    # Always save if save_path is given
+
+    html_path = f"footprints_{extension}.html"
+    mpld3.save_html(fig, html_path)
+
+    # Show only if interactive backend is used
+    if show_plot:
+        try:
+            plt.show()
+        except Exception:
+            print("Warning: Could not display plot (non-interactive backend).")
+
+    return fig
+
+
+
+def plot_offnadir_distribution(excel_file, results_dir, save_name, bin_size_deg=5):
+    try:
+        df = pd.read_excel(excel_file, sheet_name="CombinedLog")
+        if "offnadir_deg" not in df.columns:
+            print("offnadir_deg column not found in CombinedLog")
+            return
+        angles = df["offnadir_deg"].dropna()
+        if angles.empty:
+            print("No off-nadir data to plot")
+            return
+
+        max_angle = int(np.ceil(angles.max() / bin_size_deg) * bin_size_deg)
+        bins = np.arange(0, max_angle + bin_size_deg, bin_size_deg)
+
+        plt.figure(figsize=(8, 5))
+        counts, _, _ = plt.hist(angles, bins=bins, edgecolor="black", color="tab:blue")
+        plt.xlabel("Off-nadir angle (degrees)")
+        plt.ylabel("Count")
+        plt.title(f"Distribution of Off-nadir Angles ({bin_size_deg}° bins)")
+        plt.xticks(bins)
+
+        ymax = counts.max()
+        if ymax <= 1:
+            plt.yticks([0, 1])
+        else:
+            plt.gca().yaxis.set_major_locator(MultipleLocator(2))
+
+        plt.grid(False)                 # clear all grid lines
+        plt.grid(axis="y", alpha=0.5)   # only horizontal grid
+        plt.tight_layout()
+
+        plot_path = os.path.join(results_dir, f"distribution_offnadir_{save_name}.png")
+        plt.savefig(plot_path, dpi=300)
+        plt.close()
+        print(f"Saved off-nadir distribution plot -> {plot_path.replace(os.sep, '/')}")
+
+    except Exception as e:
+        print(f"Could not generate off-nadir distribution plot: {e}")
+
+from matplotlib.ticker import MultipleLocator, FuncFormatter
+
+from matplotlib.ticker import MultipleLocator, FuncFormatter
+
+def plot_latency_distribution(excel_file, results_dir, save_name, bin_size_sec=30):
+    try:
+        df = pd.read_excel(excel_file, sheet_name="CombinedLog")
+        if "latency" not in df.columns:
+            print("latency column not found in CombinedLog")
+            return
+        latency = df["latency"].dropna()
+        if latency.empty:
+            print("No latency data to plot")
+            return
+
+        # Use seconds for binning
+        latency_sec = latency
+        max_latency = int(np.ceil(latency_sec.max() / bin_size_sec) * bin_size_sec)
+        bins = np.arange(0, max_latency + bin_size_sec, bin_size_sec)
+
+        plt.figure(figsize=(8, 5))
+        counts, _, _ = plt.hist(latency_sec, bins=bins, edgecolor="black", color="tab:green")
+
+        # Axis labels
+        plt.xlabel("Latency (minutes:seconds)")
+        plt.ylabel("Count")
+        plt.title(f"Distribution of Latency ({bin_size_sec}s bins)")
+
+        # Format x ticks as MM:SS
+        def format_mmss(x, _):
+            minutes = int(x // 60)
+            seconds = int(x % 60)
+            return f"{minutes:d}:{seconds:02d}"
+
+        ax = plt.gca()
+        ax.xaxis.set_major_formatter(FuncFormatter(format_mmss))
+        ax.xaxis.set_major_locator(MultipleLocator(60))  # tick every 60s (1 min)
+
+        ymax = counts.max()
+        if ymax <= 1:
+            plt.yticks([0, 1])
+        else:
+            ax.yaxis.set_major_locator(MultipleLocator(2))
+
+        plt.grid(False)
+        plt.grid(axis="y", alpha=0.5)
+        plt.tight_layout()
+
+        plot_path = os.path.join(results_dir, f"distribution_latency_{save_name}.png")
+        plt.savefig(plot_path, dpi=300)
+        plt.close()
+        print(f"Saved latency distribution plot to {plot_path.replace(os.sep, '/')}")
+
+    except Exception as e:
+        print(f"Could not generate latency distribution plot: {e}")
+
+
+
 

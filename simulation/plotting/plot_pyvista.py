@@ -115,7 +115,7 @@ def init_fov_layers(
     tip_edge_color: str = "white",
     cue_edge_color: str = "white",
     opacity: float = 0.35,
-    line_width: float = 3.0,
+    line_width: float = 4.0,
 ):
     placeholder_latlon = np.array([[0.0, 0.0], [0.0, 1e-6], [1e-6, 0.0]], dtype=float)
 
@@ -379,18 +379,24 @@ def update_points_polydata(poly: pv.PolyData, new_pts: np.ndarray) -> None:
 # --------------------------- Ground targets (whales) in ECI ---------------------------
 
 def whales_to_points_eci(whales, t: datetime) -> np.ndarray:
+    """
+    Convert a dict of Whale objects to ECI coordinates at time t.
+    """
     if t.tzinfo is None:
         t = t.replace(tzinfo=timezone.utc)
-    if isinstance(whales, dict) and "lat" in whales and "lon" in whales:
-        whales = {0: whales}
+
     if not whales:
         return np.zeros((0, 3), dtype=float)
+
     rows = []
     for _, w in sorted(whales.items()):
-        x, y, z = pm.geodetic2ecef(w["lat"], w["lon"], float(w.get("alt", 0.0)))
+        lat, lon, alt = w.lat, w.lon, w.alt
+        x, y, z = pm.geodetic2ecef(lat, lon, alt)
         X, Y, Z = pm.ecef2eci(x, y, z, t)
+        # PyVista axis flip
         rows.append([-X, -Y, Z])
     return np.asarray(rows, dtype=float)
+
 
 
 # --------------------------- Sun light in ECI ---------------------------
@@ -439,17 +445,21 @@ def update_sun_light_eci(light: pv.Light, t: datetime, distance_scale: float = 1
     light.position = tuple((s_pv / norm) * distance_scale)
 
 def update_points_from_targets(points_array, targets_dict, t_datetime):
+    """
+    Update a (N,3) numpy array with Whale positions in ECI.
+    NaN for whales not in the dict.
+    """
     # Hide everything by default
     points_array[:] = np.nan
 
     for whale_idx, whale in targets_dict.items():
-        # Convert whale geodetic state to ECI
         pos = whales_to_points_eci({whale_idx: whale}, t_datetime)[0]
         points_array[whale_idx] = pos
 
     return points_array
 
-def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=None):
+
+def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, onboard_ai, last_theta=None):
     """
     Clear an existing PyVista plotter window and re-add background, Earth,
     satellites, whales, FoV meshes and Sun light. Keeps same window open and
@@ -474,13 +484,20 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
     whales_plot_all = pv.PolyData(np.zeros((len(all_targets), 3)))
     pl.add_points(whales_plot_all, color="red", point_size=8, render_points_as_spheres=True)
 
-    eval_pts = np.full((n_whales, 3), np.nan)
-    whales_plot_evaluated = pv.PolyData(eval_pts.copy())
-    pl.add_points(whales_plot_evaluated, color="green", point_size=9, render_points_as_spheres=True)
-
     task_pts = np.full((n_whales, 3), np.nan)
     whales_plot_tasked = pv.PolyData(task_pts.copy())
-    pl.add_points(whales_plot_tasked, color="orange", point_size=10, render_points_as_spheres=True)
+    pl.add_points(whales_plot_tasked, color="orange", point_size=11, render_points_as_spheres=True)
+    
+    obs_cue_pts = np.full((n_whales, 3), np.nan)
+    whales_plot_observed_cue = pv.PolyData(obs_cue_pts.copy())
+    pl.add_points(whales_plot_observed_cue, color="green", point_size=9, render_points_as_spheres=True)
+
+    if onboard_ai:
+        conf_pts = np.full((n_whales, 3), np.nan)
+        whales_plot_confirmed = pv.PolyData(conf_pts.copy())
+        pl.add_points(whales_plot_confirmed, color="purple", point_size=10, render_points_as_spheres=True)
+    else:
+        conf_pts = whales_plot_confirmed = None
 
     # --- Satellites ---
     cloud_tip_sats = pv.PolyData(np.zeros((len(tip_actors), 3)))
@@ -502,27 +519,24 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
 
     # --- Text ---
     # pl.add_text("Tip and Cue Simulation", font_size=12)
-    step_text = pl.add_text("Step: 0", font_size=10, position="lower_right")
+    step_text = pl.add_text("Step: 0", font_size=10, position="lower_right", color = 'slategrey')
 
     return (earth_actor, earth_state,
-            whales_plot_all, whales_plot_evaluated, whales_plot_tasked,
+            whales_plot_all, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed,
             cloud_tip_sats, cloud_cue_sats,
             tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
-            sun_light,
-            eval_pts, task_pts, step_text)
+            sun_light, task_pts, obs_cue_pts, conf_pts, step_text)
 
 
 def update_plotter(pl,
                    earth_actor, earth_state,
-                   sun_light,
-                   cloud_tip_sats, cloud_cue_sats,
-                   whales_plot_all, whales_plot_evaluated, whales_plot_tasked,
+                   sun_light, cloud_tip_sats, cloud_cue_sats,
+                   whales_plot_all, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed,
                    tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
-                   t_datetime,
-                   tip_positions, cue_positions,
-                   all_targets, evaluated_targets, tasked_targets,
-                   eval_pts, task_pts,
-                   FovPoints_tip, FovPoints_cue, step_text, n_steps):
+                   t_datetime, tip_positions, cue_positions,
+                   all_targets, tasked_targets, observed_targets_cue, confirmed_targets,
+                   task_pts, obs_cue_pts, conf_pts,
+                   FovPoints_tip, FovPoints_cue, step_text, n_steps, onboard_ai):
     """
     Update all actors in the plotter for the current simulation step.
     """
@@ -537,13 +551,18 @@ def update_plotter(pl,
     # All whales
     whales_plot_all.points = whales_to_points_eci(all_targets, t_datetime)
 
-    # Evaluated whales
-    eval_pts = update_points_from_targets(eval_pts, evaluated_targets, t_datetime)
-    whales_plot_evaluated.points = eval_pts
-
     # Tasked whales
     task_pts = update_points_from_targets(task_pts, tasked_targets, t_datetime)
     whales_plot_tasked.points = task_pts
+    
+    # Observed whales cue
+    obs_cue_pts = update_points_from_targets(obs_cue_pts, observed_targets_cue, t_datetime)
+    whales_plot_observed_cue.points = obs_cue_pts
+    
+    # Confirmed whales cue
+    if onboard_ai:
+        conf_pts = update_points_from_targets(conf_pts, confirmed_targets, t_datetime)
+        whales_plot_confirmed.points = conf_pts
 
     # FoV polygons
     update_fov_layers_eci(
@@ -557,7 +576,7 @@ def update_plotter(pl,
     # Refresh scene
     pl.update()
 
-    return eval_pts, task_pts
+    return task_pts, obs_cue_pts, conf_pts
 
 def compute_movie_framerate(a, sim_step_seconds, plot_interval, movie_orbit_sec):
     T_orbit = compute_orbital_period(a)  # orbital period [s]

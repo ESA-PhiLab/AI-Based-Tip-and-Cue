@@ -4,6 +4,8 @@ from datetime import timedelta
 import numpy as np
 import pykep as pk
 
+from custom_paseos.utils.help_functions import compute_orbital_period
+
 from org.orekit.time import AbsoluteDate
 from org.orekit.bodies import GeodeticPoint
 from org.orekit.utils import PVCoordinates, Constants
@@ -16,14 +18,25 @@ from custom_paseos.attitude.controller import StabilizedAttitudeController, SO3P
 from custom_paseos.propagation.orekit_propagator import OrekitPropagator
 from paseos import ActorBuilder, SpacecraftActor
 
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
+from pyproj import Transformer, CRS
+import numpy as np
+import math
+
 import numpy as np
 from custom_paseos.utils.point_transformation import Point_Geodetic2ECI
-
 
 import math
 from org.orekit.orbits import KeplerianOrbit, PositionAngleType
 from org.orekit.utils import Constants
 from org.orekit.frames import FramesFactory
+
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
+from pyproj import Transformer, CRS
+import numpy as np
+import math
 
 def init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, eul_ang_tip_init, eul_ang_cue_init):
 
@@ -100,14 +113,17 @@ def init_attitude_controllers(tip_actors, cue_actors, eo_tools_dict,
     return controllers
 
 def cleanup_tasked_targets(tasked_targets, current_time, timeout):
-
-    # delete tasked target list if out of range
+    """
+    Remove tasks that have timed out, using Whale.tip_time.
+    tasked_targets: dict[int, Whale]
+    """
     expired = [idx for idx, w in tasked_targets.items()
-               if current_time > w["detection_time"] + timedelta(seconds=timeout)]
+               if (w.tip_time is not None) and (current_time > w.tip_time + timedelta(seconds=timeout))]
 
     for idx in expired:
         print("!! Time-out: remove tasking request", idx)
         del tasked_targets[idx]
+
 
 
 def propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits):
@@ -122,29 +138,6 @@ def propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits):
     v_vec = np.array(v).reshape(3, 1)
 
     return r_vec, v_vec, r, v
-
-
-def log_tip_detection(writer, t_datetime, actor, whale_idx, tgt, r, v, in_footprint):
-    writer.writerow([
-        t_datetime.isoformat(), actor.name,
-        whale_idx, f"{tgt[0]:.4f}", f"{tgt[1]:.4f}", f"{tgt[2]:.1f}",
-        f"{r[0]:.3f}", f"{r[1]:.3f}", f"{r[2]:.3f}",
-        f"{v[0]:.6f}", f"{v[1]:.6f}", f"{v[2]:.6f}",
-        in_footprint
-    ])
-
-
-def log_cue_evaluation(writer, t_datetime, actor, whale_idx, tgt, r, v,
-                       offnadir_angle_deg, in_view, in_footprint,
-                       yaw, pitch, roll):
-    writer.writerow([
-        t_datetime.isoformat(), actor.name,
-        whale_idx, f"{tgt[0]:.4f}", f"{tgt[1]:.4f}", f"{tgt[2]:.1f}",
-        f"{r[0]:.3f}", f"{r[1]:.3f}", f"{r[2]:.3f}",
-        f"{v[0]:.6f}", f"{v[1]:.6f}", f"{v[2]:.6f}",
-        f"{offnadir_angle_deg:.4f}", in_view, in_footprint,
-        f"{yaw:.2f}", f"{pitch:.2f}", f"{roll:.2f}"
-    ])
 
 
 def satellite_in_shadow(r_vec, sun_vec_eci, earth_radius):
@@ -184,23 +177,22 @@ def target_illuminated(lat, lon, alt, t_datetime, earth, sun, iers2010):
 def daylight_mask(targets, sun_vec):
     """
     Compute which targets are in daylight.
-    targets: dict of {id: {"lat":.., "lon":.., "alt":..}}
+    targets: dict[int, Whale]
     sun_vec: Sun position vector in ECEF (np.array of shape (3,))
-    earth: ReferenceEllipsoid
     Returns: set of ids that are illuminated
     """
     illuminated = set()
     sun_unit = sun_vec / np.linalg.norm(sun_vec)
 
-    for tid, t in targets.items():
-        r = Point_Geodetic2ECEF(t["lat"], t["lon"], t["alt"]).flatten()
+    for tid, whale in targets.items():
+        lat, lon, alt = whale.lat, whale.lon, whale.alt
+        r = Point_Geodetic2ECEF(lat, lon, alt).flatten()
         r_unit = r / np.linalg.norm(r)
-
-        # If angle between position vector and Sun vector is < 90°
         if np.dot(r_unit, sun_unit) > 0:
             illuminated.add(tid)
 
     return illuminated
+
 
 def convert_M_to_lv(orbital_elements, epoch):
     """
@@ -230,7 +222,7 @@ def pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime):
     task: dict with at least "coord" (lat, lon, alt)
     eo_tools: EO tools object for the satellite
     r_vec, v_vec: satellite state vectors in ECI
-    t_datetime: datetime of evaluation
+    t_datetime: datetime of observation
     """
     # Convert target to pointing vector
     _, pointing_vec_brf = eo_tools.off_nadir_pointing_angle(
@@ -246,4 +238,67 @@ def pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime):
     # Difference from current pointing
     delta = np.abs(np.array(eul_target) - np.array(eo_tools.eul_ang_deg))
     return np.linalg.norm(delta)
+
+def count_orbits_completed(a_m, sim_duration_seconds):
+    """
+    Return (n_orbits_float, n_full_orbits, residual_seconds, period_seconds)
+      a_m: semi-major axis [m]
+      sim_duration_seconds: simulated elapsed time [s]
+    """
+    T = compute_orbital_period(a_m)          # [s]
+    n_float = sim_duration_seconds / T
+    n_full = int(n_float)
+    residual = sim_duration_seconds - n_full * T
+    return n_float, n_full, residual, T
+
+def compute_coverage_fraction(fov_polygons_tip, fov_polygons_cue, R_earth, inclination_deg, a_m, sim_duration_seconds):
+    """
+    Compute coverage metrics from FOV polygons:
+      - Total covered area and fraction of Earth
+      - Max possible coverage given inclination
+      - Per-orbit coverage
+      - Efficiency (total and per orbit)
+    """
+
+    # Equal-area projection (Mollweide) for accurate area computation
+    crs_equal_area = CRS.from_proj4("+proj=moll +lon_0=0 +x_0=0 +y_0=0 +R=6371000 +units=m +no_defs")
+    transformer = Transformer.from_crs(CRS.from_epsg(4326), crs_equal_area, always_xy=True)
+
+    # Transform polygons into projection and collect valid ones
+    polys = []
+    for fov_list in (fov_polygons_tip + fov_polygons_cue):
+        if fov_list is None: continue
+        lons, lats = fov_list[:, 1], fov_list[:, 0]
+        if lons[0] != lons[-1] or lats[0] != lats[-1]:  # ensure polygon is closed
+            lons, lats = np.append(lons, lons[0]), np.append(lats, lats[0])
+        x, y = transformer.transform(lons, lats)
+        poly = Polygon(zip(x, y))
+        if poly.is_valid and not poly.is_empty: polys.append(poly)
+
+    # Union of all footprints → total covered area
+    union_poly = unary_union(polys) if polys else None
+    area_covered_m2 = union_poly.area if union_poly else 0.0
+    area_covered_km2 = area_covered_m2 / 1e6
+    area_total_m2 = 4.0 * math.pi * R_earth**2
+    area_total_km2 = area_total_m2 / 1e6
+
+    # Theoretical max coverage based on inclination (sin(i) rule)
+    area_mission_fraction_total = math.sin(math.radians(abs(inclination_deg)))
+    area_mission_m2 = area_mission_fraction_total * area_total_m2
+    area_mission_km2 = area_mission_m2 / 1e6
+
+    area_covered_fraction_total = area_covered_km2 / area_total_km2
+    area_covered_fraction_mission = (area_covered_m2 / area_mission_m2) if area_mission_m2 > 0 else 0.0       # Efficiency relative to theoretical maximum
+
+    # Normalize per orbit
+    T = compute_orbital_period(a_m)                        # orbital period [s]
+    n_orbits = sim_duration_seconds / T if T > 0 else 0.0  # number of completed orbits
+    area_covered_per_orbit_km2 = area_covered_km2 / n_orbits if n_orbits > 0 else 0.0
+    area_covered_per_orbit_fraction_total = area_covered_per_orbit_km2 / area_total_km2 if n_orbits > 0 else 0.0
+    area_covered_per_orbit_fraction_mission = area_covered_per_orbit_km2 / area_mission_km2 if n_orbits > 0 else 0.0
+
+    return area_total_km2, area_mission_km2, area_covered_km2, area_covered_per_orbit_km2, area_mission_fraction_total, area_covered_fraction_total, area_covered_fraction_mission, area_covered_per_orbit_fraction_total, area_covered_per_orbit_fraction_mission
+
+
+
 
