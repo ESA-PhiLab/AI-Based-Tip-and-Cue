@@ -11,6 +11,7 @@ import gc
 import os, sys
 import pandas as pd
 import openpyxl
+import shutil
 
 from orekit.pyhelpers import setup_orekit_curdir
 
@@ -28,13 +29,15 @@ from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, up
 from simulation.plotting.plot_constellation import plot_constellation_pyvista, plot_constellation_pyvista_plain
 from simulation.logging import init_excel_log, log_tip_observation, log_cue_observation, log_combined_observation, gsd_offnadir, at_exit, Logger, compute_stats
 
-model_attitude_control = True
 show_constellation = False
-plot_propagation = False
-plot_footprints = True
 show_orbits = False
+plot_propagation = True
+plot_footprints = True
+
+model_attitude_control = True
 generate_image = False
 onboard_ai = False
+
 logging = True
 verbose = False
 
@@ -63,6 +66,8 @@ if logging:
     sys.stderr = sys.stdout
 
 print(f"Initiate simulation {sim_name} | Attitude control {model_attitude_control} | Logging {logging}")
+
+
 utc = TimeScalesFactory.getUTC()
 t0_orekit = AbsoluteDate(t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second + t0.microsecond / 1e6, utc)
 t0_pykep = pk.epoch_from_string(t0.strftime("%Y-%m-%d %H:%M:%S"))
@@ -127,6 +132,7 @@ sim_duration_seconds = sim_duration_hours * 3600
 
 n_steps_total = int(sim_duration_seconds / sim_step_seconds) + 1
 n_snapshots = n_steps_total // plot_fov_interval + 1
+
 fov_polygons_tip = [None] * n_snapshots * nPlanes_tip * nSats_tip  # fixed length list
 fov_polygons_cue = [None] * n_snapshots * nPlanes_cue * nSats_cue  # fixed length list
 
@@ -181,6 +187,19 @@ if logging:
     writer_combined = init_excel_log("sim_output.xlsx", header_combined, sheet_name="CombinedLog")
     writer_tip = init_excel_log("sim_output.xlsx", header_tip, sheet_name="TipLog")
     writer_cue = init_excel_log("sim_output.xlsx", header_cue, sheet_name="CueLog")
+
+    results_dir = os.path.join("results", sim_name)
+    os.makedirs(results_dir, exist_ok=True)
+
+    copy_file = "settings.py"
+    if os.path.exists(copy_file):
+        dst = os.path.join(results_dir, copy_file)
+        shutil.copy(copy_file, dst)
+        if verbose:
+            print(f"Copied {copy_file} to {dst.replace(os.sep, '/')}")
+    else:
+        if verbose:
+            print(f"Warning: {copy_file} not found, skipping.")
 
     atexit.register(at_exit, save_name=sim_name, pl=pl if plot_propagation else None)
     print("Initiated logging files")

@@ -224,16 +224,6 @@ def at_exit(save_name, pl=None, verbose=True):
             if verbose:
                 print(f"Warning: {src} not found, skipping.")
 
-    copy_file = "settings.py"
-    if os.path.exists(copy_file):
-        dst = os.path.join(results_dir, copy_file)
-        shutil.copy(copy_file, dst)
-        if verbose:
-            print(f"Copied {copy_file} to {dst.replace(os.sep, '/')}")
-    else:
-        if verbose:
-            print(f"Warning: {copy_file} not found, skipping.")
-
     time.sleep(0.1)
 
     if combined_excel and os.path.exists(combined_excel):

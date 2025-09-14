@@ -8,7 +8,6 @@ from simulation.constellation import analyze_keplerian_constellation
 from matplotlib.collections import PolyCollection
 import plotly.graph_objects as go
 
-
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from matplotlib.lines import Line2D

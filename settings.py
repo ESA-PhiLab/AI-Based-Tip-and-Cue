@@ -27,9 +27,9 @@ crop_black_border = True
 generate_radiation = True
 flat_dem = False
 exclude_dark = True
-sim_time = 'fast'
+sim_time = 'slow'
 
-sim_duration_hours = 0.5
+sim_duration_hours = 0.1
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 if sim_time == 'slow':
@@ -56,11 +56,11 @@ else:
 # ================================================================================
 # ORBIT
 
-nSats_tip = 2
-nSats_cue = 2
+nSats_tip = 1
+nSats_cue = 1
 
-nPlanes_tip = 2
-nPlanes_cue = 2
+nPlanes_tip = 1
+nPlanes_cue = 1
 
 hp = 616.1e3                              # perigee altitude [m]        Like WV-3, from: https://www.n2yo.com/satellite/?s=40115
 ha = 624.4e3                              # apogee altitude [m]
