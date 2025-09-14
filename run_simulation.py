@@ -23,14 +23,14 @@ from custom_paseos.attitude.controller import StabilizedAttitudeController, SO3P
 
 from simulation.propagate_whales import Whale, update_whales, load_land_mask, generate_random_water_targets, init_whales, build_land_mask
 from simulation.simulation_functions import init_eo_tools, init_attitude_controllers, cleanup_tasked_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, compute_coverage_fraction, count_orbits_completed, compute_coverage_fraction
-from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints
+from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints, plot_all_fov_footprints_plotly
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate
 from simulation.plotting.plot_constellation import plot_constellation_pyvista, plot_constellation_pyvista_plain
 from simulation.logging import init_excel_log, log_tip_observation, log_cue_observation, log_combined_observation, gsd_offnadir, at_exit, Logger, compute_stats
 
 model_attitude_control = True
 show_constellation = False
-plot_propagation = True
+plot_propagation = False
 plot_footprints = True
 show_orbits = False
 generate_image = False
@@ -599,7 +599,7 @@ if plot_footprints:
           f"({area_covered_per_orbit_fraction_mission * 100:.2f}% of possible surface)")
 
     t2 = time.time()
-    print(f"FOV footprints computation time: {t2-t1:1f}")
+    print(f"FOV: footprints computation time: {t2-t1:1f} s")
 
 else:
     area_covered_km2 = area_covered_per_orbit_km2 = None
@@ -679,14 +679,13 @@ if logging:
 
     wb.save("sim_output.xlsx")
 
-at_exit(save_name=sim_name, pl=pl if plot_propagation else None, verbose=False)
-
 if plot_footprints:
+    print("Generate FOV footprint plots")
     t1 = time.time()
-    plot_all_fov_footprints(fov_polygons_tip, known_targets, extension="tip", show_plot=False)
-    plot_all_fov_footprints(fov_polygons_cue, known_targets, extension="cue", show_plot=False)
+    plot_all_fov_footprints_plotly(fov_polygons_tip, known_targets, extension="tip")
+    plot_all_fov_footprints_plotly(fov_polygons_cue, known_targets, extension="cue")
     t2 = time.time()
-    print(f"FOV footprints plotting time: {t2 - t1:1f}")
+    print(f"FOV: footprints plotting time: {t2 - t1:1f} s")
 
 if show_orbits:
     plot_orbits(trajectories)

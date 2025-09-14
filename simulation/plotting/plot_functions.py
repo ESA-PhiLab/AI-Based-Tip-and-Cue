@@ -5,6 +5,9 @@ from matplotlib import pyplot as plt
 import pykep as pk
 
 from simulation.constellation import analyze_keplerian_constellation
+from matplotlib.collections import PolyCollection
+import plotly.graph_objects as go
+
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -153,6 +156,10 @@ def plot_fov_on_map(intersections, ax):
     fov_line = Line2D([0], [0], color='red', lw=2, label='Field of View')
     ax.legend(handles=[fov_line], loc='lower left')
 
+
+
+
+
 def plot_all_fov_footprints(all_fov_polygons, known_targets, extension = "", show_plot=True):
     Image.MAX_IMAGE_PIXELS = None
     fig, ax_map = plt.subplots(figsize=(10, 5), subplot_kw={'projection': ccrs.PlateCarree()})
@@ -204,6 +211,52 @@ def plot_all_fov_footprints(all_fov_polygons, known_targets, extension = "", sho
             print("Warning: Could not display plot (non-interactive backend).")
 
     return fig
+
+def plot_all_fov_footprints_plotly(all_fov_polygons, known_targets, extension=""):
+    fig = go.Figure()
+
+    # FOV polygons (outline only, no fill)
+    for fov in all_fov_polygons:
+        lats = list(fov[:, 0]) + [fov[0, 0]]  # close loop
+        lons = list(fov[:, 1]) + [fov[0, 1]]
+
+        fig.add_trace(go.Scattergeo(
+            lon=lons,
+            lat=lats,
+            mode="lines",
+            line=dict(color="red", width=1),
+            showlegend=False
+        ))
+
+    # Targets
+    if known_targets:
+        fig.add_trace(go.Scattergeo(
+            lon=[t[1] for t in known_targets],   # lon
+            lat=[t[0] for t in known_targets],   # lat
+            mode="markers",
+            marker=dict(color="green", size=5),
+            name="Targets"
+        ))
+
+    # Background Earth
+    fig.update_layout(
+        title="Satellite Footprints",
+        geo=dict(
+            projection_type="equirectangular",
+            showland=True,
+            landcolor="rgb(230, 230, 230)",
+            showocean=True,
+            oceancolor="rgb(200, 220, 255)",
+            showcountries=True,
+            countrycolor="black"
+        )
+    )
+
+    html_path = f"footprints_{extension}.html"
+    fig.write_html(html_path, include_plotlyjs="cdn")
+    return html_path
+
+
 
 
 
