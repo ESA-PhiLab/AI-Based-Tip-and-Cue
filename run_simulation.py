@@ -118,6 +118,9 @@ eul_ang_cue_default = [0.0, 0.0, 0.0]
 offnadir_cue_deg_target = 0.0
 offnadir_tip_deg = 0.0
 
+n_targets_pos = int(round(n_targets * pos_fraction))
+n_targets_neg = n_targets - n_targets_pos
+
 # EO Tools
 eo_tools_dict = init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, eul_ang_tip_default, eul_ang_cue_default)
 controllers = init_attitude_controllers(None, cue_actors, eo_tools_dict, None, controller_params)  # Only initialize controller for cue
@@ -231,6 +234,8 @@ n_tasked_tip = 0
 n_tasked_cue = 0
 n_observed_cue = 0
 n_confirmed_cue = 0
+n_confirmed_pos = 0
+n_confirmed_neg = 0
 
 elapsed_time, n_steps = 0.0, 0
 
@@ -377,6 +382,7 @@ while elapsed_time <= sim_duration_seconds:
                         elif not whale.confirmed_tip:
                             whale.ai_class_predicted="not-whale"
                             confirmed_targets_neg[whale_idx] = whale
+                            n_confirmed_neg +=1
 
                             print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, no Cue assigned (actual={whale.ai_class_true})")
 
@@ -436,7 +442,7 @@ while elapsed_time <= sim_duration_seconds:
                                 key=lambda task: pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime)
                             )
                             eo_tools.task_queue.remove(eo_tools.current_task)
-                            print(f"!! {actor.name}: Received task for Target {eo_tools.current_task['target_id']}")
+                            print(f"!! {actor.name}: Starting task for Target {eo_tools.current_task['target_id']}")
                             n_tasked_cue += 1
 
                     # If still no current task, assign this whale now
@@ -601,10 +607,12 @@ while elapsed_time <= sim_duration_seconds:
                         if whale.confirmed_cue:  # Add better decision to prevent twice!!
                             whale.ai_class_predicted="whale"
                             confirmed_targets_pos[whale_idx] = whale
+                            n_confirmed_pos += 1
 
                         elif not whale.confirmed_cue:
                             whale.ai_class_predicted = "not-whale"
                             confirmed_targets_neg[whale_idx] = whale
+                            n_confirmed_neg += 1
 
                         print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted} (actual={whale.ai_class_true})")
 
@@ -666,7 +674,7 @@ confirmation_efficiency = n_confirmed_cue / n_targets
 
 # --- Order: Satellites + Whales first ---
 print(f"Number of satellites:             {nSats_tip + nSats_cue} (Tip={nSats_tip}, Cue={nSats_cue})")
-print(f"Total targets:                    {n_targets} (positive={n_targets_positive}, negative={n_targets_negative})")
+print(f"Total targets:                    {n_targets}")
 print(f"Simulation time:                  {sim_duration_hours} h")
 
 # --- Orbits ---
@@ -683,15 +691,15 @@ else:
           f"(full={n_full_tip}, residual={residual_tip:.2f}s, period={T_tip:.1f}s)\n")
 
 # --- Observation / Efficiencies ---
-print(f"Tip observed:                     {n_observed_tip} (verification: {len(observed_targets_tip)})")
+print(f"Tip observed:                     {n_observed_tip} (without duplicates: {len(observed_targets_tip)})")
 print(f"Tip confirmed:                    {n_confirmed_tip}")
 print(f"Tip tasks sent:                   {n_tasked_tip}")
 print(f"Cue tasks taken:                  {n_tasked_cue}")
-print(f"Cue observed:                     {n_observed_cue} (verification: {len(observed_targets_cue)})")
+print(f"Cue observed:                     {n_observed_cue} (without duplicates: {len(observed_targets_cue)})")
 print(f"Cue confirmed:                    {n_confirmed_cue}\n")
 
-print(f"Positive confirmed:               {len(confirmed_targets_pos)}")
-print(f"Negative confirmed:               {len(confirmed_targets_neg)}\n")
+print(f"Positive confirmed:               {n_confirmed_pos} (without duplicates: {len(confirmed_targets_pos)}, actual: {n_targets_pos})")
+print(f"Negative confirmed:               {n_confirmed_neg} (without duplicates: {len(confirmed_targets_neg)}, actual: {n_targets_neg})\n")
 
 print(f"Observation efficiency Tip:       {observation_efficiency_tip * 100:.2f}% of whales ({n_targets} total)")
 print(f"Observation efficiency Cue:       {observation_efficiency_cue * 100:.2f}% of whales ({n_targets} total)")
@@ -711,7 +719,7 @@ if plot_footprints:
           f"{area_covered_fraction_mission * 100:.2f}% of possible surface)")
     print(f"Per orbit coverage:               {area_covered_per_orbit_km2:,.0f} km² "
           f"({area_covered_per_orbit_fraction_total * 100:.2f}% of Earth, "
-          f"({area_covered_per_orbit_fraction_mission * 100:.2f}% of possible surface)")
+          f"{area_covered_per_orbit_fraction_mission * 100:.2f}% of possible surface)")
 
     t2 = time.time()
     print(f"FOV: footprints computation time: {t2-t1:1f} s")
@@ -739,7 +747,7 @@ if logging:
 
     overview_data = [
         ("Number of satellites", nSats_tip + nSats_cue, f"(Tip={nSats_tip}, Cue={nSats_cue})"),
-        ("Total targets", n_targets, f"(positive={n_targets_positive}, negative={n_targets_negative})"),
+        ("Total targets", n_targets, ""),
         ("Simulation time (h)", sim_duration_hours, ""),
 
         ("Tip orbits completed", round(n_float_tip, 3),
@@ -756,8 +764,8 @@ if logging:
         ("Cue confirmed", n_confirmed_cue, ""),
 
         ("", "", ""),  # blank row
-        ("Negative confirmed", len(confirmed_targets_pos), ""),
-        ("Positive confirmed", len(confirmed_targets_neg), ""),
+        ("Positive confirmed", n_confirmed_pos, f"(without duplicates: {len(confirmed_targets_pos)}, actual: {n_targets_pos})"),
+        ("Negative confirmed", n_confirmed_neg, f"(without duplicates: {len(confirmed_targets_neg)}, actual: {n_targets_neg})"),
 
         ("", "", ""),  # blank row
         ("Tip observation efficiency (%)", round(observation_efficiency_tip * 100, 2),

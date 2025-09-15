@@ -165,7 +165,7 @@ wn_final, (Kp_acs, Kd_acs, Ki_acs) = tune_pid_with_limits(
 # WHALES
 
 n_targets = 300
-pos_fraction = 0.0
+pos_fraction = 1.0
 
 worldmap_dir = "dataset/worldmaps"      # Folder with GSHHS shapefiles; mask .tif/.npy will be stored here
 res_deg = 0.05                          # Raster resolution for land mask (deg/pixel)
