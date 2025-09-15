@@ -81,11 +81,9 @@ class EOTools:
 
         # Convert attitude in np.ndarray
         self.eul_ang_deg = np.array(initial_eul_ang_deg)
-        # Convert pointing vector in np.ndarray
-        # Creation of the FOV
         self.fov_angles = [fov_act_deg[0], fov_alt_deg[0]]
-
         self.phi_deg = 0.0
+
         self.eul_ang_target = [0.0, 0.0, 0.0]
 
         self.task_queue = []
@@ -293,63 +291,109 @@ class EOTools:
 
         return df
 
-    def off_nadir_pointing_angle(self, r_eci, v_eci, target_geodetic, t_datetime):
-        # geodetic target → ECI
+    def point_to_target(self, r_eci, v_eci, target_geodetic, t_datetime, offnadir_max=None):
+        """
+        Compute pointing vector in BRF to a geodetic target and its off-nadir angle.
+        Optionally enforce a maximum off-nadir constraint.
 
-        eul_ang_ref = [0.0, 0.0, 0.0]
+        Parameters
+        ----------
+        r_eci : ndarray
+            Satellite position in ECI [m].
+        v_eci : ndarray
+            Satellite velocity in ECI [m/s].
+        target_geodetic : tuple
+            Target (lat, lon, alt).
+        t_datetime : datetime
+            Epoch of computation.
+        offnadir_max : float, optional
+            Maximum allowed off-nadir angle [deg]. If None, no capping is applied.
+
+        Returns
+        -------
+        pointing_vec_brf_target : ndarray
+            Target direction in BRF.
+        offnadir_deg_target : float
+            Off-nadir angle [deg], possibly capped.
+        """
+
+        # Target → ECI
         P_target_eci = Point_Geodetic2ECI(*target_geodetic, t_datetime)
-        # Distance Computation
         vec_eci = P_target_eci - r_eci
-        # ECI → BRF
-        pointing_vec_brf_target = IRF2BRF_eul(vec_eci, r_eci, v_eci, eul_ang_ref)
 
-        # Compute the angle
+        # Transform to BRF (with reference Euler = [0,0,0])
+        pointing_vec_brf_target = IRF2BRF_eul(vec_eci, r_eci, v_eci, [0.0, 0.0, 0.0])
+        pointing_vec_brf_target /= np.linalg.norm(pointing_vec_brf_target)
+
+        # Off-nadir angle w.r.t. boresight
         boresight_brf = np.array([0.0, 0.0, 1.0])
-        boresight_brf /= np.linalg.norm(boresight_brf)
+        dot_product = np.clip(np.dot(boresight_brf, pointing_vec_brf_target), -1.0, 1.0)
+        offnadir_deg_target = np.degrees(np.arccos(dot_product))
 
-        pointing_vec_brf_target = pointing_vec_brf_target / np.linalg.norm(pointing_vec_brf_target)
+        # Apply max off-nadir if requested
+        if offnadir_max is not None and offnadir_deg_target > offnadir_max:
+            offnadir_deg_target, pointing_vec_brf_target = self.set_max_offnadir(pointing_vec_brf_target, offnadir_deg_target, offnadir_max)
 
-        dot_product = np.clip(boresight_brf @ pointing_vec_brf_target, -1.0, 1.0)
-        offnadir_angle_rad = np.arccos(dot_product)
-        offnadir_angle_deg = np.rad2deg(offnadir_angle_rad)
-
-        return float(offnadir_angle_deg), pointing_vec_brf_target
+        return pointing_vec_brf_target, float(offnadir_deg_target)
 
     def set_max_offnadir(self, pointing_vec_brf_target: np.ndarray,
-                         offnadir_angle_deg: float,
+                         offnadir_deg_target: float,
                          offnadir_max: float) -> tuple[float, np.ndarray]:
 
-        # Boresight direction (camera looking along +Z)
         boresight_brf = np.array([0.0, 0.0, 1.0])
-        boresight_brf /= np.linalg.norm(boresight_brf)
 
-        if offnadir_angle_deg <= offnadir_max:
-            # No adjustment needed
-            return offnadir_angle_deg, pointing_vec_brf_target
+        if offnadir_deg_target <= offnadir_max:
+            return offnadir_deg_target, pointing_vec_brf_target
 
-        # Compute rotation axis (perpendicular to both vectors)
+        # Rotation axis
         rot_axis = np.cross(boresight_brf, pointing_vec_brf_target)
         norm_axis = np.linalg.norm(rot_axis)
-        if norm_axis < 1e-8:
-            # Target is aligned or anti-aligned, choose arbitrary perpendicular axis
+        if norm_axis < 1e-8:  # aligned or anti-aligned
             rot_axis = np.array([1.0, 0.0, 0.0])
         else:
             rot_axis /= norm_axis
 
-        # Convert max angle to radians
+        # Rodrigues’ rotation
         max_angle_rad = np.deg2rad(offnadir_max)
-
-        # Rodrigues' rotation formula to rotate boresight
-        cos_a = np.cos(max_angle_rad)
-        sin_a = np.sin(max_angle_rad)
         K = np.array([[0, -rot_axis[2], rot_axis[1]],
                       [rot_axis[2], 0, -rot_axis[0]],
                       [-rot_axis[1], rot_axis[0], 0]])
-
-        R = np.eye(3) + sin_a * K + (1 - cos_a) * (K @ K)
+        R = np.eye(3) + np.sin(max_angle_rad) * K + (1 - np.cos(max_angle_rad)) * (K @ K)
         new_pointing_vec = R @ boresight_brf
+        new_pointing_vec /= np.linalg.norm(new_pointing_vec)
 
-        return offnadir_max, new_pointing_vec / np.linalg.norm(new_pointing_vec)
+        # Ensure we rotate toward the target, not away
+        if np.dot(new_pointing_vec, pointing_vec_brf_target) < 0:
+            new_pointing_vec = -new_pointing_vec
+
+        return offnadir_max, new_pointing_vec
+
+    def offnadir_from_euler(self):
+        """
+        Absolute off-nadir angle from current Euler attitude (self.eul_ang_deg).
+        No orbit or target data needed.
+
+        Returns
+        -------
+        offnadir_angle_deg : float
+            Off-nadir angle [deg].
+        boresight_dir : ndarray (3,)
+            Actual boresight direction in BRF after applying Euler attitude.
+        """
+
+        # Nominal nadir boresight
+        boresight_ref = np.array([0.0, 0.0, 1.0])
+
+        # Rotate boresight by current attitude
+        Rot_LVLH2BRF = RotMat_LVLH_to_BRF_by_eul(self.eul_ang_deg)
+        boresight_dir = Rot_LVLH2BRF @ boresight_ref
+        boresight_dir /= np.linalg.norm(boresight_dir)
+
+        # Off-nadir angle
+        dot = np.clip(np.dot(boresight_ref, boresight_dir), -1.0, 1.0)
+        offnadir_angle_deg = np.degrees(np.arccos(dot))
+
+        return offnadir_angle_deg, boresight_dir
 
     def is_in_sight(self, target_geodetic, r_eci, v_eci, time, el_min):
         lat, lon, alt = target_geodetic

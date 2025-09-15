@@ -18,9 +18,11 @@ import os
 import mpld3
 import os
 
-from matplotlib.ticker import MultipleLocator, FuncFormatter
+
 import matplotlib
 import matplotlib.pyplot as plt
+
+from matplotlib.ticker import MultipleLocator, FuncFormatter
 
 plt.style.use("seaborn-v0_8-whitegrid")
 matplotlib.use("TkAgg")
@@ -155,10 +157,6 @@ def plot_fov_on_map(intersections, ax):
     fov_line = Line2D([0], [0], color='red', lw=2, label='Field of View')
     ax.legend(handles=[fov_line], loc='lower left')
 
-
-
-
-
 def plot_all_fov_footprints(all_fov_polygons, known_targets, extension = "", show_plot=True):
     Image.MAX_IMAGE_PIXELS = None
     fig, ax_map = plt.subplots(figsize=(10, 5), subplot_kw={'projection': ccrs.PlateCarree()})
@@ -211,11 +209,16 @@ def plot_all_fov_footprints(all_fov_polygons, known_targets, extension = "", sho
 
     return fig
 
-def plot_all_fov_footprints_plotly(all_fov_polygons, known_targets, extension=""):
+def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targets, nPlanes, nSats, extension="", verbose=True):
     fig = go.Figure()
 
     # FOV polygons (outline only, no fill)
-    for fov in all_fov_polygons:
+    if verbose:
+        print(f"Plot footprints {extension}")
+
+    nSats_tot = nPlanes * nSats
+
+    for i, fov in enumerate(all_fov_polygons):
         lats = list(fov[:, 0]) + [fov[0, 0]]  # close loop
         lons = list(fov[:, 1]) + [fov[0, 1]]
 
@@ -223,18 +226,40 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, known_targets, extension=""
             lon=lons,
             lat=lats,
             mode="lines",
-            line=dict(color="red", width=1),
+            line=dict(color="dodgerblue", width=1),
             showlegend=False
         ))
 
-    # Targets
-    if known_targets:
+        n = i % nSats_tot
+        if verbose and n > 0 and n % 10000 == 0:
+            print(f"\t {n} Added footprint")
+
+    # All targets (only those NOT observed)
+
+    if verbose:
+        print("Plot targets")
+
+    if all_targets:
+        observed_ids = set(observed_targets.keys()) if observed_targets else set()
+        unobserved = [w for idx, w in all_targets.items() if idx not in observed_ids]
+
+        if unobserved:
+            fig.add_trace(go.Scattergeo(
+                lon=[w.lon for w in unobserved],
+                lat=[w.lat for w in unobserved],
+                mode="markers",
+                marker=dict(color="red", size=5),
+                name="All targets"
+            ))
+
+    # Observed Cue targets (green)
+    if observed_targets:
         fig.add_trace(go.Scattergeo(
-            lon=[t[1] for t in known_targets],   # lon
-            lat=[t[0] for t in known_targets],   # lat
+            lon=[w.lon for w in observed_targets.values()],
+            lat=[w.lat for w in observed_targets.values()],
             mode="markers",
-            marker=dict(color="green", size=5),
-            name="Targets"
+            marker=dict(color="green", size=6),
+            name="Observed"
         ))
 
     # Background Earth
@@ -255,11 +280,7 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, known_targets, extension=""
     fig.write_html(html_path, include_plotlyjs="cdn")
     return html_path
 
-
-
-
-
-def plot_offnadir_distribution(excel_file, results_dir, save_name, bin_size_deg=5):
+def plot_offnadir_distribution(excel_file, bin_size_deg=5):
     try:
         df = pd.read_excel(excel_file, sheet_name="CombinedLog")
         if "offnadir_deg" not in df.columns:
@@ -290,7 +311,7 @@ def plot_offnadir_distribution(excel_file, results_dir, save_name, bin_size_deg=
         plt.grid(axis="y", alpha=0.5)   # only horizontal grid
         plt.tight_layout()
 
-        plot_path = os.path.join(results_dir, f"distribution_offnadir_{save_name}.png")
+        plot_path = os.path.join(f"offnadir.png")
         plt.savefig(plot_path, dpi=300)
         plt.close()
         print(f"Saved off-nadir distribution plot -> {plot_path.replace(os.sep, '/')}")
@@ -298,11 +319,9 @@ def plot_offnadir_distribution(excel_file, results_dir, save_name, bin_size_deg=
     except Exception as e:
         print(f"Could not generate off-nadir distribution plot: {e}")
 
-from matplotlib.ticker import MultipleLocator, FuncFormatter
 
-from matplotlib.ticker import MultipleLocator, FuncFormatter
 
-def plot_latency_distribution(excel_file, results_dir, save_name, bin_size_sec=30):
+def plot_latency_distribution(excel_file, bin_size_sec=30):
     try:
         df = pd.read_excel(excel_file, sheet_name="CombinedLog")
         if "latency" not in df.columns:
@@ -346,14 +365,11 @@ def plot_latency_distribution(excel_file, results_dir, save_name, bin_size_sec=3
         plt.grid(axis="y", alpha=0.5)
         plt.tight_layout()
 
-        plot_path = os.path.join(results_dir, f"distribution_latency_{save_name}.png")
+        plot_path = os.path.join(f"latency.png")
         plt.savefig(plot_path, dpi=300)
         plt.close()
         print(f"Saved latency distribution plot to {plot_path.replace(os.sep, '/')}")
 
     except Exception as e:
         print(f"Could not generate latency distribution plot: {e}")
-
-
-
 

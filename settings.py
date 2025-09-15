@@ -11,7 +11,7 @@ import math
 # ================================================================================
 # SIMULATION
 
-sim_name =  "TC_nSats1_nPlanes1_30degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
+sim_name =  "test1" # "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
 
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
@@ -29,13 +29,13 @@ flat_dem = False
 exclude_dark = True
 sim_time = 'slow'
 
-sim_duration_hours = 0.1
+sim_duration_hours = 0.2
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 if sim_time == 'slow':
     sim_step_seconds = 1
     plot_fov_interval =  1
-    plot_pyvista_interval = 30
+    plot_pyvista_interval = 10
     print_interval = 10
     movie_orbit_sec = 8.0
 
@@ -62,17 +62,19 @@ nSats_cue = 1
 nPlanes_tip = 1
 nPlanes_cue = 1
 
+delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
+
+delay_confirmation_tip = 30      # Time delay between tip and cue transfer [sec]
+delay_transmission_TC = 30
+delay_confirmation_cue = 30      # Time delay after detection by cue [sec]
+avg_time_delay = delta_t_cue
+
 hp = 616.1e3                              # perigee altitude [m]        Like WV-3, from: https://www.n2yo.com/satellite/?s=40115
 ha = 624.4e3                              # apogee altitude [m]
 i_tip_deg    = 97.8717                    # Inclination [deg]
 RAAN_tip_deg = 324.9696                   # RAAN [deg]
 argp_tip_deg = 140.5945                   # Argument of periapsis [deg]
-M_tip_deg    = 219.5701 - 140                  # Mean anomaly [deg]
-
-delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
-tasking_delay_tip = 60      # Time delay between tip and cue transfer [sec]
-tasking_delay_cue = 10      # Time delay after detection by cue [sec]
-avg_time_delay = delta_t_cue
+M_tip_deg    = 219.5701 - 140             # Mean anomaly [deg]
 
 rp = R_earth + hp
 ra = R_earth + ha
@@ -89,6 +91,16 @@ delta_M_cue = 360.0 * (delta_t_cue / compute_orbital_period(a_tip))
 M_cue_deg = M_tip_deg - delta_M_cue
 
 # ================================================================================
+# ONBOARD AI
+parallel_observation_confirmation = False
+
+tip_tpr = 0.75    # probability Tip correctly identifies a positive whale
+tip_tnr = 0.75    # probability Tip correctly ignores a negative whale
+
+cue_tpr = 0.75    # probability Tip correctly identifies a positive whale
+cue_tnr = 0.75    # probability Tip correctly ignores a negative whale
+
+# ================================================================================
 # SATELLITE
 
 sat_mass = 2800.0         # kg
@@ -102,13 +114,12 @@ J_sat = estimate_box_inertia(sat_mass, sat_length, sat_width, sat_height)       
 # ================================================================================
 # SENSOR
 
-elevation_min = 10.0 # degrees
-offnadir_max = 30.0     # max 62.5 deg
+elevation_min = 10.0    # degrees
+offnadir_max = 50.0     # max 62.5 deg
 
 resolution = 124  # pixels of render
 sample_count = 512  # 8192 min, 2048 * 2**7 max
 
-swath_tip = 290  * 10**3  # m
 swath_tip = 290  * 10**3  # m
 swath_cue = 13.1 * 10**3  # m
 
@@ -156,10 +167,13 @@ res_deg = 0.05                          # Raster resolution for land mask (deg/p
 mask_tif = "land_mask.tif"
 mask_npy = "land_mask.npy"
 
-n_whales = 300
+n_targets = 300
+pos_fraction = 1.0
+
 whale_seed = 17
-max_abs_lat = 70.0                 # Optional: exclude very high latitudes (avoid polar mask artifacts)
-observation_time_limit = 20*60       # Detection time limit
+max_abs_lat = 70.0                   # Optional: exclude very high latitudes (avoid polar mask artifacts)
+observation_time_limit = 20*60       # Observation time limit
+
 
 # Whale kinematics
 speed_mean = 1.5
@@ -187,6 +201,7 @@ else:
 
 # ================================================================================
 # DICTIONARIES
+
 params_tip = {}
 params_tip["a"] = a_tip
 params_tip["e"] = e_tip

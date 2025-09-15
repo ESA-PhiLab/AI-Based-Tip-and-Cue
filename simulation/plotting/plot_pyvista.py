@@ -458,8 +458,7 @@ def update_points_from_targets(points_array, targets_dict, t_datetime):
 
     return points_array
 
-
-def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, onboard_ai, last_theta=None):
+def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=None):
     """
     Clear an existing PyVista plotter window and re-add background, Earth,
     satellites, whales, FoV meshes and Sun light. Keeps same window open and
@@ -484,20 +483,25 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, onboard_ai,
     whales_plot_all = pv.PolyData(np.zeros((len(all_targets), 3)))
     pl.add_points(whales_plot_all, color="red", point_size=8, render_points_as_spheres=True)
 
+    obs_tip_pts = np.full((n_whales, 3), np.nan)
+    whales_plot_observed_tip = pv.PolyData(obs_tip_pts.copy())
+    pl.add_points(whales_plot_observed_tip, color="orange", point_size=9, render_points_as_spheres=True)
+
     task_pts = np.full((n_whales, 3), np.nan)
     whales_plot_tasked = pv.PolyData(task_pts.copy())
-    pl.add_points(whales_plot_tasked, color="orange", point_size=11, render_points_as_spheres=True)
+    pl.add_points(whales_plot_tasked, color="orange", point_size=12, render_points_as_spheres=True)
     
     obs_cue_pts = np.full((n_whales, 3), np.nan)
     whales_plot_observed_cue = pv.PolyData(obs_cue_pts.copy())
-    pl.add_points(whales_plot_observed_cue, color="green", point_size=9, render_points_as_spheres=True)
+    pl.add_points(whales_plot_observed_cue, color="orange", point_size=9, render_points_as_spheres=True)
 
-    if onboard_ai:
-        conf_pts = np.full((n_whales, 3), np.nan)
-        whales_plot_confirmed = pv.PolyData(conf_pts.copy())
-        pl.add_points(whales_plot_confirmed, color="purple", point_size=10, render_points_as_spheres=True)
-    else:
-        conf_pts = whales_plot_confirmed = None
+    conf_pts_pos = np.full((n_whales, 3), np.nan)
+    whales_plot_confirmed_pos = pv.PolyData(conf_pts_pos.copy())
+    pl.add_points(whales_plot_confirmed_pos, color="green", point_size=10, render_points_as_spheres=True)
+
+    conf_pts_neg = np.full((n_whales, 3), np.nan)
+    whales_plot_confirmed_neg = pv.PolyData(conf_pts_neg.copy())
+    pl.add_points(whales_plot_confirmed_neg, color="darkblue", point_size=10, render_points_as_spheres=True)
 
     # --- Satellites ---
     cloud_tip_sats = pv.PolyData(np.zeros((len(tip_actors), 3)))
@@ -521,22 +525,22 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, onboard_ai,
     # pl.add_text("Tip and Cue Simulation", font_size=12)
     step_text = pl.add_text("Step: 0", font_size=10, position="lower_right", color = 'slategrey')
 
-    return (earth_actor, earth_state,
-            whales_plot_all, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed,
-            cloud_tip_sats, cloud_cue_sats,
-            tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
-            sun_light, task_pts, obs_cue_pts, conf_pts, step_text)
+    return (earth_actor, earth_state, sun_light,
+            whales_plot_all, whales_plot_observed_tip, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed_pos, whales_plot_confirmed_neg,
+            cloud_tip_sats, cloud_cue_sats, tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
+            obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg, step_text)
 
 
 def update_plotter(pl,
                    earth_actor, earth_state,
                    sun_light, cloud_tip_sats, cloud_cue_sats,
-                   whales_plot_all, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed,
+                   whales_plot_all, whales_plot_observed_tip, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed_pos, whales_plot_confirmed_neg,
                    tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
                    t_datetime, tip_positions, cue_positions,
-                   all_targets, tasked_targets, observed_targets_cue, confirmed_targets,
-                   task_pts, obs_cue_pts, conf_pts,
-                   FovPoints_tip, FovPoints_cue, step_text, n_steps, onboard_ai):
+                   all_targets, observed_targets_tip, tasked_targets, observed_targets_cue, confirmed_targets_pos, confirmed_targets_neg,
+                   obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg,
+                   FovPoints_tip, FovPoints_cue, step_text, n_steps):
+
     """
     Update all actors in the plotter for the current simulation step.
     """
@@ -551,6 +555,10 @@ def update_plotter(pl,
     # All whales
     whales_plot_all.points = whales_to_points_eci(all_targets, t_datetime)
 
+    # Observed whales cue
+    obs_tip_pts = update_points_from_targets(obs_tip_pts, observed_targets_tip, t_datetime)
+    whales_plot_observed_tip.points = obs_tip_pts
+
     # Tasked whales
     task_pts = update_points_from_targets(task_pts, tasked_targets, t_datetime)
     whales_plot_tasked.points = task_pts
@@ -558,11 +566,12 @@ def update_plotter(pl,
     # Observed whales cue
     obs_cue_pts = update_points_from_targets(obs_cue_pts, observed_targets_cue, t_datetime)
     whales_plot_observed_cue.points = obs_cue_pts
-    
-    # Confirmed whales cue
-    if onboard_ai:
-        conf_pts = update_points_from_targets(conf_pts, confirmed_targets, t_datetime)
-        whales_plot_confirmed.points = conf_pts
+
+    conf_pts_pos = update_points_from_targets(conf_pts_pos, confirmed_targets_pos, t_datetime)
+    whales_plot_confirmed_pos.points = conf_pts_pos
+
+    conf_pts_neg = update_points_from_targets(conf_pts_neg, confirmed_targets_neg, t_datetime)
+    whales_plot_confirmed_neg.points = conf_pts_neg
 
     # FoV polygons
     update_fov_layers_eci(
@@ -576,7 +585,7 @@ def update_plotter(pl,
     # Refresh scene
     pl.update()
 
-    return task_pts, obs_cue_pts, conf_pts
+    return obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg
 
 def compute_movie_framerate(a, sim_step_seconds, plot_interval, movie_orbit_sec):
     T_orbit = compute_orbital_period(a)  # orbital period [s]

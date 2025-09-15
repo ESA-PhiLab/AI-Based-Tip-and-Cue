@@ -2,7 +2,7 @@ import os
 from openpyxl import Workbook, load_workbook
 import math
 from datetime import timedelta
-import pandas as pd
+# import pandas as pd
 import inspect
 
 import os
@@ -63,15 +63,15 @@ def log_tip_observation(writer, target_id, tip_observation_date, tip_actor, offn
                       x, y, z, vx, vy, vz, tip_observation_counter):
     """Log a tip observation event matching header_tip."""
 
-    if should_log_event(writer, target_id, tip_observation_date, min_gap_sec=1000):
-        row = [target_id,
-               tip_observation_date.isoformat(timespec="seconds") + "Z", tip_actor,
-               offnadir_deg, gsd_m,
-               target_lat, target_lon, target_alt,
-               tip_lat, tip_lon, tip_alt,
-               x, y, z, vx, vy, vz,
-               tip_observation_counter]
-        append_excel_log(writer, row)
+    # if should_log_event(writer, target_id, tip_observation_date, min_gap_sec=1000):
+    row = [target_id,
+           tip_observation_date.isoformat(timespec="seconds") + "Z", tip_actor,
+           offnadir_deg, gsd_m,
+           target_lat, target_lon, target_alt,
+           tip_lat, tip_lon, tip_alt,
+           x, y, z, vx, vy, vz,
+           tip_observation_counter]
+    append_excel_log(writer, row)
 
 
 def log_cue_observation(writer, target_id, cue_observation_date, cue_actor, offnadir_deg, gsd_m,
@@ -79,16 +79,16 @@ def log_cue_observation(writer, target_id, cue_observation_date, cue_actor, offn
                       x, y, z, vx, vy, vz, roll, pitch, yaw, cue_observation_counter):
     """Log a cue observation event matching header_cue."""
 
-    if should_log_event(writer, target_id, cue_observation_date, min_gap_sec=1000):
-        row = [target_id,
-               cue_observation_date.isoformat(timespec="seconds") + "Z", cue_actor,
-               offnadir_deg, gsd_m,
-               target_lat, target_lon, target_alt,
-               cue_lat, cue_lon, cue_alt,
-               x, y, z, vx, vy, vz,
-               roll, pitch, yaw,
-               cue_observation_counter]
-        append_excel_log(writer, row)
+    # if should_log_event(writer, target_id, cue_observation_date, min_gap_sec=1000):
+    row = [target_id,
+           cue_observation_date.isoformat(timespec="seconds") + "Z", cue_actor,
+           offnadir_deg, gsd_m,
+           target_lat, target_lon, target_alt,
+           cue_lat, cue_lon, cue_alt,
+           x, y, z, vx, vy, vz,
+           roll, pitch, yaw,
+           cue_observation_counter]
+    append_excel_log(writer, row)
 
 
 def log_combined_observation(writer, target_id, tip_observation_date, tip_actor, cue_observation_date, cue_actor,
@@ -96,15 +96,27 @@ def log_combined_observation(writer, target_id, tip_observation_date, tip_actor,
                            cue_lat, cue_lon, cue_alt, tip_observation_counter, cue_observation_counter):
     """Log a combined tip+cue event matching header_combined."""
 
-    if should_log_event(writer, target_id, cue_observation_date, min_gap_sec=1000):
-        row = [target_id,
-               tip_observation_date.isoformat(timespec="seconds") + "Z", tip_actor,
-               cue_observation_date.isoformat(timespec="seconds") + "Z", cue_actor,
-               offnadir_deg, gsd_m, latency,
-               target_lat, target_lon, target_alt,
-               cue_lat, cue_lon, cue_alt,
-               tip_observation_counter, cue_observation_counter]
-        append_excel_log(writer, row)
+    # if should_log_event(writer, target_id, cue_observation_date, min_gap_sec=1000):
+
+    if tip_observation_date != None:
+        tip_time_entry = tip_observation_date.isoformat(timespec="seconds") + "Z"
+    else:
+        tip_time_entry = None
+
+    if cue_observation_date != None:
+        cue_time_entry = cue_observation_date.isoformat(timespec="seconds") + "Z"
+    else:
+        cue_time_entry = None
+
+    row = [target_id,
+           tip_time_entry, tip_actor,
+           cue_time_entry, cue_actor,
+           offnadir_deg, gsd_m, latency,
+           target_lat, target_lon, target_alt,
+           cue_lat, cue_lon, cue_alt,
+           tip_observation_counter, cue_observation_counter]
+
+    append_excel_log(writer, row)
 
 
 
@@ -156,7 +168,7 @@ def should_log_event(writer, whale_idx, t_datetime, min_gap_sec=600):
     if df_target.empty:
         return True
 
-    last_time = pd.to_datetime(df_target["date"].max())
+    last_time = pd.to_datetime(df_target["t_observation_tip"].max())
     if (t_datetime - last_time) > timedelta(seconds=min_gap_sec):
         return True
 
@@ -200,11 +212,12 @@ def at_exit(save_name, pl=None, verbose=True):
         "sim_output.xlsx": f"results_{save_name}.xlsx",
         "simulation.mp4": f"mov_{save_name}.mov",
         "output.log": f"logs_{save_name}.log",
+        "offnadir.png": f"offnadir_{save_name}.png",
+        "latency.png": f"latency_{save_name}.png",
         f"footprints_tip.html": f"footprints_tip_{save_name}.html",
         f"footprints_cue.html": f"footprints_cue_{save_name}.html"
     }
 
-    combined_excel = None
     for src, new_name in rename_map.items():
         if src == "output.log" and isinstance(sys.stdout, Logger):
             try:
@@ -218,19 +231,13 @@ def at_exit(save_name, pl=None, verbose=True):
 
         if os.path.exists(src):
             dst = os.path.join(results_dir, new_name)
-            if safe_move(src, dst) and "results_" in new_name:
-                combined_excel = dst
+            safe_move(src, dst)
+
         else:
             if verbose:
                 print(f"Warning: {src} not found, skipping.")
 
     time.sleep(0.1)
-
-    if combined_excel and os.path.exists(combined_excel):
-        plot_offnadir_distribution(combined_excel, results_dir, save_name, bin_size_deg=5)
-        plot_latency_distribution(combined_excel, results_dir, save_name, bin_size_sec=30)
-        if verbose:
-            print("Created offnadir and latency distribution plots")
 
     print(f"Saved results in {results_dir.replace(os.sep, '/')}")
 
@@ -259,6 +266,3 @@ class Logger:
             self.log.close()
         except:
             pass
-
-
-

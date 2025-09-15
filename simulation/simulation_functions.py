@@ -112,17 +112,26 @@ def init_attitude_controllers(tip_actors, cue_actors, eo_tools_dict,
         controllers.update(_build_one(cue_actors, eo_tools_dict, controller_params_cue))
     return controllers
 
-def cleanup_tasked_targets(tasked_targets, current_time, timeout):
+def cleanup_timeout_targets(all_targets, tasked_targets, current_time, timeout):
     """
     Remove tasks that have timed out, using Whale.tip_time.
     tasked_targets: dict[int, Whale]
     """
     expired = [idx for idx, w in tasked_targets.items()
-               if (w.tip_time is not None) and (current_time > w.tip_time + timedelta(seconds=timeout))]
+               if (w.t_observed_tip is not None) and (current_time > w.t_observed_tip + timedelta(seconds=timeout))
+               or (w.t_observed_cue is not None) and (current_time > w.t_observed_cue + timedelta(seconds=timeout))]
 
     for idx in expired:
-        print("!! Time-out: remove tasking request", idx)
-        del tasked_targets[idx]
+        print("!! Remove tasking request", idx)
+        if idx in tasked_targets:
+            del tasked_targets[idx]
+
+    for whale_idx, whale in all_targets.items():
+        if whale_idx in expired:
+            whale.state_observing = 0
+            whale.state_confirming = 0
+
+    return expired
 
 
 
@@ -224,12 +233,13 @@ def pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime):
     r_vec, v_vec: satellite state vectors in ECI
     t_datetime: datetime of observation
     """
+
     # Convert target to pointing vector
-    _, pointing_vec_brf = eo_tools.off_nadir_pointing_angle(
+    pointing_vec_brf, offnadir_deg_target = eo_tools.point_to_target(
         r_eci=r_vec,
         v_eci=v_vec,
         target_geodetic=task["coord"],
-        t_datetime=t_datetime
+        t_datetime=t_datetime, offnadir_max=None
     )
 
     # Desired Euler angles for that target
@@ -300,5 +310,12 @@ def compute_coverage_fraction(fov_polygons_tip, fov_polygons_cue, R_earth, incli
     return area_total_km2, area_mission_km2, area_covered_km2, area_covered_per_orbit_km2, area_mission_fraction_total, area_covered_fraction_total, area_covered_fraction_mission, area_covered_per_orbit_fraction_total, area_covered_per_orbit_fraction_mission
 
 
+def is_running_ai(actor, whale, parallel_observation_confirmation):
+    return actor.running_ai if not parallel_observation_confirmation else whale.running_ai
 
+def set_running_ai(actor, whale, parallel_observation_confirmation, value: bool):
+    if not parallel_observation_confirmation:
+        actor.running_ai = value
+    else:
+        whale.running_ai = value
 

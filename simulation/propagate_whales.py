@@ -101,17 +101,27 @@ class Whale:
     speed: float = field(default_factory=lambda: random.uniform(0.5, 3.0))
     heading: float = field(default_factory=lambda: random.uniform(0.0, 360.0))
 
-    observed: int = 0
-    confirmed: int = 0
+    ai_class_true: Optional[str] = None
+    ai_class_predicted: Optional[str] = None
+    running_ai: Optional[bool] = False
 
-    tip_time: Optional[datetime] = None
     tip_actor: Optional[str] = None
-    cue_time: Optional[datetime] = None
     cue_actor: Optional[str] = None
 
+    t_observed_tip: Optional[datetime] = None
+    t_confirmed_tip: Optional[datetime] = None
+    t_observed_cue: Optional[datetime] = None
+    t_confirmed_cue: Optional[datetime] = None
+
+    state_observing: int = 0
+    state_confirming: int = 0
+
+    confirmed_tip: Optional[bool] = None
+    confirmed_cue: Optional[bool] = None
+
     assigned_cue: Optional[str] = None
-    tasking_delay: float = 0.0
-    tasking_delay_cue: float = 0.0
+    delay_confirmation_tip: float = 0.0
+    delay_confirmation_cue: float = 0.0
 
     tip_observation_counter: int = 0
     cue_observation_counter: int = 0
@@ -170,14 +180,37 @@ def generate_random_water_targets(n: int, mask: np.ndarray, res_deg: float, seed
             targets.append((lat, lon, 0.0))
     return targets
 
-def init_whales(known_targets: list[tuple[float, float, float]], seed_val: Optional[int] = None) -> dict[int, Whale]:
+def init_whales(known_targets: list[tuple[float, float, float]],  seed_val: Optional[int] = None, pos_fraction: float = 1.0) -> dict[int, Whale]:
+    """
+    Initialize Whale objects with class labels.
+
+    Parameters
+    ----------
+    known_targets : list
+        List of (lat, lon, alt) tuples.
+    seed_val : int, optional
+        Random seed for reproducibility.
+    pos_fraction : float
+        Fraction of whales to be assigned 'positive' class.
+    """
+
     if seed_val is not None:
         random.seed(seed_val)
+
+    n = len(known_targets)
+    n_pos = int(round(n * pos_fraction))
+    labels = ["whale"] * n_pos + ["not-whale"] * (n - n_pos)
+    random.shuffle(labels)
+
     whales: dict[int, Whale] = {}
     for idx, (lat, lon, alt_m) in enumerate(known_targets):
-        whales[idx] = Whale(id=idx, lat=lat, lon=lon, alt=alt_m)
+        whales[idx] = Whale(id=idx, lat=lat, lon=lon, alt=alt_m, ai_class_true=labels[idx])
     return whales
 
+
 def update_whales(all_targets: dict[int, Whale], mask: np.ndarray, res_deg: float, dt: float, whale_propagation: dict):
-    for whale in all_targets.values():
-        whale.step(mask, res_deg, dt_sec=dt, whale_propagation=whale_propagation)
+    for w in all_targets.values():
+        w.step(mask, res_deg, dt_sec=dt, whale_propagation=whale_propagation)
+
+
+
