@@ -674,7 +674,7 @@ confirmation_efficiency = n_confirmed_cue / n_targets
 
 # --- Order: Satellites + Whales first ---
 print(f"Number of satellites:             {nSats_tip + nSats_cue} (Tip={nSats_tip}, Cue={nSats_cue})")
-print(f"Total targets:                    {n_targets}")
+print(f"Total targets:                    {n_targets} (positive={n_targets_pos}, negative={n_targets_neg})")
 print(f"Simulation time:                  {sim_duration_hours} h")
 
 # --- Orbits ---
@@ -694,7 +694,7 @@ else:
 print(f"Tip observed:                     {n_observed_tip} (without duplicates: {len(observed_targets_tip)})")
 print(f"Tip confirmed:                    {n_confirmed_tip}")
 print(f"Tip tasks sent:                   {n_tasked_tip}")
-print(f"Cue tasks taken:                  {n_tasked_cue}")
+print(f"Cue tasks started:                {n_tasked_cue}")
 print(f"Cue observed:                     {n_observed_cue} (without duplicates: {len(observed_targets_cue)})")
 print(f"Cue confirmed:                    {n_confirmed_cue}\n")
 
@@ -747,7 +747,7 @@ if logging:
 
     overview_data = [
         ("Number of satellites", nSats_tip + nSats_cue, f"(Tip={nSats_tip}, Cue={nSats_cue})"),
-        ("Total targets", n_targets, ""),
+        ("Total targets", n_targets, f"(positive={n_targets_pos}, negative={n_targets_neg})"),
         ("Simulation time (h)", sim_duration_hours, ""),
 
         ("Tip orbits completed", round(n_float_tip, 3),
@@ -758,8 +758,8 @@ if logging:
 
         ("Tip observed", n_observed_tip, f"(verification: {len(observed_targets_tip)})"),
         ("Tip confirmed", n_confirmed_tip, ""),
-        ("Tip tasked", n_tasked_tip, ""),
-        ("Cue tasked", n_tasked_cue, ""),
+        ("Tip tasks sent", n_tasked_tip, ""),
+        ("Cue tasks started", n_tasked_cue, ""),
         ("Cue observed", n_observed_cue, f"(verification: {len(observed_targets_cue)})"),
         ("Cue confirmed", n_confirmed_cue, ""),
 
