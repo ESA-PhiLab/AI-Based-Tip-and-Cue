@@ -501,7 +501,7 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
 
     conf_pts_neg = np.full((n_whales, 3), np.nan)
     whales_plot_confirmed_neg = pv.PolyData(conf_pts_neg.copy())
-    pl.add_points(whales_plot_confirmed_neg, color="darkblue", point_size=10, render_points_as_spheres=True)
+    pl.add_points(whales_plot_confirmed_neg, color="navy", point_size=10, render_points_as_spheres=True)
 
     # --- Satellites ---
     cloud_tip_sats = pv.PolyData(np.zeros((len(tip_actors), 3)))

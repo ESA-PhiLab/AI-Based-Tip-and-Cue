@@ -112,7 +112,7 @@ def init_attitude_controllers(tip_actors, cue_actors, eo_tools_dict,
         controllers.update(_build_one(cue_actors, eo_tools_dict, controller_params_cue))
     return controllers
 
-def cleanup_timeout_targets(all_targets, tasked_targets, current_time, timeout):
+def cleanup_timeout_targets(all_targets, tasked_targets, current_time, timeout, cleanup_idx):
     """
     Remove tasks that have timed out, using Whale.tip_time.
     tasked_targets: dict[int, Whale]
@@ -121,17 +121,21 @@ def cleanup_timeout_targets(all_targets, tasked_targets, current_time, timeout):
                if (w.t_observed_tip is not None) and (current_time > w.t_observed_tip + timedelta(seconds=timeout))
                or (w.t_observed_cue is not None) and (current_time > w.t_observed_cue + timedelta(seconds=timeout))]
 
+    all_cleanup_idx = expired + cleanup_idx
+
     for idx in expired:
-        print("!! Remove tasking request", idx)
+        print(f"!! Time-out Target {idx}")
+
+    for idx in all_cleanup_idx:
         if idx in tasked_targets:
             del tasked_targets[idx]
 
     for whale_idx, whale in all_targets.items():
-        if whale_idx in expired:
+        if whale_idx in all_cleanup_idx:
             whale.state_observing = 0
             whale.state_confirming = 0
 
-    return expired
+    return all_cleanup_idx
 
 
 

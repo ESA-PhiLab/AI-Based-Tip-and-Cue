@@ -2,7 +2,7 @@ import random
 from ..propagate_whales import Whale
 
 
-def tip_ai_decision(whale: Whale, tpr: float, tnr: float) -> bool:
+def tip_ai_decision(whale: Whale, tpr: float, tnr: float, seed_ai: float) -> bool:
     """
     Simulate Tip AI model decision whether to forward whale to Cue.
 
@@ -20,6 +20,8 @@ def tip_ai_decision(whale: Whale, tpr: float, tnr: float) -> bool:
     bool
         True if forwarded to Cue, False if filtered out
     """
+
+    random.seed(seed_ai)
 
     if whale.ai_class_true == "whale":
         return random.random() < tpr  # forward with probability TPR

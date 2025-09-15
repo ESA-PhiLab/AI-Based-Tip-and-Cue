@@ -223,6 +223,7 @@ observed_idx_tip = None
 observed_idx_cue = None
 footprint_idx_tip = 0
 footprint_idx_cue = 0
+cleanup_idx = []
 
 n_observed_tip = 0
 n_confirmed_tip = 0
@@ -251,7 +252,11 @@ while elapsed_time <= sim_duration_seconds:
 
     # Update whales + cleanup
     update_whales(all_targets, mask, res_deg, sim_step_seconds, whale_propagation)
-    cleanup_timeout_targets(all_targets, tasked_targets, t_datetime, observation_time_limit)
+    all_cleanup_idx = cleanup_timeout_targets(all_targets, tasked_targets, t_datetime, observation_time_limit, cleanup_idx)
+    cleanup_idx = []
+
+    for idx in all_cleanup_idx:
+        print(f"!! Removed Target {idx} tasking request")
 
     # Sun vector in ECI (for satellite shadow check)
     sun_pos_eci = sun.getPVCoordinates(t_abs, FramesFactory.getEME2000()).getPosition()
@@ -311,7 +316,7 @@ while elapsed_time <= sim_duration_seconds:
                     n_observed_tip += 1
 
                     if onboard_ai_tip:
-                        whale.confirmed_tip = tip_ai_decision(whale, tip_tpr, tip_tnr)
+                        whale.confirmed_tip = tip_ai_decision(whale, tip_tpr, tip_tnr, seed_tip)
 
                     else:
                         whale.confirmed_tip = True
@@ -470,7 +475,7 @@ while elapsed_time <= sim_duration_seconds:
                             offnadir_cue_deg_target = 0.0
 
                             if task_id in tasked_targets:
-                                del tasked_targets[task_id]
+                                cleanup_idx.append(task_id)
 
             if eo_tools.current_task == None:
                 if np.any(eo_tools.eul_ang_target != eul_ang_cue_default):
@@ -524,10 +529,10 @@ while elapsed_time <= sim_duration_seconds:
 
                 target_coord = whale.position()
                 in_footprint = eo_tools.check_point_in_footprint(target_coord, FovPoints)
+                offnadir_cue_deg, _ = eo_tools.offnadir_from_euler()
 
-                if in_footprint and not is_running_ai(actor, whale,  parallel_observation_confirmation) and whale.state_observing != 2:
+                if in_footprint and not is_running_ai(actor, whale,  parallel_observation_confirmation) and whale.state_observing != 2 and offnadir_cue_deg <= offnadir_max:
 
-                    offnadir_cue_deg, _ = eo_tools.offnadir_from_euler()
                     print(f"!! {actor.name}: Observed Target {whale_idx}, off-nadir {offnadir_cue_deg:.1f} deg")
 
                     whale.cue_actor = actor.name
@@ -543,6 +548,7 @@ while elapsed_time <= sim_duration_seconds:
 
                     if whale_idx in tasked_targets:
                         del tasked_targets[whale_idx]
+                        print(f"!! Removed Target {whale_idx} tasking request")
 
                     eo_tools.current_task = None
 
@@ -578,7 +584,7 @@ while elapsed_time <= sim_duration_seconds:
                             target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
 
                     if onboard_ai_cue:
-                        whale.confirmed_cue = cue_ai_decision(whale, cue_tpr, cue_tnr)
+                        whale.confirmed_cue = cue_ai_decision(whale, cue_tpr, cue_tnr, seed_cue)
 
                     else:
                         whale.confirmed_cue = True

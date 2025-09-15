@@ -35,7 +35,7 @@ t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 if sim_time == 'slow':
     sim_step_seconds = 1
     plot_fov_interval =  1
-    plot_pyvista_interval = 10
+    plot_pyvista_interval = 30
     print_interval = 10
     movie_orbit_sec = 8.0
 
@@ -96,9 +96,11 @@ parallel_observation_confirmation = False
 
 tip_tpr = 0.75    # probability Tip correctly identifies a positive whale
 tip_tnr = 0.75    # probability Tip correctly ignores a negative whale
+seed_tip = 42
 
 cue_tpr = 0.75    # probability Tip correctly identifies a positive whale
 cue_tnr = 0.75    # probability Tip correctly ignores a negative whale
+seed_cue = seed_tip*2
 
 # ================================================================================
 # SATELLITE
@@ -162,18 +164,17 @@ wn_final, (Kp_acs, Kd_acs, Ki_acs) = tune_pid_with_limits(
 # ================================================================================
 # WHALES
 
+n_targets = 300
+pos_fraction = 0.0
+
 worldmap_dir = "dataset/worldmaps"      # Folder with GSHHS shapefiles; mask .tif/.npy will be stored here
 res_deg = 0.05                          # Raster resolution for land mask (deg/pixel)
 mask_tif = "land_mask.tif"
 mask_npy = "land_mask.npy"
 
-n_targets = 300
-pos_fraction = 1.0
-
 whale_seed = 17
 max_abs_lat = 70.0                   # Optional: exclude very high latitudes (avoid polar mask artifacts)
 observation_time_limit = 20*60       # Observation time limit
-
 
 # Whale kinematics
 speed_mean = 1.5
