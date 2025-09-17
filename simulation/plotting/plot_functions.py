@@ -7,6 +7,7 @@ import pykep as pk
 from simulation.constellation import analyze_keplerian_constellation
 from matplotlib.collections import PolyCollection
 import plotly.graph_objects as go
+import time
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -209,17 +210,32 @@ def plot_all_fov_footprints(all_fov_polygons, known_targets, extension = "", sho
 
     return fig
 
-def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targets, nPlanes, nSats, extension="", verbose=True):
+def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targets, nPlanes, nSats, extension="", verbose=True, plot_whale_trajectories=False, whale_trajectories=None):
+    """Plot satellite footprints, targets, and optionally whale trajectories with Plotly."""
     fig = go.Figure()
 
-    # FOV polygons (outline only, no fill)
+    # Whale trajectories
+    if plot_whale_trajectories and whale_trajectories:
+        if verbose:
+            print("Plot whale trajectories")
+        for whale_id, traj in whale_trajectories.items():
+            fig.add_trace(go.Scattergeo(
+                lon=[p[1] for p in traj],
+                lat=[p[0] for p in traj],
+                mode="lines",
+                line=dict(width=1, color="orange"),
+                name=f"Whale {whale_id} path",
+                showlegend=False  # avoids hundreds of legend entries
+            ))
+
     if verbose:
         print(f"Plot footprints {extension}")
 
     nSats_tot = nPlanes * nSats
 
+    t_start = time.time()
     for i, fov in enumerate(all_fov_polygons):
-        lats = list(fov[:, 0]) + [fov[0, 0]]  # close loop
+        lats = list(fov[:, 0]) + [fov[0, 0]]
         lons = list(fov[:, 1]) + [fov[0, 1]]
 
         fig.add_trace(go.Scattergeo(
@@ -232,10 +248,13 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
 
         n = i % nSats_tot
         if verbose and n > 0 and n % 10000 == 0:
-            print(f"\t {n} Added footprint")
+            t_end = time.time()
+            hours, rem = divmod(t_end - t_start, 3600)
+            minutes, seconds = divmod(rem, 60)
+            print(f"\t {n} Added footprint | Time: {int(hours)}h {int(minutes)}m {seconds:.0f}s")
+            t_start = time.time()
 
-    # All targets (only those NOT observed)
-
+    # Targets not observed
     if verbose:
         print("Plot targets")
 
@@ -249,10 +268,10 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
                 lat=[w.lat for w in unobserved],
                 mode="markers",
                 marker=dict(color="red", size=5),
-                name="All targets"
+                name="Unobserved targets"
             ))
 
-    # Observed Cue targets (green)
+    # Observed targets
     if observed_targets:
         fig.add_trace(go.Scattergeo(
             lon=[w.lon for w in observed_targets.values()],
@@ -262,15 +281,14 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
             name="Observed"
         ))
 
-    # Background Earth
     fig.update_layout(
         title="Satellite Footprints",
         geo=dict(
             projection_type="equirectangular",
             showland=True,
-            landcolor="rgb(230, 230, 230)",
+            landcolor="rgb(230,230,230)",
             showocean=True,
-            oceancolor="rgb(200, 220, 255)",
+            oceancolor="rgb(200,220,255)",
             showcountries=True,
             countrycolor="black"
         )
@@ -279,6 +297,7 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
     html_path = f"footprints_{extension}.html"
     fig.write_html(html_path, include_plotlyjs="cdn")
     return html_path
+
 
 def plot_offnadir_distribution(excel_file, bin_size_deg=5):
     try:

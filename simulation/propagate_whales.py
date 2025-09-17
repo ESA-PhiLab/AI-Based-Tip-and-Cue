@@ -110,10 +110,15 @@ class Whale:
 
     t_observed_tip: Optional[datetime] = None
     t_confirmed_tip: Optional[datetime] = None
+    t_tasked_tip: Optional[datetime] = None
+    t_tasked_cue: Optional[datetime] = None
     t_observed_cue: Optional[datetime] = None
     t_confirmed_cue: Optional[datetime] = None
 
+    coord_observed: Optional[tuple[float, float, float]] = None
+
     state_observing: int = 0
+    state_tasked:     int = 0
     state_confirming: int = 0
 
     confirmed_tip: Optional[bool] = None

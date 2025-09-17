@@ -20,23 +20,23 @@ import paseos
 
 from custom_paseos.propagation.orekit_propagator import OrekitPropagator
 from custom_paseos.utils.point_transformation import Point_ECI2Geodetic, Point_Geodetic2ECI
-from custom_paseos.attitude.controller import StabilizedAttitudeController, SO3PIDACS
 
-from simulation.propagate_whales import Whale, update_whales, load_land_mask, generate_random_water_targets, init_whales, build_land_mask
-from simulation.simulation_functions import init_eo_tools, init_attitude_controllers, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, compute_coverage_fraction, count_orbits_completed, compute_coverage_fraction, is_running_ai, set_running_ai
-from simulation.plotting.plot_functions import plot_constallation, plot_orbits, plot_all_fov_footprints, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution
+from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets, init_whales, build_land_mask
+from simulation.simulation_functions import init_eo_tools, init_attitude_models, link_eo_attitude, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, count_orbits_completed, compute_coverage_fraction, _clear_actor_task
+from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate
-from simulation.plotting.plot_constellation import plot_constellation_pyvista, plot_constellation_pyvista_plain
+from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
 from simulation.sim_logging import init_excel_log, log_tip_observation, log_cue_observation, log_combined_observation, gsd_offnadir, at_exit, Logger, compute_stats
 from simulation.onboard_ai.onboard_ai_tip import tip_ai_decision
 from simulation.onboard_ai.onboard_ai_cue import cue_ai_decision
 
 show_constellation = False
 show_orbits = False
-plot_propagation = True
+plot_propagation = False # True
 plot_footprints = True
+plot_whale_trajectories = True
 
-model_attitude_control = True
+model_attitude_control = False      # False, extra feature to be added later
 generate_image = False
 onboard_ai_tip = True
 onboard_ai_cue = True
@@ -109,21 +109,25 @@ for planet in all_planets:
         list(p.eph((t.mjd2000 - t0_pykep.mjd2000) * pk.DAY2SEC).getPVCoordinates().getVelocity().toArray())
     ), t0_pykep)
 
+    ActorBuilder.set_geometric_model(actor, sat_mass)
     ActorBuilder.set_central_body(actor, pk.planet.jpl_lp("earth"), radius=R_earth)
 
     (tip_actors if "Tip" in planet.name else cue_actors).append(actor)
 
 eul_ang_tip_default = [0.0, 0.0, 0.0]
 eul_ang_cue_default = [0.0, 0.0, 0.0]
-offnadir_cue_deg_target = 0.0
+eul_ang_cue_target = eul_ang_cue_default
+offnadir_cue_deg_target = None
 offnadir_tip_deg = 0.0
+offnadir_unbound = 0.0
 
 n_targets_pos = int(round(n_targets * pos_fraction))
 n_targets_neg = n_targets - n_targets_pos
 
 # EO Tools
-eo_tools_dict = init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, eul_ang_tip_default, eul_ang_cue_default)
-controllers = init_attitude_controllers(None, cue_actors, eo_tools_dict, None, controller_params)  # Only initialize controller for cue
+eo_tools_dict = init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, offnadir_limit)
+att_models_dict = init_attitude_models(tip_actors, cue_actors, eul_ang_tip_default, eul_ang_cue_default)
+link_eo_attitude(eo_tools_dict, att_models_dict)
 
 if len(tip_actors) != 0:
     sim = paseos.init_sim(local_actor=tip_actors[0])
@@ -136,7 +140,6 @@ else:
         sim.add_known_actor(actor)
 
 sim_duration_seconds = sim_duration_hours * 3600
-
 n_steps_total = int(sim_duration_seconds / sim_step_seconds) + 1
 n_snapshots = n_steps_total // plot_fov_interval + 1
 
@@ -176,6 +179,7 @@ known_targets = generate_random_water_targets(n_targets, mask, res_deg, seed_val
 all_targets = init_whales(known_targets, seed_val=whale_seed, pos_fraction=pos_fraction)
 
 tasked_targets, observed_targets_tip, observed_targets_cue, confirmed_targets_pos, confirmed_targets_neg = {}, {}, {}, {}, {}
+whale_trajectories = {idx: np.full((n_steps_total, 2), np.nan, dtype=float) for idx in all_targets.keys()}
 
 if plot_propagation:
     pl, earth_actor, earth_state = make_plotter_eci()
@@ -237,12 +241,12 @@ n_confirmed_cue = 0
 n_confirmed_pos = 0
 n_confirmed_neg = 0
 
-elapsed_time, n_steps = 0.0, 0
+elapsed_seconds, elapsed_hours, n_steps = 0.0, 0.0, 0
 
 print("Total number of simulation steps:", n_steps_total)
 
 t_sim_start = time.time()
-while elapsed_time <= sim_duration_seconds:
+while elapsed_seconds <= sim_duration_seconds:
 
     t_start = time.time()
 
@@ -257,7 +261,12 @@ while elapsed_time <= sim_duration_seconds:
 
     # Update whales + cleanup
     update_whales(all_targets, mask, res_deg, sim_step_seconds, whale_propagation)
-    all_cleanup_idx = cleanup_timeout_targets(all_targets, tasked_targets, t_datetime, observation_time_limit, cleanup_idx)
+    if plot_whale_trajectories:
+        for idx, whale in all_targets.items():
+            whale_trajectories[idx][n_steps, :] = (whale.lat, whale.lon)
+
+    all_cleanup_idx = cleanup_timeout_targets(all_targets, tasked_targets, t_datetime, observation_time_limit, cleanup_idx, eo_tools_dict, eul_ang_cue_default)
+
     cleanup_idx = []
 
     for idx in all_cleanup_idx:
@@ -275,15 +284,11 @@ while elapsed_time <= sim_duration_seconds:
     for actor in tip_actors:
 
         tip_observed = False
-        eo_tools = eo_tools_dict[actor.name]
 
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
         tip_positions.append(r)
 
-        #  centerray_hit = eo_tools.get_CenterRay_Intersection(r_vec, v_vec, t_datetime).flatten()
-        #  ctr_lat, ctr_lon, ctr_alt = centerray_hit.flatten()
-
-        FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
+        FovPoints = eo_tools_dict[actor.name].get_FovPoints(r_vec, v_vec, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
         FovPoints_tip.append(FovPoints)
 
         if plot_footprints and n_steps % plot_fov_interval == 0:
@@ -304,9 +309,9 @@ while elapsed_time <= sim_duration_seconds:
                     continue
 
                 target_coord = whale.position()
-                in_footprint = eo_tools.check_point_in_footprint(target_coord, FovPoints)
+                in_footprint = eo_tools_dict[actor.name].check_point_in_footprint(target_coord, FovPoints)
 
-                if in_footprint and not is_running_ai(actor, whale,  parallel_observation_confirmation) and whale.state_observing != 1:
+                if in_footprint and whale.state_observing != 1:
 
                     print(f"!! {actor.name}: Observed Target {whale_idx}")
 
@@ -314,7 +319,8 @@ while elapsed_time <= sim_duration_seconds:
                     whale.t_observed_tip = t_datetime
                     whale.delay_confirmation_tip = delay_confirmation_tip
                     whale.state_observing = 1
-                    
+                    whale.coord_observed = whale.position()
+
                     observed_targets_tip[whale_idx] = whale
                     observed_idx_tip = whale_idx
                     tip_observed = True
@@ -326,7 +332,7 @@ while elapsed_time <= sim_duration_seconds:
                     else:
                         whale.confirmed_tip = True
 
-                    set_running_ai(actor, whale, parallel_observation_confirmation, True)
+
 
                     h_m = float(np.linalg.norm(np.array(r))) - R_earth
                     gsd_tip = gsd_offnadir(gsd0_tip, h_m, offnadir_tip_deg)
@@ -337,14 +343,14 @@ while elapsed_time <= sim_duration_seconds:
                                           tip_lon, tip_alt, r[0], r[1], r[2], v[0], v[1], v[2], tip_observation_counter=1)
 
 
-                if whale.t_observed_tip != None and is_running_ai(actor, whale, parallel_observation_confirmation) and whale.state_confirming != 1 and t_datetime > (whale.t_observed_tip + timedelta(seconds=delay_confirmation_tip)):
+                if whale.t_observed_tip != None and whale.state_confirming < 1 and t_datetime > (whale.t_observed_tip + timedelta(seconds=delay_confirmation_tip)):
+
+                        task_coord = whale.coord_observed
 
                         whale.t_confirmed_tip = t_datetime
-                        whale.state_confirming= 1
+                        whale.state_confirming=1
 
                         n_confirmed_tip +=1
-
-                        set_running_ai(actor, whale, parallel_observation_confirmation, False)
 
                         if whale.confirmed_tip:
 
@@ -356,7 +362,7 @@ while elapsed_time <= sim_duration_seconds:
                                 r_future, _, _, _ = propagate_actor(cue_actor, t_future, None, n_steps, show_orbits=False)
 
                                 # Target position in ECI at the same future time
-                                tgt_lat, tgt_lon, tgt_alt = target_coord
+                                tgt_lat, tgt_lon, tgt_alt = task_coord
                                 tgt_vec = np.array(Point_Geodetic2ECI(tgt_lat, tgt_lon, tgt_alt, t_datetime + timedelta(seconds=avg_time_delay)))
 
                                 # Distance between satellite and target in ECI
@@ -367,14 +373,16 @@ while elapsed_time <= sim_duration_seconds:
                                     best_cue = cue_actor.name
 
                             whale.assigned_cue = best_cue
+                            whale.t_tasked_tip = t_datetime
                             tasked_targets[whale_idx] = whale
                             n_tasked_tip += 1
 
                             eo_tools_dict[best_cue].task_queue.append({
                                 "target_id": whale_idx,
-                                "coord": target_coord,
+                                "coord": task_coord,
                                 "assign_time": t_datetime
                             })
+
 
                             whale.ai_class_predicted="whale-tipped"
                             print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, assigned to {best_cue} (actual={whale.ai_class_true})")
@@ -386,7 +394,9 @@ while elapsed_time <= sim_duration_seconds:
 
                             print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, no Cue assigned (actual={whale.ai_class_true})")
 
-
+        # Do not change attitude for tip
+        att_models_dict[actor.name].set_target_euler(eul_ang_tip_default)
+        # att_models_dict[actor.name]._actor_attitude_deg = att_models_dict[actor.name]._target_attitude_deg
 
         if verbose == True and n_steps % print_interval == 0:
             tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
@@ -400,10 +410,11 @@ while elapsed_time <= sim_duration_seconds:
     for actor in cue_actors:
         cue_observed = False
         cue_confirmed = False
-        eo_tools = eo_tools_dict[actor.name]
 
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
         cue_positions.append(r)
+
+        eo_tools_dict[actor.name]._actor = actor
 
         try:
             cue_illuminated = not satellite_in_shadow(r_vec, sun_vec_eci, earth.getEquatorialRadius())
@@ -411,6 +422,7 @@ while elapsed_time <= sim_duration_seconds:
             cue_illuminated = True
             print(f"!! {actor.name}: failed to compute illumination state, set to True preventing exclusion.")
             print(r_vec, sun_vec_eci, earth.getEquatorialRadius())
+
 
         if cue_illuminated:
             for whale_idx, whale in tasked_targets.items():
@@ -420,102 +432,151 @@ while elapsed_time <= sim_duration_seconds:
                 tip_time = whale.t_confirmed_tip
 
                 if t_datetime > tip_time + timedelta(seconds=delay_transmission_TC):
-                    target_coord = whale.position()
+
+                    if any(task.get("target_id") == whale_idx for task in eo_tools_dict[actor.name].task_queue) and whale.state_tasked == 0:
+                        print(f"!! {actor.name}: Received task for Target {whale_idx}")
+                        whale.state_tasked = 1
+
 
                     # If no current task, check the queue
-                    if eo_tools.current_task is None and eo_tools.task_queue:
+                    if eo_tools_dict[actor.name].current_task is None and eo_tools_dict[actor.name].task_queue:
 
                         # Filter tasks that will actually become visible soon
                         ready_tasks = []
-                        for task in eo_tools.task_queue:
-                            will_be_visible, _ = eo_tools.will_be_visible_within(
+                        for task in eo_tools_dict[actor.name].task_queue:
+                            will_be_visible, _ = eo_tools_dict[actor.name].will_be_visible_within(
                                 task["coord"], r_vec, v_vec, t_datetime,
                                 delta_t_cue, el_min_deg=elevation_min, step=60.0
                             )
+
                             if will_be_visible:
                                 ready_tasks.append(task)
 
                         if ready_tasks:
                             # Pick the ready task with least pointing cost
-                            eo_tools.current_task = min(
+                            eo_tools_dict[actor.name].current_task = min(
                                 ready_tasks,
-                                key=lambda task: pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime)
+                                key=lambda task: pointing_cost(task, eo_tools_dict[actor.name], r_vec, v_vec, t_datetime)
                             )
-                            eo_tools.task_queue.remove(eo_tools.current_task)
-                            print(f"!! {actor.name}: Starting task for Target {eo_tools.current_task['target_id']}")
+                            eo_tools_dict[actor.name].task_queue.remove(eo_tools_dict[actor.name].current_task)
+                            print(f"!! {actor.name}: Starting task for Target {eo_tools_dict[actor.name].current_task['target_id']}")
+                            whale.t_tasked_cue = t_datetime
                             n_tasked_cue += 1
 
                     # If still no current task, assign this whale now
-                    if eo_tools.current_task is None and whale.assigned_cue == actor.name:
+                    if eo_tools_dict[actor.name].current_task is None and whale.assigned_cue == actor.name:
 
-                        eo_tools.current_task = {
+                        eo_tools_dict[actor.name].current_task = {
                             "target_id": whale_idx,
-                            "coord": target_coord
+                            "coord": whale.coord_observed
                         }
                         print(f"!! {actor.name}: New task assigned: Target {whale_idx}")
 
                     # Work on the current task if one exists
-                    if eo_tools.current_task:
+                    if eo_tools_dict[actor.name].current_task and eo_tools_dict[actor.name].current_task["target_id"] == whale_idx:
 
-                        task_id = eo_tools.current_task["target_id"]
-                        task_coord = eo_tools.current_task["coord"]
+                        task_id = eo_tools_dict[actor.name].current_task["target_id"]
+                        task_coord = eo_tools_dict[actor.name].current_task["coord"]
 
-                        in_view = eo_tools.is_in_sight(task_coord, r_vec, v_vec, t_datetime, el_min=elevation_min)
-                        will_be_in_view, _ = eo_tools.will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_cue, el_min_deg=elevation_min, step=60.0)
+                        in_view = eo_tools_dict[actor.name].is_in_sight(task_coord, r_vec, v_vec, t_datetime, el_min_deg=elevation_min)
 
-                        if in_view or will_be_in_view:
+                        # r_future, v_future = eo_tools_dict[actor.name]._kepler_propagate_universal(r_vec, v_vec, sim_step_seconds)
+                        # t_future = t_datetime + timedelta(seconds=sim_step_seconds)
 
-                            pointing_vec_brf_target, offnadir_cue_deg_target = eo_tools.point_to_target(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_max)
+                        pointing_vec_brf_target, offnadir_cue_deg_target, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max')
+                        eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
 
-                            if eo_tools.eul_ang_target == eul_ang_cue_default:
-                                eo_tools.eul_ang_target = eo_tools.pointing_attitude_brf(pointing_vec_brf_target)       # compute double, only for print
-                                print(f"!! {actor.name}: Target {task_id} in reach at off-nadir {offnadir_cue_deg_target} deg | Set roll, pitch, yaw to {eo_tools.eul_ang_target[0]:.1f}, {eo_tools.eul_ang_target[1]:.1f}, {eo_tools.eul_ang_target[2]:.1f} deg")
+                        if eo_tools_dict[actor.name].offnadir_unbound_target == None or eo_tools_dict[actor.name].offnadir_unbound_target - offnadir_unbound >= 0 or offnadir_unbound > 60.0:     # Compare wrt previous state or initial state is unset
+                            moving_toward = True
+                        else:
+                            moving_toward = False
 
-                            eo_tools.eul_ang_target = eo_tools.pointing_attitude_brf(pointing_vec_brf_target)
+                        will_be_in_view, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_cue, el_min_deg=elevation_min, step=60.0)
+
+                        if (in_view or will_be_in_view) and not (offnadir_unbound >= (offnadir_limit + offnadir_margin) and not moving_toward):
+
+
+                            offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)
+                            eul_ang_cue_target = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_brf_target)
 
                         else:
                             # Task finished → reset and pick next later
                             print(f"!! {actor.name}: Target {task_id} out of view, delete task")
-                            eo_tools.current_task = None
-                            eo_tools.eul_ang_target = eul_ang_cue_default
+                            # reset local EO tool state
                             offnadir_cue_deg_target = 0.0
+                            eul_ang_cue_target = eul_ang_cue_default
+                            _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_ang_cue_default)
 
+                            # Global removal happens at the next loop via cleanup_timeout_targets:
                             if task_id in tasked_targets:
                                 cleanup_idx.append(task_id)
 
-            if eo_tools.current_task == None:
-                if np.any(eo_tools.eul_ang_target != eul_ang_cue_default):
-
-                    print(f"!! {actor.name}: Set roll, pitch, yaw target back to default {eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg")
-
-                    eo_tools.eul_ang_target = eul_ang_cue_default
+            if eo_tools_dict[actor.name].current_task is None:
+                if not np.allclose(att_models_dict[actor.name]._target_attitude_deg, eul_ang_cue_default, atol=0.1):
                     offnadir_cue_deg_target = 0.0
+                    eul_ang_cue_target = eul_ang_cue_default
+                    print(f"\t\t {n_steps}!! {actor.name}: Set roll, pitch, yaw target back to default {eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg")
 
-        if model_attitude_control:
-            if not np.allclose(eo_tools.eul_ang_deg, eo_tools.eul_ang_target, atol=1e-6, rtol=0):
-                ctrls = controllers[actor.name]
-                guid = ctrls["guidance"]
-                acs = ctrls["acs"]
 
-                eul_target_stab = guid.update_target(eo_tools.eul_ang_target, sim_step_seconds, eo_tools.eul_ang_deg )
+                    # eo_tools_dict[actor.name].offnadir_unbound_target = None
 
-                eul_new_deg = acs.step(eul_target_stab, sim_step_seconds)
+            if not np.allclose(eul_ang_cue_target, att_models_dict[actor.name]._target_attitude_deg, atol=0.1):
+                delay_slew_stab, delay_slew, delay_stab = att_models_dict[actor.name].get_pointing_stabilization_time(att_models_dict[actor.name]._actor_attitude_deg, eul_ang_cue_target,
+                                                                                                                      omega_max_rad=omega_max_rad, alpha_max_rad=alpha_max_rad,
+                                                                                                                      zeta=zeta, wn_rad=wn_rad, mode='per_axis')
 
-                delta_move_eul = eul_new_deg - eo_tools.eul_ang_deg
-                eo_tools.eul_ang_deg = eul_new_deg
 
-                if verbose == True and n_steps % print_interval == 0:
-                    print(f"\t\t {actor.name} | Delta roll, pitch, yaw={delta_move_eul[0]:.1f}, {delta_move_eul[1]:.1f}, {delta_move_eul[2]:.1f} deg")
+                if eo_tools_dict[actor.name].t_eul_commanded != None and np.allclose(eul_ang_cue_target, att_models_dict[actor.name]._target_attitude_deg,
+                                                                                     atol=10.0) and delay_slew_stab > eo_tools_dict[actor.name].delay_slew_stab:
+                    eo_tools_dict[actor.name].delay_slew_stab = delay_slew_stab
+                    print(f"\t\t {n_steps} Updated slewing delay {eul_ang_cue_target}")
 
-        else:
-            eo_tools.eul_ang_deg = eo_tools.eul_ang_target
+                # If no current command, take a new one
+                else:
+                    eo_tools_dict[actor.name].t_eul_commanded = t_datetime
+                    eo_tools_dict[actor.name].delay_slew_stab = delay_slew_stab
+                    print(f"\t\t {n_steps} Taken new task {eul_ang_cue_target}")
+
+                att_models_dict[actor.name].set_target_euler(eul_ang_cue_target)
+
+                if offnadir_cue_deg_target != 0.0:
+                    print(
+                        f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach at off-nadir {offnadir_unbound:.1f} deg (current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg)"
+                        f" | Roll, pitch, yaw current=[{att_models_dict[actor.name]._actor_attitude_deg[0]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[1]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[2]:.1f}],"
+                        f" set to target=[{eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f}] deg"
+                        f" | Setting time {delay_slew_stab:.1f} s (slew {delay_slew:.1f} s, stab {delay_stab:.1f} s)")
+                else:
+                    print(
+                        f"\t\t!! {n_steps}  {actor.name}: Move back to default off-nadir {offnadir_cue_deg_target:.1f} deg (current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg)"
+                        f" | Roll, pitch, yaw current=[{att_models_dict[actor.name]._actor_attitude_deg[0]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[1]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[2]:.1f}],"
+                        f" set to target=[{eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f}] deg"
+                        f" | Setting time {delay_slew_stab:.1f} s (slew {delay_slew:.1f} s, stab {delay_stab:.1f} s)")
+
+            if not model_attitude_control:
+
+                # if beyond movement limit:
+                if eo_tools_dict[actor.name].delay_slew_stab != None and t_datetime >= eo_tools_dict[actor.name].t_eul_commanded + timedelta(seconds=eo_tools_dict[actor.name].delay_slew_stab):
+
+                    # Additude control to be added, for simplication now
+                    att_models_dict[actor.name].set_actor_euler(att_models_dict[actor.name]._target_attitude_deg)
+                    eo_tools_dict[actor.name].t_eul_commanded = None
+                    eo_tools_dict[actor.name].delay_slew_stab = None
+
+                    print(f"\t\t !! {n_steps} {actor.name}: Completed move to roll, pitch, yaw {att_models_dict[actor.name]._actor_attitude_deg[0]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[1]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[2]:.1f} deg")
+
+              #
+              #   if verbose and n_steps % print_interval == 0:
+              #       delta_move_eul = eul_new_deg - prev_eul
+              #       print(f"\t\t {actor.name} | Delta roll, pitch, yaw={delta_move_eul[0]:.1f}, {delta_move_eul[1]:.1f}, {delta_move_eul[2]:.1f} deg")
 
         try:
-            #   centerray_hit = eo_tools.get_CenterRay_Intersection_Attitude(r_vec, v_vec, t_datetime).flatten()
+            #   centerray_hit = eo_tools_dict[actor.name].get_CenterRay_Intersection_Attitude(r_vec, v_vec, t_datetime).flatten()
             #   ctr_lat, ctr_lon, ctr_alt = centerray_hit
 
-            FovPoints = eo_tools.get_FovPoints(r_vec, v_vec, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
-            FovPoints_cue.append(FovPoints)
+            FovPoints = eo_tools_dict[actor.name].get_FovPoints(r_vec, v_vec, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
+
+            if eo_tools_dict[actor.name].delay_slew_stab != None:
+                FovPoints_cue.append(FovPoints)
 
             if plot_footprints and n_steps % plot_fov_interval == 0:
                 fov_polygons_cue[footprint_idx_cue] = FovPoints
@@ -523,8 +584,10 @@ while elapsed_time <= sim_duration_seconds:
 
         except:
             print(f"!! {actor.name}: no FOV intersection, continue to the next step")
-            eo_tools.eul_ang_target = eul_ang_cue_default
             offnadir_cue_deg_target = 0.0
+            att_models_dict[actor.name].set_target_euler(eul_ang_cue_default)
+            eo_tools_dict[actor.name].offnadir_unbound_target = None
+
             continue
 
         if cue_illuminated:
@@ -534,15 +597,17 @@ while elapsed_time <= sim_duration_seconds:
                     continue
 
                 target_coord = whale.position()
-                in_footprint = eo_tools.check_point_in_footprint(target_coord, FovPoints)
-                offnadir_cue_deg, _ = eo_tools.offnadir_from_euler()
+                in_footprint = eo_tools_dict[actor.name].check_point_in_footprint(target_coord, FovPoints)
+                offnadir_cue_deg, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)     
 
-                if in_footprint and not is_running_ai(actor, whale,  parallel_observation_confirmation) and whale.state_observing != 2 and offnadir_cue_deg <= offnadir_max:
+                if in_footprint and whale.state_observing != 2 and offnadir_cue_deg <= (offnadir_limit + offnadir_margin) and eo_tools_dict[actor.name].t_eul_commanded == None:
 
-                    print(f"!! {actor.name}: Observed Target {whale_idx}, off-nadir {offnadir_cue_deg:.1f} deg")
+                    print(f"!! {n_steps} {actor.name}: Observed Target {whale_idx} at off-nadir {offnadir_cue_deg:.1f} deg")
 
                     whale.cue_actor = actor.name
                     whale.t_observed_cue = t_datetime
+                    whale.coord_observed = target_coord
+
                     whale.delay_confirmation_cue = delay_confirmation_cue
                     whale.state_observing = 2
 
@@ -552,11 +617,12 @@ while elapsed_time <= sim_duration_seconds:
                     n_observed_cue += 1
                     cue_observed = True
 
+                    # Remove globally
                     if whale_idx in tasked_targets:
                         del tasked_targets[whale_idx]
-                        print(f"!! Removed Target {whale_idx} tasking request")
+                        whale.state_tasked = 0
 
-                    eo_tools.current_task = None
+                    _clear_actor_task(actor.name, whale_idx, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
 
                     h_m = float(np.linalg.norm(np.array(r))) - R_earth
                     gsd_cue = gsd_offnadir(gsd0_cue, h_m, offnadir_cue_deg)
@@ -573,12 +639,10 @@ while elapsed_time <= sim_duration_seconds:
                     if logging:
 
                         log_cue_observation(writer_cue, whale_idx, t_datetime, actor.name, offnadir_cue_deg, gsd_cue, target_coord[0], target_coord[1], target_coord[2], cue_lat,
-                                          cue_lon, cue_alt, r[0], r[1], r[2], v[0], v[1], v[2], eo_tools.eul_ang_deg[0], eo_tools.eul_ang_deg[1], eo_tools.eul_ang_deg[2],
-                                          cue_observation_counter=1)
+                                          cue_lon, cue_alt, r[0], r[1], r[2], v[0], v[1], v[2],     att_models_dict[actor.name]._actor_attitude_deg[0], att_models_dict[actor.name]._actor_attitude_deg[1], att_models_dict[actor.name]._actor_attitude_deg[2], cue_observation_counter=1)
 
                         log_combined_observation(writer_combined, whale_idx, whale.t_observed_tip, whale.tip_actor, whale.t_observed_cue, whale.cue_actor, offnadir_cue_deg, gsd_cue,
-                                               latency, whale.lat, whale.lon, whale.alt, cue_lat, cue_lon, cue_alt, tip_observation_counter=1,
-                                               cue_observation_counter=1)
+                                               latency, whale.lat, whale.lon, whale.alt, cue_lat, cue_lon, cue_alt, tip_observation_counter=1, cue_observation_counter=1)
 
 
 
@@ -595,30 +659,28 @@ while elapsed_time <= sim_duration_seconds:
                     else:
                         whale.confirmed_cue = True
 
-                    set_running_ai(actor, whale, parallel_observation_confirmation, True)
 
-                if whale.t_observed_cue != None and is_running_ai(actor, whale,  parallel_observation_confirmation) and whale.state_confirming !=2 and t_datetime > (whale.t_observed_cue + timedelta(seconds=delay_confirmation_cue)):
 
-                        whale.t_confirmed_cue = t_datetime
-                        whale.state_confirming= 2
+                    if whale.t_observed_cue != None and whale.state_confirming < 2 and t_datetime > (whale.t_observed_cue + timedelta(seconds=delay_confirmation_cue)):
 
-                        n_confirmed_cue += 1
+                            whale.t_confirmed_cue = t_datetime
+                            whale.state_confirming= 2
 
-                        if whale.confirmed_cue:  # Add better decision to prevent twice!!
-                            whale.ai_class_predicted="whale"
-                            confirmed_targets_pos[whale_idx] = whale
-                            n_confirmed_pos += 1
+                            n_confirmed_cue += 1
 
-                        elif not whale.confirmed_cue:
-                            whale.ai_class_predicted = "not-whale"
-                            confirmed_targets_neg[whale_idx] = whale
-                            n_confirmed_neg += 1
+                            if whale.confirmed_cue:  # Add better decision to prevent twice!!
+                                whale.ai_class_predicted="whale"
+                                confirmed_targets_pos[whale_idx] = whale
+                                n_confirmed_pos += 1
 
-                        print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted} (actual={whale.ai_class_true})")
+                            elif not whale.confirmed_cue:
+                                whale.ai_class_predicted = "not-whale"
+                                confirmed_targets_neg[whale_idx] = whale
+                                n_confirmed_neg += 1
 
-                        set_running_ai(actor, whale, parallel_observation_confirmation, False)
+                            print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted} (actual={whale.ai_class_true})")
 
-        eo_tools_dict[actor.name] = eo_tools
+
 
         if verbose == True and n_steps % print_interval == 0:
             cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
@@ -654,10 +716,17 @@ while elapsed_time <= sim_duration_seconds:
     t_end = time.time()
 
     if n_steps % print_interval == 0:
-        print(f" {n_steps} Time iteration: {t_mid - t_start:.2f} | Time plot: {t_end - t_mid:.2f}")
+        print(f" {n_steps} Time iteration: {t_mid - t_start:.2f} | Time plot: {t_end - t_mid:.2f} "
+              f"| Simulation time: {int(elapsed_hours)}h {(int(elapsed_seconds) - int(elapsed_hours) * 3600) // 60}m {(int(elapsed_seconds) - int(elapsed_hours) * 3600) % 60}s")
+
+    if model_attitude_control:
+        for actor in tip_actors + cue_actors:
+            att_models_dict[actor.name].update_attitude(sim_step_seconds)
 
     sim.advance_time(time_to_advance=sim_step_seconds, current_power_consumption_in_W=0.0)
-    elapsed_time += sim_step_seconds
+
+    elapsed_seconds += sim_step_seconds
+    elapsed_hours = elapsed_seconds / 3600
     n_steps += 1
 
 t_sim_end = time.time()
@@ -816,30 +885,21 @@ if logging:
         if verbose:
             print("Created offnadir and latency distribution plots")
 
-at_exit(sim_name, pl=pl, verbose=verbose)
+at_exit(sim_name, pl=(pl if plot_propagation else None), verbose=verbose)
 
 if plot_footprints:
     print(f"Generate footprint plots with len {len(fov_polygons_cue)}")
     t1 = time.time()
 
     if len(fov_polygons_tip) > 0:
-        plot_all_fov_footprints_plotly(fov_polygons_tip, all_targets, observed_targets_tip, nPlanes_tip, nSats_tip, extension="tip")
+        plot_all_fov_footprints_plotly(fov_polygons_tip, all_targets, observed_targets_tip, nPlanes_tip, nSats_tip, extension="tip", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories)
 
     if len(fov_polygons_cue) > 0:
-        plot_all_fov_footprints_plotly(fov_polygons_cue, all_targets, observed_targets_cue, nPlanes_cue, nSats_cue, extension="cue")
+        plot_all_fov_footprints_plotly(fov_polygons_cue, all_targets, observed_targets_cue, nPlanes_cue, nSats_cue, extension="cue", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories)
 
     t2 = time.time()
     print(f"FOV: footprints plotting time: {t2 - t1:1f} s")
 
 if show_orbits:
     plot_orbits(trajectories)
-
-
-
-
-
-
-
-
-
 

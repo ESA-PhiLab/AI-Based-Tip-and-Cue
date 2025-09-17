@@ -1,8 +1,7 @@
 import os
 from offnadir_imaging.functions.get_satellite_data import get_satellite, get_spatial_res
 from custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath, estimate_box_inertia, pass_time_from_nadir
-from custom_paseos.attitude.tune_pid import tune_pid_with_limits
-from custom_paseos.utils.constants import R_earth
+from custom_paseos.utils.constants import R_earth, mu_earth
 
 from datetime import datetime, timezone
 import numpy as np
@@ -11,7 +10,7 @@ import math
 # ================================================================================
 # SIMULATION
 
-sim_name =  "test1" # "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
+sim_name =  "test2" # "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
 
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
@@ -27,7 +26,7 @@ crop_black_border = True
 generate_radiation = True
 flat_dem = False
 exclude_dark = True
-sim_time = 'slow'
+sim_time = 'custom'
 
 sim_duration_hours = 0.15
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
@@ -48,10 +47,10 @@ elif sim_time == 'fast':
 
 else:
     sim_step_seconds = 1
-    plot_fov_interval = 1
+    plot_fov_interval =  1
     plot_pyvista_interval = 1
     print_interval = 10
-    movie_orbit_sec = 8.0
+    movie_orbit_sec = 30.0
 
 # ================================================================================
 # ORBIT
@@ -117,7 +116,8 @@ J_sat = estimate_box_inertia(sat_mass, sat_length, sat_width, sat_height)       
 # SENSOR
 
 elevation_min = 10.0    # degrees
-offnadir_max = 50.0     # max 62.5 deg
+offnadir_limit = 50.0     # max 62.5 deg
+offnadir_margin = 10.0 # offnadir_limit * 0.05   # accounting for overshoot
 
 resolution = 124  # pixels of render
 sample_count = 512  # 8192 min, 2048 * 2**7 max
@@ -141,25 +141,10 @@ except:
 # ================================================================================
 # ATTITUDE
 
-cutoff_freq_gnc = 0.5                           # Low-pass cutoff for target smoothing, planning / guidance constraint (Hz)
-anti_windup_gain = 0.2
-
-ang_vel_max_gnc = 1.6                           # Maximum spacecraft rotational rate, planning / guidance constraint (deg/s)
-ang_vel_max_acs = 3.0                           # Maximum spacecraft rotational rate, bus/ actuator constraint (deg/s)
-
-ang_accel_max_gnc = 0.5                                            # Angular acceleration limit, planning (deg/s^2)
-tau_max_acs = 35.0                                                 # Max total actuator torque magnitude (N·m)
-ang_accel_max_acs = (tau_max_acs / J_sat) * (180.0 / np.pi)        # Angular acceleration limit, actuators (deg/s^2)
-
-wn_final, (Kp_acs, Kd_acs, Ki_acs) = tune_pid_with_limits(
-        J_sat=J_sat,
-        ang_vel_max_acs=ang_vel_max_acs,
-        tau_max_acs=tau_max_acs,
-        zeta=1.0,
-        wn_init=0.4,
-        pi_ratio=3.0,
-        theta_step_deg=20.0
-    )
+omega_max_rad = np.deg2rad(3.86)
+alpha_max_rad = np.deg2rad(1.43)
+zeta = 0.8
+wn_rad = 0.42
 
 # ================================================================================
 # WHALES
@@ -250,19 +235,5 @@ whale_propagation["speed_mean_reversion_per_s"] = speed_mean_reversion_per_s
 whale_propagation["speed_noise_sigma"] = speed_noise_sigma
 whale_propagation["turn_std_deg_per_sqrt_s"] = turn_std_deg_per_sqrt_s
 whale_propagation["land_avoid_max_tries"] = land_avoid_max_tries
-
-controller_params = {}
-controller_params["cutoff_freq_gnc"]   = cutoff_freq_gnc
-controller_params["anti_windup_gain"]   = anti_windup_gain
-controller_params["Kp_acs"]            = Kp_acs
-controller_params["Kd_acs"]            = Kd_acs
-controller_params["Ki_acs"]            = Ki_acs
-controller_params["ang_vel_max_gnc"]   = ang_vel_max_gnc
-controller_params["ang_vel_max_acs"]   = ang_vel_max_acs
-controller_params["ang_accel_max_gnc"] = ang_accel_max_gnc
-controller_params["tau_max_acs"]       = tau_max_acs
-controller_params["J_sat"]             = J_sat
-controller_params["ang_accel_max_acs"] = ang_accel_max_acs
-
 
 

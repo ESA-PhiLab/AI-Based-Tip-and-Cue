@@ -115,7 +115,7 @@ def init_fov_layers(
     tip_edge_color: str = "white",
     cue_edge_color: str = "white",
     opacity: float = 0.35,
-    line_width: float = 4.0,
+    line_width: float = 5.0,
 ):
     placeholder_latlon = np.array([[0.0, 0.0], [0.0, 1e-6], [1e-6, 0.0]], dtype=float)
 
@@ -278,7 +278,7 @@ def init_fov_layers_eci(
     tip_edge_color: str = "white",
     cue_edge_color: str = "white",
     opacity: float = 0.35,
-    line_width: float = 2.0,
+    line_width: float = 5.0,
 ):
     placeholder = np.array([[0.0, 0.0], [0.0, 1e-6], [1e-6, 0.0]], dtype=float)
     t0 = datetime(2000, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -515,7 +515,7 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
         pl, n_tip=len(tip_actors), n_cue=len(cue_actors),
         tip_fill_color="orange", cue_fill_color="cyan",
         tip_edge_color="white", cue_edge_color="white",
-        opacity=0.35, line_width=2.0
+        opacity=0.35, line_width=5.0
     )
 
     # --- Sun light ---
