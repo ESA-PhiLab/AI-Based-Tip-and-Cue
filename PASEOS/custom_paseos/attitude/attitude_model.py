@@ -1,8 +1,3 @@
-# attitude_model.py
-# -----------------------------------------------------------------------------
-# Attitude dynamics & helpers. Owns Euler angles and pointing math (degrees).
-# -----------------------------------------------------------------------------
-
 import numpy as np
 import pykep as pk
 from custom_paseos.utils.constants import R_earth
@@ -26,81 +21,96 @@ from custom_paseos.utils.reference_frame_transformation import (
 )
 
 # -----------------------------------------------------------------------------
-# Shared helpers (no duplication)
+# Shared helpers
 # -----------------------------------------------------------------------------
 
-def _axis_slew_dynamics(delta_rad, w_max, a_max, dt=None):
+def _axis_slew_dynamics(delta_rad, w_max, a_max, dt=None, w0=0.0, a0=0.0):
     """
-    Compute trapezoidal/triangular slew profile for one axis.
+    Compute trapezoidal/triangular slew profile for one axis,
+    starting at angular velocity w0 and angular acceleration a0.
 
     Parameters
     ----------
     delta_rad : float
-        Total rotation [rad].
+        Remaining rotation [rad].
     w_max : float
         Max angular velocity [rad/s].
     a_max : float
         Max angular acceleration [rad/s^2].
     dt : float or None
-        If None -> only return durations (t_total, t_acc, t_const).
-        If float -> return full profile (times [s], angles [rad]).
+        If None → only return durations.
+        If float → return trajectory arrays.
+    w0 : float
+        Initial angular velocity [rad/s].
+    a0 : float
+        Initial angular acceleration [rad/s^2].
 
     Returns
     -------
     If dt is None:
-        (t_total, t_acc, t_const)
+        (t_total, t_acc, t_const, t_dec)
     If dt given:
-        (times, angles) trajectory in radians.
+        (times, angles) trajectory arrays.
     """
-    d = abs(float(delta_rad))  # ensure scalar float
-    sign = np.sign(float(delta_rad))
+    sign = np.sign(delta_rad) if delta_rad != 0 else 1.0
+    d = abs(float(delta_rad))
 
-    if d == 0.0:
+    if d == 0.0 and w0 == 0.0:
         if dt is None:
-            return 0.0, 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0
         else:
             return np.array([0.0]), np.array([0.0])
 
-    # triangular
-    if d <= (w_max**2) / a_max:
-        t_acc = np.sqrt(d / a_max)
-        t_total = 2.0 * t_acc
-        t_const = 0.0
+    # Distance required to brake from current velocity
+    d_stop = w0**2 / (2 * a_max) if a_max > 0 else np.inf
 
+    # Already braking and within stop distance
+    if d <= d_stop and a0 < 0:
+        t_dec = w0 / a_max
         if dt is None:
-            return t_total, t_acc, t_const
+            return t_dec, 0.0, 0.0, t_dec
+        times = np.arange(0, t_dec + dt, dt)
+        angles = w0 * times - 0.5 * a_max * times**2
+        return times, sign * angles
 
-        times = np.arange(0.0, t_total + dt, dt)
-        angles = []
-        for t in times:
-            if t <= t_acc:
-                theta = 0.5 * a_max * t**2
-            else:
-                tau = t - t_acc
-                theta = 0.5 * a_max * t_acc**2 + (w_max * tau - 0.5 * a_max * tau**2)
-            angles.append(theta)
-        return times, sign * np.array(angles)
+    # Otherwise, plan a trapezoidal/triangular profile
+    w_peak = min(w_max, np.sqrt(max(0.0, a_max * d + 0.5 * w0**2)))
 
-    # trapezoidal
-    t_acc = w_max / a_max
-    d_accdec = (w_max**2) / a_max
-    t_const = max(0.0, (d - d_accdec) / w_max)
-    t_total = 2.0 * t_acc + t_const
+    # Accelerate from w0 → w_peak
+    t_acc = max(0.0, (w_peak - w0) / a_max)
+    d_acc = w0 * t_acc + 0.5 * a_max * t_acc**2
+
+    # Decelerate w_peak → 0
+    t_dec = w_peak / a_max
+    d_dec = w_peak**2 / (2 * a_max)
+
+    if d_acc + d_dec >= d:
+        # Triangular profile
+        t_acc = (-w0 + np.sqrt(w0**2 + 2 * a_max * d)) / a_max
+        t_dec = (w0 + a_max * t_acc) / a_max
+        t_const = 0.0
+        t_total = t_acc + t_dec
+    else:
+        # Trapezoidal profile
+        d_const = d - (d_acc + d_dec)
+        t_const = d_const / w_peak
+        t_total = t_acc + t_const + t_dec
 
     if dt is None:
-        return t_total, t_acc, t_const
+        return t_total, t_acc, t_const, t_dec
 
-    times = np.arange(0.0, t_total + dt, dt)
+    # --- Build trajectory ---
+    times = np.arange(0, t_total + dt, dt)
     angles = []
     for t in times:
         if t <= t_acc:
-            theta = 0.5 * a_max * t**2
+            theta = w0 * t + 0.5 * a_max * t**2
         elif t <= t_acc + t_const:
-            theta = 0.5 * a_max * t_acc**2 + w_max * (t - t_acc)
+            tau = t - t_acc
+            theta = d_acc + w_peak * tau
         else:
             tau = t - (t_acc + t_const)
-            theta = (0.5 * a_max * t_acc**2 + w_max * t_const +
-                     w_max * tau - 0.5 * a_max * tau**2)
+            theta = d_acc + w_peak * t_const + w_peak * tau - 0.5 * a_max * tau**2
         angles.append(theta)
     return times, sign * np.array(angles)
 
@@ -119,21 +129,17 @@ def _compute_delta(current_eul, target_eul):
 
 
 def _vector_error_angle(cur_eul_deg, tgt_eul_deg):
-    """
-    Compute the shortest rotation angle between two attitudes using rotation matrices,
-    matching the original behavior in your 'working' method.
-    """
+    """Shortest rotation angle between two attitudes via rotation matrices."""
     R_cur = RotMat_LVLH_to_BRF_by_eul(np.asarray(cur_eul_deg, float))
     R_tgt = RotMat_LVLH_to_BRF_by_eul(np.asarray(tgt_eul_deg, float))
     R_err = R_tgt @ R_cur.T
     tr = float(np.trace(R_err))
-    tr = np.clip(tr, -1.0, 3.0)  # numerical safety
-    angle = np.arccos(np.clip((tr - 1.0) / 2.0, -1.0, 1.0))
-    return angle
+    tr = np.clip(tr, -1.0, 3.0)
+    return np.arccos(np.clip((tr - 1.0) / 2.0, -1.0, 1.0))
 
 
 def _aggregate_profiles(delta_rad, wmax, amax, dt=None, settle_seconds=0.0, mode="per_axis",
-                        cur_eul_deg=None, tgt_eul_deg=None):
+                        cur_eul_deg=None, tgt_eul_deg=None, w0=None, a0=None):
     """
     Aggregate axis or vector slew profiles.
     If dt=None → return t_slew (duration only).
@@ -142,15 +148,18 @@ def _aggregate_profiles(delta_rad, wmax, amax, dt=None, settle_seconds=0.0, mode
     if mode == "per_axis":
         if dt is None:
             t_axes = []
-            for d, w, a in zip(delta_rad, wmax, amax):
-                t_total, _, _ = _axis_slew_dynamics(d, float(w), float(a), dt=None)
+            for i, (d, w, a) in enumerate(zip(delta_rad, wmax, amax)):
+                wi = 0.0 if w0 is None else float(w0[i])
+                ai = 0.0 if a0 is None else float(a0[i])
+                t_total, *_ = _axis_slew_dynamics(d, float(w), float(a), dt=None, w0=wi, a0=ai)
                 t_axes.append(t_total)
-            t_slew = max(t_axes)
-            return t_slew
+            return max(t_axes)
         else:
             profiles = []
-            for d, w, a in zip(delta_rad, wmax, amax):
-                times_i, angles_i = _axis_slew_dynamics(d, float(w), float(a), dt=dt)
+            for i, (d, w, a) in enumerate(zip(delta_rad, wmax, amax)):
+                wi = 0.0 if w0 is None else float(w0[i])
+                ai = 0.0 if a0 is None else float(a0[i])
+                times_i, angles_i = _axis_slew_dynamics(d, float(w), float(a), dt=dt, w0=wi, a0=ai)
                 profiles.append((times_i, angles_i))
             T_max = max(times[-1] for times, _ in profiles) + float(settle_seconds)
             times = np.arange(0.0, T_max + dt, dt)
@@ -161,23 +170,22 @@ def _aggregate_profiles(delta_rad, wmax, amax, dt=None, settle_seconds=0.0, mode
             return times, angles_all
 
     elif mode == "vector":
-        # Compute true shortest rotation angle (same as the old method)
         if (cur_eul_deg is None) or (tgt_eul_deg is None):
             raise ValueError("vector mode requires cur_eul_deg and tgt_eul_deg.")
         angle = _vector_error_angle(cur_eul_deg, tgt_eul_deg)
         wmax_s = float(np.max(np.atleast_1d(wmax)))
         amax_s = float(np.max(np.atleast_1d(amax)))
+        w0_s = 0.0 if w0 is None else float(np.linalg.norm(w0))
+        a0_s = 0.0 if a0 is None else float(np.linalg.norm(a0))
 
         if dt is None:
-            t_slew, _, _ = _axis_slew_dynamics(angle, wmax_s, amax_s, dt=None)
+            t_slew, *_ = _axis_slew_dynamics(angle, wmax_s, amax_s, dt=None, w0=w0_s, a0=a0_s)
             return t_slew
         else:
-            times_i, angles_i = _axis_slew_dynamics(angle, wmax_s, amax_s, dt=dt)
+            times_i, angles_i = _axis_slew_dynamics(angle, wmax_s, amax_s, dt=dt, w0=w0_s, a0=a0_s)
             T_max = times_i[-1] + float(settle_seconds)
             times = np.arange(0.0, T_max + dt, dt)
             frac = np.interp(times, times_i, angles_i, left=0.0, right=angle) / (angle if angle > 0 else 1.0)
-            # Distribute along the rotation vector in Euler-delta space (approximate)
-            # If you want exact interpolation, replace with quaternion SLERP and back to Euler.
             dir_vec = np.asarray(delta_rad, float)
             if np.allclose(dir_vec, 0.0):
                 angles_all = np.zeros((len(times), 3))
@@ -228,6 +236,9 @@ class AttitudeModel:
 
         # Target attitude (deg)
         self._target_attitude_deg = None
+
+        self.t_eul_commanded = None
+        self.delay_slew_stab = None
 
     # -------------------------------------------------------------------------
     # Initialization helpers
@@ -377,14 +388,10 @@ class AttitudeModel:
                                         settle_seconds=None,
                                         zeta=None,
                                         wn_rad=None,
-                                        mode="per_axis"):
-        """
-        Compute slew + stabilization time between two Euler attitudes.
-
-        Returns
-        -------
-        (t_total, t_slew, t_settle) in seconds.
-        """
+                                        mode="per_axis",
+                                        current_w_rad=None,
+                                        current_a_rad=None):
+        """Compute slew + stabilization time between two Euler attitudes."""
         if current_eul is None:
             current_eul = self._actor_attitude_deg
         if target_eul is None:
@@ -396,16 +403,15 @@ class AttitudeModel:
 
         t_slew = _aggregate_profiles(
             delta_rad, wmax, amax, dt=None, mode=mode,
-            cur_eul_deg=cur, tgt_eul_deg=tgt
+            cur_eul_deg=cur, tgt_eul_deg=tgt, w0=current_w_rad, a0=current_a_rad
         )
 
-        # Settling time (use explicit None checks to match working version)
         if settle_seconds is not None:
             t_settle = float(settle_seconds)
         elif (zeta is not None) and (wn_rad is not None) and (zeta > 0) and (wn_rad > 0):
-            t_settle = 4.0 / (zeta * wn_rad)  # 2% settling time
+            t_settle = 4.0 / (zeta * wn_rad)
         else:
-            t_settle = 5.0  # default buffer
+            t_settle = 5.0
 
         t_total = t_slew + t_settle
         return t_total, t_slew, t_settle
@@ -417,15 +423,10 @@ class AttitudeModel:
                                   omega_max_rad=0.05,
                                   alpha_max_rad=0.01,
                                   settle_seconds=5.0,
-                                  mode="per_axis"):
-        """
-        Generate Euler angle trajectory (deg) for a slew maneuver.
-
-        Returns
-        -------
-        times : np.ndarray [s]
-        eul_traj : np.ndarray [N,3] in deg
-        """
+                                  mode="per_axis",
+                                  current_w_rad=None,
+                                  current_a_rad=None):
+        """Generate Euler angle trajectory (deg) for a slew maneuver."""
         if current_eul is None:
             current_eul = self._actor_attitude_deg
         if target_eul is None:
@@ -438,10 +439,68 @@ class AttitudeModel:
         times, angles_rad = _aggregate_profiles(
             delta_rad, wmax, amax, dt=float(dt),
             settle_seconds=float(settle_seconds),
+            mode=mode, cur_eul_deg=cur, tgt_eul_deg=tgt,
+            w0=current_w_rad, a0=current_a_rad
+        )
+        eul_traj = np.rad2deg(angles_rad) + cur
+        return eul_traj, times
+
+    def plan_slew(self, target_eul_deg,
+                  omega_max_rad=0.05, alpha_max_rad=0.01, dt=0.1, mode="per_axis",
+                  t_start=0.0):
+        """
+        Precompute a slew trajectory from current to target attitude.
+        Stores Euler, angular velocity, angular acceleration as time series.
+        """
+        cur, tgt, delta_deg, delta_rad = _compute_delta(self._actor_attitude_deg, target_eul_deg)
+        wmax = np.broadcast_to(np.asarray(omega_max_rad, float), 3)
+        amax = np.broadcast_to(np.asarray(alpha_max_rad, float), 3)
+
+        times, angles_rad = _aggregate_profiles(
+            delta_rad, wmax, amax, dt=dt, settle_seconds=0.0,
             mode=mode, cur_eul_deg=cur, tgt_eul_deg=tgt
         )
-        eul_traj = np.rad2deg(angles_rad) + cur  # add offset in deg
-        return times, eul_traj
+
+        eul_traj = np.rad2deg(angles_rad) + cur
+        rates = np.gradient(eul_traj, dt, axis=0) * np.pi / 180.0  # rad/s
+        accels = np.gradient(rates, dt, axis=0)  # rad/s^2
+
+        self._planned_start_time = float(t_start)
+        self._planned_times = times
+        self._planned_eul = eul_traj
+        self._planned_rates = rates
+        self._planned_accels = accels
+        self._target_attitude_deg = np.array(target_eul_deg, float)
+
+
+    def follow_planned_slew(self, t_now):
+        """
+        Update state along a preplanned slew given the current simulation time [s].
+        """
+        if not hasattr(self, "_planned_eul"):
+            return
+
+        t_elapsed = t_now - self._planned_start_time
+        if t_elapsed < 0:
+            return
+        if t_elapsed >= self._planned_times[-1]:
+            # Finished: snap to last state
+            self._actor_attitude_deg = self._planned_eul[-1]
+            self._actor_angular_velocity = np.zeros(3)
+            self._actor_angular_acceleration = np.zeros(3)
+            return
+
+        # Interpolate Euler, ω, α
+        eul = np.array([np.interp(t_elapsed, self._planned_times, self._planned_eul[:, i])
+                        for i in range(3)])
+        w = np.array([np.interp(t_elapsed, self._planned_times, self._planned_rates[:, i])
+                      for i in range(3)])
+        a = np.array([np.interp(t_elapsed, self._planned_times, self._planned_accels[:, i])
+                      for i in range(3)])
+
+        self._actor_attitude_deg = eul
+        self._actor_angular_velocity = w
+        self._actor_angular_acceleration = a
 
 
 # -----------------------------------------------------------------------------

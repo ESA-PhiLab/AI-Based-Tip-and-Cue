@@ -63,7 +63,7 @@ nPlanes_cue = 1
 
 delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
 
-delay_confirmation_tip = 30      # Time delay between tip and cue transfer [sec]
+delay_confirmation_tip = 30      #tr Time delay between tip and cue transfer [sec]
 delay_transmission_TC = 30
 delay_confirmation_cue = 30      # Time delay after detection by cue [sec]
 avg_time_delay = delta_t_cue

@@ -54,8 +54,7 @@ class EOTools:
         self.current_task = None  # currently active task (or None)
         self.offnadir_unbound_target = None  # last computed unconstrained off-nadir (deg)
 
-        self.t_eul_commanded = None
-        self.delay_slew_stab = None
+
 
     # -------------------------------------------------------------------------
     # Link to attitude model
@@ -254,6 +253,7 @@ class EOTools:
         return np.array([[0.0, 0.0, 1.0]], float)
 
     def get_FovPoints(self, r_vec, v_vec, t_datetime):
+
         rays_brf = self.get_fov_vectors_in_BRF()
         P = self._find_intersection_in_Geodetic(rays_brf, t_datetime, r_vec, v_vec)
         return P[:2, :].T

@@ -36,10 +36,10 @@ plot_propagation = False # True
 plot_footprints = True
 plot_whale_trajectories = True
 
-model_attitude_control = False      # False, extra feature to be added later
 generate_image = False
 onboard_ai_tip = True
 onboard_ai_cue = True
+attitude_mode = 'pause'     # 'pause' or 'planned'
 
 logging = True
 verbose = False
@@ -68,7 +68,7 @@ if logging:
     sys.stdout = Logger("output.log")
     sys.stderr = sys.stdout
 
-print(f"Initiate simulation {sim_name} | Attitude control {model_attitude_control} | Logging {logging}")
+print(f"Initiate simulation {sim_name} | Logging {logging}")
 
 utc = TimeScalesFactory.getUTC()
 t0_orekit = AbsoluteDate(t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second + t0.microsecond / 1e6, utc)
@@ -495,7 +495,6 @@ while elapsed_seconds <= sim_duration_seconds:
 
                         if (in_view or will_be_in_view) and not (offnadir_unbound >= (offnadir_limit + offnadir_margin) and not moving_toward):
 
-
                             offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)
                             eul_ang_cue_target = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_brf_target)
 
@@ -520,63 +519,113 @@ while elapsed_seconds <= sim_duration_seconds:
 
                     # eo_tools_dict[actor.name].offnadir_unbound_target = None
 
-            if not np.allclose(eul_ang_cue_target, att_models_dict[actor.name]._target_attitude_deg, atol=0.1):
-                delay_slew_stab, delay_slew, delay_stab = att_models_dict[actor.name].get_pointing_stabilization_time(att_models_dict[actor.name]._actor_attitude_deg, eul_ang_cue_target,
-                                                                                                                      omega_max_rad=omega_max_rad, alpha_max_rad=alpha_max_rad,
-                                                                                                                      zeta=zeta, wn_rad=wn_rad, mode='per_axis')
+            # --- Handle new target attitude ---
+            if not np.allclose(eul_ang_cue_target,
+                               att_models_dict[actor.name]._target_attitude_deg,
+                               atol=0.1):
 
+                if attitude_mode in ("pause", "planned"):
+                    # Predict slew + stabilization time
+                    delay_slew_stab, delay_slew, delay_stab = (
+                        att_models_dict[actor.name].get_pointing_stabilization_time(
+                            current_eul=att_models_dict[actor.name]._actor_attitude_deg,
+                            target_eul=eul_ang_cue_target,
+                            omega_max_rad=omega_max_rad,
+                            alpha_max_rad=alpha_max_rad,
+                            zeta=zeta,
+                            wn_rad=wn_rad,
+                            mode="per_axis",
+                            current_w_rad=att_models_dict[actor.name]._actor_angular_velocity,
+                            current_a_rad=att_models_dict[actor.name]._actor_angular_acceleration,
+                        )
+                    )
 
-                if eo_tools_dict[actor.name].t_eul_commanded != None and np.allclose(eul_ang_cue_target, att_models_dict[actor.name]._target_attitude_deg,
-                                                                                     atol=10.0) and delay_slew_stab > eo_tools_dict[actor.name].delay_slew_stab:
-                    eo_tools_dict[actor.name].delay_slew_stab = delay_slew_stab
-                    print(f"\t\t {n_steps} Updated slewing delay {eul_ang_cue_target}")
+                    if (att_models_dict[actor.name].t_eul_commanded is not None
+                            and np.allclose(eul_ang_cue_target,
+                                            att_models_dict[actor.name]._target_attitude_deg,
+                                            atol=10.0)
+                            and delay_slew_stab > att_models_dict[actor.name].delay_slew_stab):
 
-                # If no current command, take a new one
-                else:
-                    eo_tools_dict[actor.name].t_eul_commanded = t_datetime
-                    eo_tools_dict[actor.name].delay_slew_stab = delay_slew_stab
-                    print(f"\t\t {n_steps} Taken new task {eul_ang_cue_target}")
+                        att_models_dict[actor.name].delay_slew_stab = delay_slew_stab
+                        task_update_mode = 'updated'
 
-                att_models_dict[actor.name].set_target_euler(eul_ang_cue_target)
+                    else:
+                        att_models_dict[actor.name].t_eul_commanded = t_datetime
+                        att_models_dict[actor.name].delay_slew_stab = delay_slew_stab
+                        task_update_mode = 'taken'
 
-                if offnadir_cue_deg_target != 0.0:
+                        if attitude_mode == "planned":
+                            att_models_dict[actor.name].plan_slew(
+                                target_eul_deg=eul_ang_cue_target,
+                                omega_max_rad=omega_max_rad,
+                                alpha_max_rad=alpha_max_rad,
+                                dt=sim_step_seconds,
+                                mode="per_axis",
+                                t_start=elapsed_seconds,
+                            )
+
+                    att_models_dict[actor.name].set_target_euler(eul_ang_cue_target)
+
                     print(
-                        f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach at off-nadir {offnadir_unbound:.1f} deg (current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg)"
-                        f" | Roll, pitch, yaw current=[{att_models_dict[actor.name]._actor_attitude_deg[0]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[1]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[2]:.1f}],"
-                        f" set to target=[{eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f}] deg"
-                        f" | Setting time {delay_slew_stab:.1f} s (slew {delay_slew:.1f} s, stab {delay_stab:.1f} s)")
-                else:
+                        f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach "
+                        f"(current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg) "
+                        f"| Roll, pitch, yaw current=[{att_models_dict[actor.name]._actor_attitude_deg[0]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[1]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[2]:.1f}] deg"
+                        f"| set to target=[{eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f}] deg"
+                        f"| Setting time {delay_slew_stab:.1f} s "
+                        f"(slew {delay_slew:.1f} s, stab {delay_stab:.1f} s) | update mode {task_update_mode}"
+                    )
+
+                elif attitude_mode == "physics":
+                    # No delay bookkeeping
+                    att_models_dict[actor.name].set_target_euler(eul_ang_cue_target)
                     print(
-                        f"\t\t!! {n_steps}  {actor.name}: Move back to default off-nadir {offnadir_cue_deg_target:.1f} deg (current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg)"
-                        f" | Roll, pitch, yaw current=[{att_models_dict[actor.name]._actor_attitude_deg[0]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[1]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[2]:.1f}],"
-                        f" set to target=[{eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f}] deg"
-                        f" | Setting time {delay_slew_stab:.1f} s (slew {delay_slew:.1f} s, stab {delay_stab:.1f} s)")
+                        f"\t\t!! {n_steps}  {actor.name}: Physics mode → set new target "
+                        f"{eul_ang_cue_target}, current={att_models_dict[actor.name]._actor_attitude_deg}"
+                    )
 
-            if not model_attitude_control:
+            # --- Advance or complete the commanded motion ---
+            if att_models_dict[actor.name].t_eul_commanded is not None:
 
-                # if beyond movement limit:
-                if eo_tools_dict[actor.name].delay_slew_stab != None and t_datetime >= eo_tools_dict[actor.name].t_eul_commanded + timedelta(seconds=eo_tools_dict[actor.name].delay_slew_stab):
+                if attitude_mode == "pause":
+                    if t_datetime >= (
+                            att_models_dict[actor.name].t_eul_commanded
+                            + timedelta(seconds=att_models_dict[actor.name].delay_slew_stab)
+                    ):
+                        att_models_dict[actor.name].set_actor_euler(
+                            att_models_dict[actor.name]._target_attitude_deg
+                        )
+                        att_models_dict[actor.name].t_eul_commanded = None
+                        att_models_dict[actor.name].delay_slew_stab = None
+                        print(f"\t\t !! {n_steps} {actor.name}: Completed move (pause mode)")
 
-                    # Additude control to be added, for simplication now
-                    att_models_dict[actor.name].set_actor_euler(att_models_dict[actor.name]._target_attitude_deg)
-                    eo_tools_dict[actor.name].t_eul_commanded = None
-                    eo_tools_dict[actor.name].delay_slew_stab = None
+                elif attitude_mode == "planned":
+                    att_models_dict[actor.name].follow_planned_slew(elapsed_seconds)
 
-                    print(f"\t\t !! {n_steps} {actor.name}: Completed move to roll, pitch, yaw {att_models_dict[actor.name]._actor_attitude_deg[0]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[1]:.1f}, {att_models_dict[actor.name]._actor_attitude_deg[2]:.1f} deg")
+                    if np.allclose(
+                            att_models_dict[actor.name]._actor_attitude_deg,
+                            att_models_dict[actor.name]._target_attitude_deg,
+                            atol=0.5,
+                    ):
+                        att_models_dict[actor.name].t_eul_commanded = None
+                        att_models_dict[actor.name].delay_slew_stab = None
+                        print(f"\t\t !! {n_steps} {actor.name}: Completed move (planned trajectory)")
 
-              #
+                elif attitude_mode == "physics":  # FOR LATER
+                    att_models_dict[actor.name].update_attitude(sim_step_seconds)
+
+            #
               #   if verbose and n_steps % print_interval == 0:
               #       delta_move_eul = eul_new_deg - prev_eul
               #       print(f"\t\t {actor.name} | Delta roll, pitch, yaw={delta_move_eul[0]:.1f}, {delta_move_eul[1]:.1f}, {delta_move_eul[2]:.1f} deg")
 
         try:
-            #   centerray_hit = eo_tools_dict[actor.name].get_CenterRay_Intersection_Attitude(r_vec, v_vec, t_datetime).flatten()
-            #   ctr_lat, ctr_lon, ctr_alt = centerray_hit
-
-            FovPoints = eo_tools_dict[actor.name].get_FovPoints(r_vec, v_vec, t_datetime)  # check off-nadir angle, and where the center ray intersects the Earth
-
-            if eo_tools_dict[actor.name].delay_slew_stab != None:
+            # check off-nadir angle, and where the center ray intersects the Earth
+            if attitude_mode == 'planned' or np.all(att_models_dict[actor.name]._actor_angular_velocity) <= 0.1:
+                FovPoints = eo_tools_dict[actor.name].get_FovPoints(r_vec, v_vec, t_datetime)
                 FovPoints_cue.append(FovPoints)
+
+            else:
+                FovPoints=None
 
             if plot_footprints and n_steps % plot_fov_interval == 0:
                 fov_polygons_cue[footprint_idx_cue] = FovPoints
@@ -590,7 +639,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
             continue
 
-        if cue_illuminated:
+        if cue_illuminated and isinstance(FovPoints, np.ndarray) and FovPoints.size > 0:         # only observe if stable
 
             for whale_idx, whale in all_targets.items():
                 if whale_idx not in illuminated_targets:
@@ -598,9 +647,9 @@ while elapsed_seconds <= sim_duration_seconds:
 
                 target_coord = whale.position()
                 in_footprint = eo_tools_dict[actor.name].check_point_in_footprint(target_coord, FovPoints)
-                offnadir_cue_deg, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)     
+                offnadir_cue_deg, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)
 
-                if in_footprint and whale.state_observing != 2 and offnadir_cue_deg <= (offnadir_limit + offnadir_margin) and eo_tools_dict[actor.name].t_eul_commanded == None:
+                if in_footprint and whale.state_observing != 2 and offnadir_cue_deg <= (offnadir_limit + offnadir_margin) and att_models_dict[actor.name].t_eul_commanded == None:
 
                     print(f"!! {n_steps} {actor.name}: Observed Target {whale_idx} at off-nadir {offnadir_cue_deg:.1f} deg")
 
@@ -658,8 +707,6 @@ while elapsed_seconds <= sim_duration_seconds:
 
                     else:
                         whale.confirmed_cue = True
-
-
 
                     if whale.t_observed_cue != None and whale.state_confirming < 2 and t_datetime > (whale.t_observed_cue + timedelta(seconds=delay_confirmation_cue)):
 
@@ -719,9 +766,9 @@ while elapsed_seconds <= sim_duration_seconds:
         print(f" {n_steps} Time iteration: {t_mid - t_start:.2f} | Time plot: {t_end - t_mid:.2f} "
               f"| Simulation time: {int(elapsed_hours)}h {(int(elapsed_seconds) - int(elapsed_hours) * 3600) // 60}m {(int(elapsed_seconds) - int(elapsed_hours) * 3600) % 60}s")
 
-    if model_attitude_control:
-        for actor in tip_actors + cue_actors:
-            att_models_dict[actor.name].update_attitude(sim_step_seconds)
+
+    # for actor in tip_actors + cue_actors:
+    #     att_models_dict[actor.name].update_attitude(sim_step_seconds)
 
     sim.advance_time(time_to_advance=sim_step_seconds, current_power_consumption_in_W=0.0)
 
