@@ -26,9 +26,9 @@ crop_black_border = True
 generate_radiation = True
 flat_dem = False
 exclude_dark = True
-sim_time = 'custom'
+sim_time = 'slow'
 
-sim_duration_hours = 0.15
+sim_duration_hours = 24
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 if sim_time == 'slow':
@@ -61,11 +61,11 @@ nSats_cue = 1
 nPlanes_tip = 1
 nPlanes_cue = 1
 
-delta_t_cue = 2*60          # Time spacing between tip and cue satellite [sec]
+delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
 
-delay_confirmation_tip = 30      #tr Time delay between tip and cue transfer [sec]
-delay_transmission_TC = 30
-delay_confirmation_cue = 30      # Time delay after detection by cue [sec]
+delay_confirmation_tip = 90      # https://www.jpl.nasa.gov/news/how-nasa-is-testing-ai-to-make-earth-observing-satellites-smarter
+delay_transmission_TC = 10
+delay_confirmation_cue = 60      # Time delay after detection by cue [sec]
 avg_time_delay = delta_t_cue
 
 hp = 616.1e3                              # perigee altitude [m]        Like WV-3, from: https://www.n2yo.com/satellite/?s=40115

@@ -32,7 +32,7 @@ from simulation.onboard_ai.onboard_ai_cue import cue_ai_decision
 
 show_constellation = False
 show_orbits = False
-plot_propagation = False # True
+plot_propagation = True # True
 plot_footprints = True
 plot_whale_trajectories = True
 
