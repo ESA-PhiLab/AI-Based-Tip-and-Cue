@@ -12,6 +12,7 @@ import os, sys
 import pandas as pd
 import openpyxl
 import shutil
+import random
 
 from orekit.pyhelpers import setup_orekit_curdir
 
@@ -32,7 +33,7 @@ from simulation.onboard_ai.onboard_ai_cue import cue_ai_decision
 
 show_constellation = False
 show_orbits = False
-plot_propagation = True # True
+plot_propagation = False # True
 plot_footprints = True
 plot_whale_trajectories = True
 
@@ -120,6 +121,11 @@ eul_ang_cue_target = eul_ang_cue_default
 offnadir_cue_deg_target = None
 offnadir_tip_deg = 0.0
 offnadir_unbound = 0.0
+
+rng_ai_tip = random.Random(seed_ai_tip)   # seed for Tip AI
+rng_ai_cue = random.Random(seed_ai_cue)   # seed for Cue AI
+rng_dem = random.Random(seed_dem)
+
 
 n_targets_pos = int(round(n_targets * pos_fraction))
 n_targets_neg = n_targets - n_targets_pos
@@ -327,12 +333,10 @@ while elapsed_seconds <= sim_duration_seconds:
                     n_observed_tip += 1
 
                     if onboard_ai_tip:
-                        whale.confirmed_tip = tip_ai_decision(whale, tip_tpr, tip_tnr, seed_tip)
+                        whale.confirmed_tip = tip_ai_decision(whale, tip_tpr, tip_tnr, rng_tip)
 
                     else:
                         whale.confirmed_tip = True
-
-
 
                     h_m = float(np.linalg.norm(np.array(r))) - R_earth
                     gsd_tip = gsd_offnadir(gsd0_tip, h_m, offnadir_tip_deg)
@@ -698,7 +702,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
         try:
             # check off-nadir angle, and where the center ray intersects the Earth
-            if attitude_mode == 'planned' or (np.all(att_models_dict[actor.name]._actor_angular_velocity) <= 0.1 and np.all(att_models_dict[actor.name]._actor_angular_acceleration) <= 0.1):
+            if att_models_dict[actor.name].t_eul_commanded == None:                     # only move when stable         # attitude_mode == 'planned' and (np.all(att_models_dict[actor.name]._actor_angular_velocity) <= 0.1 and np.all(att_models_dict[actor.name]._actor_angular_acceleration) <= 0.1):
                 FovPoints = eo_tools_dict[actor.name].get_FovPoints(r_vec, v_vec, t_datetime)
                 FovPoints_cue.append(FovPoints)
 
@@ -778,32 +782,32 @@ while elapsed_seconds <= sim_duration_seconds:
 
                         DN255_rgb_offnadir, DN255_rgb_sunglint, radiance_sunglint, DN255_combined = generate_image(
                             img_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1],
-                            target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
+                            target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, rng_dem)
 
                     if onboard_ai_cue:
-                        whale.confirmed_cue = cue_ai_decision(whale, cue_tpr, cue_tnr, seed_cue)
+                        whale.confirmed_cue = cue_ai_decision(whale, cue_tpr, cue_tnr, rng_cue)
 
                     else:
                         whale.confirmed_cue = True
 
-                    if whale.t_observed_cue != None and whale.state_confirming < 2 and t_datetime > (whale.t_observed_cue + timedelta(seconds=delay_confirmation_cue)):
+                if whale.t_observed_cue != None and whale.state_confirming < 2 and t_datetime > (whale.t_observed_cue + timedelta(seconds=delay_confirmation_cue)):
 
-                            whale.t_confirmed_cue = t_datetime
-                            whale.state_confirming= 2
+                        whale.t_confirmed_cue = t_datetime
+                        whale.state_confirming= 2
 
-                            n_confirmed_cue += 1
+                        n_confirmed_cue += 1
 
-                            if whale.confirmed_cue:  # Add better decision to prevent twice!!
-                                whale.ai_class_predicted="whale"
-                                confirmed_targets_pos[whale_idx] = whale
-                                n_confirmed_pos += 1
+                        if whale.confirmed_cue:  # Add better decision to prevent twice!!
+                            whale.ai_class_predicted="whale"
+                            confirmed_targets_pos[whale_idx] = whale
+                            n_confirmed_pos += 1
 
-                            elif not whale.confirmed_cue:
-                                whale.ai_class_predicted = "not-whale"
-                                confirmed_targets_neg[whale_idx] = whale
-                                n_confirmed_neg += 1
+                        elif not whale.confirmed_cue:
+                            whale.ai_class_predicted = "not-whale"
+                            confirmed_targets_neg[whale_idx] = whale
+                            n_confirmed_neg += 1
 
-                            print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted} (actual={whale.ai_class_true})")
+                        print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted} (actual={whale.ai_class_true})")
 
 
 

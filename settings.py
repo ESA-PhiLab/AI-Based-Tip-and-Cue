@@ -10,7 +10,7 @@ import math
 # ================================================================================
 # SIMULATION
 
-sim_name =  "test2" # "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
+sim_name =  "test2"# "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
 
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
@@ -28,7 +28,7 @@ flat_dem = False
 exclude_dark = True
 sim_time = 'slow'
 
-sim_duration_hours = 24
+sim_duration_hours = 2
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 if sim_time == 'slow':
@@ -93,13 +93,13 @@ M_cue_deg = M_tip_deg - delta_M_cue
 # ONBOARD AI
 parallel_observation_confirmation = False
 
-tip_tpr = 0.75    # probability Tip correctly identifies a positive whale
-tip_tnr = 0.75    # probability Tip correctly ignores a negative whale
-seed_tip = 42
+tip_tpr = 0.5 # 0.75    # probability Tip correctly identifies a positive whale
+tip_tnr = 0.5 # 0.75    # probability Tip correctly ignores a negative whale
+seed_ai_tip = 42
 
 cue_tpr = 0.75    # probability Tip correctly identifies a positive whale
 cue_tnr = 0.75    # probability Tip correctly ignores a negative whale
-seed_cue = seed_tip*2
+seed_ai_cue = seed_ai_tip*2
 
 # ================================================================================
 # SATELLITE
@@ -117,7 +117,7 @@ J_sat = estimate_box_inertia(sat_mass, sat_length, sat_width, sat_height)       
 
 elevation_min = 10.0    # degrees
 offnadir_limit = 50.0     # max 62.5 deg
-offnadir_margin = 10.0 # offnadir_limit * 0.05   # accounting for overshoot
+offnadir_margin = offnadir_limit * 0.02 # offnadir_limit * 0.05   # accounting for overshoot
 
 resolution = 124  # pixels of render
 sample_count = 512  # 8192 min, 2048 * 2**7 max
@@ -173,7 +173,7 @@ land_avoid_max_tries = 12
 # ================================================================================
 # WAVES
 
-dem_seed = 42
+seed_dem = 42
 wind_speed = 10.0  # m/s
 num_waves = 50
 
