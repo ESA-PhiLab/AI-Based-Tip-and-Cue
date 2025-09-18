@@ -237,8 +237,13 @@ class AttitudeModel:
         # Target attitude (deg)
         self._target_attitude_deg = None
 
+        # Command bookkeeping
         self.t_eul_commanded = None
         self.delay_slew_stab = None
+
+        # NEW: flag to track planned slews
+        self.slew_active = False
+
 
     # -------------------------------------------------------------------------
     # Initialization helpers
