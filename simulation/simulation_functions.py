@@ -91,6 +91,7 @@ def cleanup_timeout_targets(all_targets, tasked_targets, current_time, timeout, 
         tasked_targets.pop(idx, None)
 
         if w:
+
             w.state_observing = 0
             w.state_tasked = 0
             w.state_confirming = 0

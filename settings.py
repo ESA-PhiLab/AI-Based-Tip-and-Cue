@@ -61,7 +61,7 @@ nSats_cue = 1
 nPlanes_tip = 1
 nPlanes_cue = 1
 
-delta_t_cue = 1*60          # Time spacing between tip and cue satellite [sec]
+delta_t_cue = 2*60          # Time spacing between tip and cue satellite [sec]
 
 delay_confirmation_tip = 30      #tr Time delay between tip and cue transfer [sec]
 delay_transmission_TC = 30

@@ -39,7 +39,7 @@ plot_whale_trajectories = True
 generate_image = False
 onboard_ai_tip = True
 onboard_ai_cue = True
-attitude_mode = 'planned'     # 'pause' or 'planned'
+attitude_mode = 'pause'     # 'pause' or 'planned'
 
 logging = True
 verbose = False
@@ -501,10 +501,12 @@ while elapsed_seconds <= sim_duration_seconds:
                         else:
                             # Task finished → reset and pick next later
                             print(f"!! {actor.name}: Target {task_id} out of view, delete task")
+
                             # reset local EO tool state
                             offnadir_cue_deg_target = 0.0
                             eul_ang_cue_target = eul_ang_cue_default
                             _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_ang_cue_default)
+                            whale.t_observed_tip = None
 
                             # Global removal happens at the next loop via cleanup_timeout_targets:
                             if task_id in tasked_targets:
@@ -547,67 +549,103 @@ while elapsed_seconds <= sim_duration_seconds:
                             att_models_dict[actor.name]._target_attitude_deg,
                             atol=10.0,
                     ):
-                        att_models_dict[actor.name].delay_slew_stab = delay_slew_stab
+
+                        # Current Euler angles (deg)
+                        eul_current_target = np.array(att_models_dict[actor.name]._target_attitude_deg)
+
+                        # New target Euler angles (deg)
+                        eul_new_target = np.array(eul_ang_cue_target)
+
+                        # Angular delta (deg)
+                        delta_eul = np.linalg.norm(eul_new_target - eul_current_target)
+
+                        # Translate angular delta into additional stabilization time
+                        # Use per-axis or worst-axis time model from your get_pointing_stabilization_time
+                        _, _, delay_stab_extra = att_models_dict[actor.name].get_pointing_stabilization_time(
+                            current_eul=eul_current_target,
+                            target_eul=eul_new_target,
+                            omega_max_rad=omega_max_rad,
+                            alpha_max_rad=alpha_max_rad,
+                            zeta=zeta,
+                            wn_rad=wn_rad,
+                            mode="per_axis"
+                        )
+
+                        delay_extra = delta_eul/np.rad2deg(omega_max_rad) + delay_stab_extra            # to cover extra distance + stabilize
+
+                        # Add that as the adjustment
+                        att_models_dict[actor.name].delay_slew_stab = (
+                                att_models_dict[actor.name].delay_slew_stab + (delay_extra *sim_step_seconds)    # Only one way
+                        )           # delay_extra returns t_slew, so * 0.25
+
+                        att_models_dict[actor.name].delay_slew_stab = np.max([att_models_dict[actor.name].delay_slew_stab, delay_slew_stab])
                         task_update_mode = "updated"
                     else:
                         att_models_dict[actor.name].t_eul_commanded = t_datetime
                         att_models_dict[actor.name].delay_slew_stab = delay_slew_stab
                         task_update_mode = "taken"
 
+                        print(
+                            f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach "
+                            f"(current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg) "
+                            f"| Roll, pitch, yaw current={att_models_dict[actor.name]._actor_attitude_deg} deg "
+                            f"| set to target={eul_ang_cue_target} deg "
+                            f"| Setting time {delay_slew_stab:.1f} s "
+                            f"(slew {delay_slew:.1f} s, stab {delay_stab:.1f} s) | update mode {task_update_mode}"
+                        )
+
                     att_models_dict[actor.name].set_target_euler(eul_ang_cue_target)
 
-                    print(
-                        f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach "
-                        f"(current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg) "
-                        f"| Roll, pitch, yaw current=[{att_models_dict[actor.name]._actor_attitude_deg[0]:.1f}, "
-                        f"{att_models_dict[actor.name]._actor_attitude_deg[1]:.1f}, "
-                        f"{att_models_dict[actor.name]._actor_attitude_deg[2]:.1f}] deg "
-                        f"| set to target=[{eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f}] deg "
-                        f"| Setting time {delay_slew_stab:.1f} s "
-                        f"(slew {delay_slew:.1f} s, stab {delay_stab:.1f} s) | update mode {task_update_mode}"
-                    )
+
 
                 elif attitude_mode == "planned":
-                    # Always recompute from dynamics
-                    delay_slew_stab, delay_slew, delay_stab = (
-                        att_models_dict[actor.name].get_pointing_stabilization_time(
-                            current_eul=att_models_dict[actor.name]._actor_attitude_deg,
-                            target_eul=eul_ang_cue_target,
+                    # Only replan if target changed significantly OR no active plan
+                    if (not np.allclose(eul_ang_cue_target,
+                                        att_models_dict[actor.name]._target_attitude_deg,
+                                        atol=10.0)
+                            or not att_models_dict[actor.name].slew_active):
+                        delay_slew_stab, delay_slew, delay_stab = (
+                            att_models_dict[actor.name].get_pointing_stabilization_time(
+                                current_eul=att_models_dict[actor.name]._actor_attitude_deg,
+                                target_eul=eul_ang_cue_target,
+                                omega_max_rad=omega_max_rad,
+                                alpha_max_rad=alpha_max_rad,
+                                zeta=zeta,
+                                wn_rad=wn_rad,
+                                mode="per_axis",
+                                current_w_rad=att_models_dict[actor.name]._actor_angular_velocity,
+                                current_a_rad=att_models_dict[actor.name]._actor_angular_acceleration,
+                            )
+                        )
+
+                        att_models_dict[actor.name].delay_slew_stab = delay_slew_stab
+                        att_models_dict[actor.name].slew_active = True
+                        task_update_mode = "taken" if not att_models_dict[actor.name].slew_active else "replanned"
+
+                        att_models_dict[actor.name].plan_slew(
+                            target_eul_deg=eul_ang_cue_target,
                             omega_max_rad=omega_max_rad,
                             alpha_max_rad=alpha_max_rad,
-                            zeta=zeta,
-                            wn_rad=wn_rad,
+                            dt=sim_step_seconds,
                             mode="per_axis",
-                            current_w_rad=att_models_dict[actor.name]._actor_angular_velocity,
-                            current_a_rad=att_models_dict[actor.name]._actor_angular_acceleration,
+                            t_start=elapsed_seconds,
                         )
-                    )
+                        att_models_dict[actor.name].set_target_euler(eul_ang_cue_target)
 
-                    att_models_dict[actor.name].delay_slew_stab = delay_slew_stab
-                    att_models_dict[actor.name].slew_active = True
-                    task_update_mode = "recomputed"
-
-                    att_models_dict[actor.name].plan_slew(
-                        target_eul_deg=eul_ang_cue_target,
-                        omega_max_rad=omega_max_rad,
-                        alpha_max_rad=alpha_max_rad,
-                        dt=sim_step_seconds,
-                        mode="per_axis",
-                        t_start=elapsed_seconds,
-                    )
-
-                    att_models_dict[actor.name].set_target_euler(eul_ang_cue_target)
-
-                    print(
-                        f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach "
-                        f"(current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg) "
-                        f"| Roll, pitch, yaw current=[{att_models_dict[actor.name]._actor_attitude_deg[0]:.1f}, "
-                        f"{att_models_dict[actor.name]._actor_attitude_deg[1]:.1f}, "
-                        f"{att_models_dict[actor.name]._actor_attitude_deg[2]:.1f}] deg "
-                        f"| set to target=[{eul_ang_cue_target[0]:.1f}, {eul_ang_cue_target[1]:.1f}, {eul_ang_cue_target[2]:.1f}] deg "
-                        f"| Planned trajectory time {delay_slew_stab:.1f} s "
-                        f"(slew {delay_slew:.1f} s, stab {delay_stab:.1f} s) | update mode {task_update_mode}"
-                    )
+                        print(
+                            f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach "
+                            f"(current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg) "
+                            f"| Roll, pitch, yaw current={att_models_dict[actor.name]._actor_attitude_deg} deg "
+                            f"| set to target={eul_ang_cue_target} deg "
+                            f"| Planned trajectory time {delay_slew_stab:.1f} s "
+                            f"(slew {delay_slew:.1f} s, stab {delay_stab:.1f} s) | update mode {task_update_mode}"
+                        )
+                    else:
+                        # Still chasing → no new plan, just continue
+                        print(
+                            f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach "
+                            f"(continuing planned slew -> chasing mode)"
+                        )
 
                 elif attitude_mode == "physics":
                     att_models_dict[actor.name].set_target_euler(eul_ang_cue_target)
@@ -634,10 +672,17 @@ while elapsed_seconds <= sim_duration_seconds:
                 if att_models_dict[actor.name].slew_active:
                     att_models_dict[actor.name].follow_planned_slew(elapsed_seconds)
 
-                    if np.allclose(
-                            att_models_dict[actor.name]._actor_attitude_deg,
-                            att_models_dict[actor.name]._target_attitude_deg,
-                            atol=0.5,
+                    if (
+                            np.allclose(
+                                att_models_dict[actor.name]._actor_attitude_deg,
+                                att_models_dict[actor.name]._target_attitude_deg,
+                                atol=0.5,
+                            )
+                            and np.allclose(
+                        eul_ang_cue_target,
+                        att_models_dict[actor.name]._target_attitude_deg,
+                        atol=0.5,
+                    )
                     ):
                         att_models_dict[actor.name].delay_slew_stab = None
                         att_models_dict[actor.name].slew_active = False

@@ -411,12 +411,18 @@ class AttitudeModel:
             cur_eul_deg=cur, tgt_eul_deg=tgt, w0=current_w_rad, a0=current_a_rad
         )
 
+        delta_angle_deg = np.linalg.norm(delta_deg)
+
+
         if settle_seconds is not None:
             t_settle = float(settle_seconds)
         elif (zeta is not None) and (wn_rad is not None) and (zeta > 0) and (wn_rad > 0):
-            t_settle = 4.0 / (zeta * wn_rad)
+            base_settle = 4.0 / (zeta * wn_rad)
+            # proportional to commanded angle (e.g. 45° move → full base_settle)
+            t_settle = base_settle * (delta_angle_deg / 45.0)
+            t_settle = max(0.5, min(t_settle, base_settle))
         else:
-            t_settle = 5.0
+            t_settle = max(0.5, 0.1 * delta_angle_deg)
 
         t_total = t_slew + t_settle
         return t_total, t_slew, t_settle
@@ -456,56 +462,72 @@ class AttitudeModel:
         """
         Precompute a slew trajectory from current to target attitude.
         Stores Euler, angular velocity, angular acceleration as time series.
+        Overwrites any existing plan (replan-safe). Uses current ω, α as initial conditions.
         """
+        # Current state (start point of the new plan)
         cur, tgt, delta_deg, delta_rad = _compute_delta(self._actor_attitude_deg, target_eul_deg)
         wmax = np.broadcast_to(np.asarray(omega_max_rad, float), 3)
         amax = np.broadcast_to(np.asarray(alpha_max_rad, float), 3)
 
+        # Build trajectory with current ω/α so replans are smooth
         times, angles_rad = _aggregate_profiles(
-            delta_rad, wmax, amax, dt=dt, settle_seconds=0.0,
-            mode=mode, cur_eul_deg=cur, tgt_eul_deg=tgt
+            delta_rad, wmax, amax, dt=float(dt), settle_seconds=0.0,
+            mode=mode, cur_eul_deg=cur, tgt_eul_deg=tgt,
+            w0=self._actor_angular_velocity, a0=self._actor_angular_acceleration
         )
 
         eul_traj = np.rad2deg(angles_rad) + cur
         rates = np.gradient(eul_traj, dt, axis=0) * np.pi / 180.0  # rad/s
         accels = np.gradient(rates, dt, axis=0)  # rad/s^2
 
+        # Overwrite old plan
         self._planned_start_time = float(t_start)
         self._planned_times = times
         self._planned_eul = eul_traj
         self._planned_rates = rates
         self._planned_accels = accels
-        self._target_attitude_deg = np.array(target_eul_deg, float)
 
+        # Update target and flag
+        self._target_attitude_deg = np.array(target_eul_deg, float)
+        self.slew_active = True
 
     def follow_planned_slew(self, t_now):
         """
         Update state along a preplanned slew given the current simulation time [s].
+        Automatically clears `slew_active` when done.
         """
         if not hasattr(self, "_planned_eul"):
+            self.slew_active = False
             return
 
         t_elapsed = t_now - self._planned_start_time
         if t_elapsed < 0:
+            # Plan starts in the future; keep current state
             return
+
         if t_elapsed >= self._planned_times[-1]:
-            # Finished: snap to last state
+            # Finished: snap to last state, zero rates, clear active flag
             self._actor_attitude_deg = self._planned_eul[-1]
             self._actor_angular_velocity = np.zeros(3)
             self._actor_angular_acceleration = np.zeros(3)
+            self.slew_active = False
             return
 
-        # Interpolate Euler, ω, α
-        eul = np.array([np.interp(t_elapsed, self._planned_times, self._planned_eul[:, i])
-                        for i in range(3)])
-        w = np.array([np.interp(t_elapsed, self._planned_times, self._planned_rates[:, i])
-                      for i in range(3)])
-        a = np.array([np.interp(t_elapsed, self._planned_times, self._planned_accels[:, i])
-                      for i in range(3)])
+        # Interpolate Euler, ω, α at current elapsed time
+        eul = np.array([
+            np.interp(t_elapsed, self._planned_times, self._planned_eul[:, i]) for i in range(3)
+        ])
+        w = np.array([
+            np.interp(t_elapsed, self._planned_times, self._planned_rates[:, i]) for i in range(3)
+        ])
+        a = np.array([
+            np.interp(t_elapsed, self._planned_times, self._planned_accels[:, i]) for i in range(3)
+        ])
 
         self._actor_attitude_deg = eul
         self._actor_angular_velocity = w
         self._actor_angular_acceleration = a
+        self.slew_active = True
 
 
 # -----------------------------------------------------------------------------
