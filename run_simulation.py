@@ -33,7 +33,7 @@ from simulation.onboard_ai.onboard_ai_cue import cue_ai_decision
 
 show_constellation = False
 show_orbits = False
-plot_propagation = False # True
+plot_propagation = True
 plot_footprints = True
 plot_whale_trajectories = True
 
@@ -785,7 +785,7 @@ while elapsed_seconds <= sim_duration_seconds:
                             target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, rng_dem)
 
                     if onboard_ai_cue:
-                        whale.confirmed_cue = cue_ai_decision(whale, cue_tpr, cue_tnr, rng_cue)
+                        whale.confirmed_cue = cue_ai_decision(whale, cue_tpr, cue_tnr, rng_ai_cue)
 
                     else:
                         whale.confirmed_cue = True

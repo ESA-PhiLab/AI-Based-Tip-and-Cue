@@ -10,7 +10,7 @@ import math
 # ================================================================================
 # SIMULATION
 
-sim_name =  "test2"# "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
+sim_name =  "test2"   # "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
 
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
@@ -93,12 +93,12 @@ M_cue_deg = M_tip_deg - delta_M_cue
 # ONBOARD AI
 parallel_observation_confirmation = False
 
-tip_tpr = 0.5 # 0.75    # probability Tip correctly identifies a positive whale
-tip_tnr = 0.5 # 0.75    # probability Tip correctly ignores a negative whale
+tip_tpr = 0.85    # probability Tip correctly identifies a positive whale
+tip_tnr = 0.85    # probability Tip correctly ignores a negative whale
 seed_ai_tip = 42
 
-cue_tpr = 0.75    # probability Tip correctly identifies a positive whale
-cue_tnr = 0.75    # probability Tip correctly ignores a negative whale
+cue_tpr = 0.85    # probability Tip correctly identifies a positive whale
+cue_tnr = 0.85    # probability Tip correctly ignores a negative whale
 seed_ai_cue = seed_ai_tip*2
 
 # ================================================================================
