@@ -333,7 +333,7 @@ while elapsed_seconds <= sim_duration_seconds:
                     n_observed_tip += 1
 
                     if onboard_ai_tip:
-                        whale.confirmed_tip = tip_ai_decision(whale, tip_tpr, tip_tnr, rng_tip)
+                        whale.confirmed_tip = tip_ai_decision(whale, tip_tpr, tip_tnr, rng_ai_tip)
 
                     else:
                         whale.confirmed_tip = True
@@ -721,7 +721,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
             continue
 
-        if cue_illuminated and (np.all(att_models_dict[actor.name]._actor_angular_velocity) <= 0.1 and np.all(att_models_dict[actor.name]._actor_angular_acceleration) <= 0.1):         # only observe if stable
+        if cue_illuminated and att_models_dict[actor.name].t_eul_commanded == None: # and (np.all(att_models_dict[actor.name]._actor_angular_velocity) <= 0.1 and np.all(att_models_dict[actor.name]._actor_angular_acceleration) <= 0.1):         # only observe if stable
 
             for whale_idx, whale in all_targets.items():
                 if whale_idx not in illuminated_targets:
