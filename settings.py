@@ -28,7 +28,7 @@ flat_dem = False
 exclude_dark = True
 sim_time = 'slow'
 
-sim_duration_hours = 2
+sim_duration_hours = 0.15
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 if sim_time == 'slow':
@@ -61,7 +61,7 @@ nSats_cue = 1
 nPlanes_tip = 1
 nPlanes_cue = 1
 
-delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
+delta_t_cue = 1*60          # Time spacing between tip and cue satellite [sec]
 
 delay_confirmation_tip = 90      # https://www.jpl.nasa.gov/news/how-nasa-is-testing-ai-to-make-earth-observing-satellites-smarter
 delay_transmission_TC = 10
@@ -145,6 +145,10 @@ omega_max_rad = np.deg2rad(3.86)
 alpha_max_rad = np.deg2rad(1.43)
 zeta = 0.8
 wn_rad = 0.42
+
+omega_stab_res = omega_max_rad/10
+alpha_stab_res = alpha_max_rad/10
+
 
 # ================================================================================
 # WHALES

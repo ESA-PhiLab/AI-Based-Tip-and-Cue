@@ -116,6 +116,10 @@ def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_d
 
     eo_tools_dict[actor_name] = eo
 
+    att_models_dict[actor_name].t_eul_commanded = None
+    att_models_dict[actor_name].delay_slew_stab = None
+    att_models_dict[actor_name].slew_active = False
+
 
 
 

@@ -244,6 +244,9 @@ class AttitudeModel:
         # NEW: flag to track planned slews
         self.slew_active = False
 
+        self._planned_start_eul = None  # Euler angles at the start of slew
+        self._planned_start_time = None  # elapsed_seconds when slew started
+
 
     # -------------------------------------------------------------------------
     # Initialization helpers
@@ -420,7 +423,7 @@ class AttitudeModel:
             base_settle = 4.0 / (zeta * wn_rad)
             # proportional to commanded angle (e.g. 45° move → full base_settle)
             t_settle = base_settle * (delta_angle_deg / 45.0)
-            t_settle = max(0.5, min(t_settle, base_settle))
+            t_settle = min(t_settle, base_settle)
         else:
             t_settle = max(0.5, 0.1 * delta_angle_deg)
 
@@ -433,101 +436,215 @@ class AttitudeModel:
                                   dt=0.1,
                                   omega_max_rad=0.05,
                                   alpha_max_rad=0.01,
-                                  settle_seconds=5.0,
+                                  settle_seconds=0.0,
                                   mode="per_axis",
                                   current_w_rad=None,
                                   current_a_rad=None):
-        """Generate Euler angle trajectory (deg) for a slew maneuver."""
+        """Generate Euler trajectory (deg) for slew + optional stabilization hold."""
         if current_eul is None:
             current_eul = self._actor_attitude_deg
         if target_eul is None:
             target_eul = self._target_attitude_deg
 
         cur, tgt, delta_deg, delta_rad = _compute_delta(current_eul, target_eul)
+
         wmax = np.broadcast_to(np.asarray(omega_max_rad, float), 3)
         amax = np.broadcast_to(np.asarray(alpha_max_rad, float), 3)
 
+        # --- Slew part ---
         times, angles_rad = _aggregate_profiles(
             delta_rad, wmax, amax, dt=float(dt),
-            settle_seconds=float(settle_seconds),
+            settle_seconds=0.0,  # only slew here
             mode=mode, cur_eul_deg=cur, tgt_eul_deg=tgt,
             w0=current_w_rad, a0=current_a_rad
         )
         eul_traj = np.rad2deg(angles_rad) + cur
+
+        # --- Stabilization part (constant attitude) ---
+        if settle_seconds > 0.0:
+            t_end = times[-1]
+            extra_times = np.arange(dt, settle_seconds + dt / 2, dt) + t_end
+            eul_final = eul_traj[-1]
+            extra_eul = np.tile(eul_final, (len(extra_times), 1))
+
+            times = np.concatenate([times, extra_times])
+            eul_traj = np.vstack([eul_traj, extra_eul])
+
         return eul_traj, times
 
-    def plan_slew(self, target_eul_deg,
-                  omega_max_rad=0.05, alpha_max_rad=0.01, dt=0.1, mode="per_axis",
-                  t_start=0.0):
+    def plan_slew(self,
+                  start_eul_deg,
+                  target_eul_deg,
+                  omega_max_rad,
+                  alpha_max_rad,
+                  zeta=0.8,
+                  wn_rad=0.42,
+                  dt=1.0,
+                  mode="per_axis",
+                  t_start=0.0,
+                  w_stab_res=None,
+                  a_stab_res=None):
         """
-        Precompute a slew trajectory from current to target attitude.
-        Stores Euler, angular velocity, angular acceleration as time series.
-        Overwrites any existing plan (replan-safe). Uses current ω, α as initial conditions.
+        Plan a slew + stabilization trajectory.
+        Stores [(abs_time, eul_deg, vel_rad, acc_rad), ...].
         """
-        # Current state (start point of the new plan)
-        cur, tgt, delta_deg, delta_rad = _compute_delta(self._actor_attitude_deg, target_eul_deg)
-        wmax = np.broadcast_to(np.asarray(omega_max_rad, float), 3)
-        amax = np.broadcast_to(np.asarray(alpha_max_rad, float), 3)
+        # Normalize residuals: allow scalar or vector
+        if w_stab_res is not None:
+            w_stab_res = np.broadcast_to(np.atleast_1d(w_stab_res), (3,))
+        if a_stab_res is not None:
+            a_stab_res = np.broadcast_to(np.atleast_1d(a_stab_res), (3,))
 
-        # Build trajectory with current ω/α so replans are smooth
-        times, angles_rad = _aggregate_profiles(
-            delta_rad, wmax, amax, dt=float(dt), settle_seconds=0.0,
-            mode=mode, cur_eul_deg=cur, tgt_eul_deg=tgt,
-            w0=self._actor_angular_velocity, a0=self._actor_angular_acceleration
+        # Compute slew + stabilization durations
+        delay_slew_stab, delay_slew, delay_stab = self.get_pointing_stabilization_time(
+            current_eul=start_eul_deg,
+            target_eul=target_eul_deg,
+            omega_max_rad=omega_max_rad,
+            alpha_max_rad=alpha_max_rad,
+            zeta=zeta,
+            wn_rad=wn_rad,
+            mode=mode,
+            current_w_rad=[0.0, 0.0, 0.0],
+            current_a_rad=[0.0, 0.0, 0.0]
+        )
+        self.delay_slew_stab = delay_slew_stab
+        self._planned_start_time = t_start
+
+        # Generate trajectory (includes stabilization hold)
+        euler_traj, times = self.generate_euler_trajectory(
+            current_eul=start_eul_deg,
+            target_eul=target_eul_deg,
+            dt=dt,
+            omega_max_rad=omega_max_rad,
+            alpha_max_rad=alpha_max_rad,
+            settle_seconds=delay_stab,
+            mode=mode,
+            current_w_rad=None,
+            current_a_rad=None
         )
 
-        eul_traj = np.rad2deg(angles_rad) + cur
-        rates = np.gradient(eul_traj, dt, axis=0) * np.pi / 180.0  # rad/s
-        accels = np.gradient(rates, dt, axis=0)  # rad/s^2
+        # Compute velocities and accelerations
+        euler_rad = np.deg2rad(euler_traj)
+        vel = np.gradient(euler_rad, times, axis=0)
+        acc = np.gradient(vel, times, axis=0)
 
-        # Overwrite old plan
-        self._planned_start_time = float(t_start)
-        self._planned_times = times
-        self._planned_eul = eul_traj
-        self._planned_rates = rates
-        self._planned_accels = accels
+        # Overwrite stabilization portion with given residuals
+        if (w_stab_res is not None) and (a_stab_res is not None):
+            mask = times >= delay_slew
+            vel[mask] = w_stab_res
+            acc[mask] = a_stab_res
 
-        # Update target and flag
-        self._target_attitude_deg = np.array(target_eul_deg, float)
+        # Ensure last point is rest (override)
+        vel[-1] = np.zeros(3)
+        acc[-1] = np.zeros(3)
+
+        # Store final trajectory
+        self._planned_traj = [
+            (t_start + t_rel, eul, v, a)
+            for t_rel, eul, v, a in zip(times, euler_traj, vel, acc)
+        ]
+
         self.slew_active = True
+        self.set_target_euler(target_eul_deg)
 
-    def follow_planned_slew(self, t_now):
+    def follow_planned_slew(self, elapsed_seconds):
         """
-        Update state along a preplanned slew given the current simulation time [s].
-        Automatically clears `slew_active` when done.
+        Follow the planned slew trajectory at the given simulation time.
+        Updates Euler angles [deg], angular velocity [rad/s],
+        and angular acceleration [rad/s²].
         """
-        if not hasattr(self, "_planned_eul"):
-            self.slew_active = False
+        if not self.slew_active or not self._planned_traj:
             return
 
-        t_elapsed = t_now - self._planned_start_time
-        if t_elapsed < 0:
-            # Plan starts in the future; keep current state
-            return
+        traj_times = [t for t, *_ in self._planned_traj]
 
-        if t_elapsed >= self._planned_times[-1]:
-            # Finished: snap to last state, zero rates, clear active flag
-            self._actor_attitude_deg = self._planned_eul[-1]
+        # If finished, snap to target
+        if elapsed_seconds >= traj_times[-1]:
+            self.set_actor_euler(self._target_attitude_deg)
             self._actor_angular_velocity = np.zeros(3)
             self._actor_angular_acceleration = np.zeros(3)
             self.slew_active = False
+            self.delay_slew_stab = None
             return
 
-        # Interpolate Euler, ω, α at current elapsed time
-        eul = np.array([
-            np.interp(t_elapsed, self._planned_times, self._planned_eul[:, i]) for i in range(3)
-        ])
-        w = np.array([
-            np.interp(t_elapsed, self._planned_times, self._planned_rates[:, i]) for i in range(3)
-        ])
-        a = np.array([
-            np.interp(t_elapsed, self._planned_times, self._planned_accels[:, i]) for i in range(3)
-        ])
+        # Otherwise, interpolate between two trajectory points
+        for i in range(len(traj_times) - 1):
+            t0, eul0, v0, a0 = self._planned_traj[i]
+            t1, eul1, v1, a1 = self._planned_traj[i + 1]
+            if t0 <= elapsed_seconds < t1:
+                frac = (elapsed_seconds - t0) / (t1 - t0)
 
-        self._actor_attitude_deg = eul
-        self._actor_angular_velocity = w
-        self._actor_angular_acceleration = a
-        self.slew_active = True
+                # Linear interpolation
+                eul = (1 - frac) * eul0 + frac * eul1  # deg
+                vel = (1 - frac) * v0 + frac * v1  # rad/s
+                acc = (1 - frac) * a0 + frac * a1  # rad/s²
+
+                self.set_actor_euler(eul)
+                self._actor_angular_velocity = vel
+                self._actor_angular_acceleration = acc
+                break
+
+    def _extra_delay_pause_equivalent(self,
+                                      eul_current_target,
+                                      eul_new_target,
+                                      omega_max_rad,
+                                      alpha_max_rad,
+                                      zeta,
+                                      wn_rad,
+                                      mode="per_axis"):
+        """
+        Computes the SAME extra delay term you already use in 'pause' mode:
+          delay_extra = delta_eul / deg(omega_max_rad) + delay_stab_extra
+        where delay_stab_extra is computed via get_pointing_stabilization_time
+        for (current_target -> new_target).
+
+        This helper does NOT multiply by sim_step_seconds. Keep that multiplication
+        outside (exactly as your original pause code does).
+        """
+        eul_current_target = np.asarray(eul_current_target, float)
+        eul_new_target = np.asarray(eul_new_target, float)
+
+        # Angular delta in degrees (same as your original)
+        delta_eul = np.linalg.norm(eul_new_target - eul_current_target)
+
+        # Stabilization component for the additional delta (same call you use)
+        _, _, delay_stab_extra = self.get_pointing_stabilization_time(
+            current_eul=eul_current_target,
+            target_eul=eul_new_target,
+            omega_max_rad=omega_max_rad,
+            alpha_max_rad=alpha_max_rad,
+            zeta=zeta,
+            wn_rad=wn_rad,
+            mode=mode
+        )
+
+        # Same extra delay formula you use in 'pause'
+        delay_extra = delta_eul / np.rad2deg(omega_max_rad) + delay_stab_extra
+        return delay_extra
+
+    def ready_for_confirmation(self, mode: str) -> bool:
+        """
+        Check if the spacecraft is stable enough to confirm observations.
+
+        Parameters
+        ----------
+        mode : str
+            'pause' or 'planned'
+
+        Returns
+        -------
+        bool
+            True if stable enough to observe/confirm a target
+        """
+        if mode == "pause":
+            # Only ready once slew is finished
+            return not self.slew_active
+
+        elif mode == "planned":
+            # Same as pause → only at the very end
+            return not self.slew_active
+
+        else:
+            raise ValueError(f"Unknown mode {mode}, must be 'pause' or 'planned'")
 
 
 # -----------------------------------------------------------------------------
