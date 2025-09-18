@@ -55,8 +55,7 @@ class EOTools:
         self.offnadir_unbound_target = None  # last computed unconstrained off-nadir (deg)
 
 
-
-    # -------------------------------------------------------------------------
+        # -------------------------------------------------------------------------
     # Link to attitude model
     # -------------------------------------------------------------------------
     def set_attitude_model(self, att_model):

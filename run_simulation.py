@@ -40,7 +40,6 @@ plot_whale_trajectories = True
 generate_image = False
 onboard_ai_tip = True
 onboard_ai_cue = True
-attitude_mode = 'planned'     # 'pause' or 'planned'
 
 logging = True
 verbose = False
@@ -69,7 +68,7 @@ if logging:
     sys.stdout = Logger("output.log")
     sys.stderr = sys.stdout
 
-print(f"Initiate simulation {sim_name} | Logging {logging} | attitude_mode {attitude_mode}")
+print(f"Initiate simulation {sim_name} | Logging {logging}")
 
 utc = TimeScalesFactory.getUTC()
 t0_orekit = AbsoluteDate(t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second + t0.microsecond / 1e6, utc)
@@ -117,9 +116,8 @@ for planet in all_planets:
 
 eul_ang_tip_default = [0.0, 0.0, 0.0]
 eul_ang_cue_default = [0.0, 0.0, 0.0]
-eul_ang_cue_target = eul_ang_cue_default
-offnadir_cue_deg_target = None
 offnadir_tip_deg = 0.0
+offnadir_cue_deg = 0.0
 offnadir_unbound = 0.0
 
 rng_ai_tip = random.Random(seed_ai_tip)   # seed for Tip AI
@@ -487,7 +485,7 @@ while elapsed_seconds <= sim_duration_seconds:
                         # r_future, v_future = eo_tools_dict[actor.name]._kepler_propagate_universal(r_vec, v_vec, sim_step_seconds)
                         # t_future = t_datetime + timedelta(seconds=sim_step_seconds)
 
-                        pointing_vec_brf_target, offnadir_cue_deg_target, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max')
+                        pointing_vec_brf_target, _, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max')
                         eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
 
                         if eo_tools_dict[actor.name].offnadir_unbound_target == None or eo_tools_dict[actor.name].offnadir_unbound_target - offnadir_unbound >= 0 or offnadir_unbound > 60.0:     # Compare wrt previous state or initial state is unset
@@ -498,17 +496,15 @@ while elapsed_seconds <= sim_duration_seconds:
                         will_be_in_view, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_cue, el_min_deg=elevation_min, step=60.0)
 
                         if (in_view or will_be_in_view) and not (offnadir_unbound >= (offnadir_limit + offnadir_margin) and not moving_toward):
-
-                            offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)
-                            eul_ang_cue_target = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_brf_target)
+                            att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_brf_target)
 
                         else:
                             # Task finished → reset and pick next later
                             print(f"!! {actor.name}: Target {task_id} out of view, delete task")
 
                             # reset local EO tool state
-                            offnadir_cue_deg_target = 0.0
-                            eul_ang_cue_target = eul_ang_cue_default
+
+                            att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
                             _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_ang_cue_default)
                             whale.t_observed_tip = None
 
@@ -518,151 +514,44 @@ while elapsed_seconds <= sim_duration_seconds:
 
             if eo_tools_dict[actor.name].current_task is None:
                 if not np.allclose(att_models_dict[actor.name]._target_attitude_deg, eul_ang_cue_default, atol=0.1):
-                    offnadir_cue_deg_target = 0.0
-                    eul_ang_cue_target = eul_ang_cue_default
+                    att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
                     print(f"\t\t {n_steps}!! {actor.name}: Set roll, pitch, yaw target back to default {eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg")
 
 
                     # eo_tools_dict[actor.name].offnadir_unbound_target = None
 
             # --- Handle new target attitude ---
-            if not np.allclose(
-                    eul_ang_cue_target,
-                    att_models_dict[actor.name]._target_attitude_deg,
-                    atol=0.1,
-            ):
+            if not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=0.1):
 
-                if attitude_mode == "pause":
-                    # Predict slew + stabilization time (bookkeeping)
-                    delay_slew_stab, delay_slew, delay_stab = (
-                        att_models_dict[actor.name].get_pointing_stabilization_time(
-                            current_eul=att_models_dict[actor.name]._actor_attitude_deg,
-                            target_eul=eul_ang_cue_target,
-                            omega_max_rad=omega_max_rad,
-                            alpha_max_rad=alpha_max_rad,
-                            zeta=zeta,
-                            wn_rad=wn_rad,
-                            mode="per_axis",
-                            current_w_rad=att_models_dict[actor.name]._actor_angular_velocity,
-                            current_a_rad=att_models_dict[actor.name]._actor_angular_acceleration,
-                        )
-                    )
+                if not att_models_dict[actor.name].slew_active or not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=10.0):
 
-                    if att_models_dict[actor.name].slew_active and np.allclose(
-                            eul_ang_cue_target,
-                            att_models_dict[actor.name]._target_attitude_deg,
-                            atol=10.0,
-                    ):
-                        # Updating an ongoing pause slew
-                        eul_current_target = np.array(att_models_dict[actor.name]._target_attitude_deg)
-                        eul_new_target = np.array(eul_ang_cue_target)
+                        att_models_dict[actor.name]._planned_start_eul = att_models_dict[actor.name]._actor_attitude_deg.copy()
+                        att_models_dict[actor.name]._planned_start_time = elapsed_seconds
 
-                        delay_extra = att_models_dict[actor.name]._extra_delay_pause_equivalent(
-                            eul_current_target,
-                            eul_new_target,
-                            omega_max_rad,
-                            alpha_max_rad,
-                            zeta,
-                            wn_rad,
-                            mode="per_axis"
-                        )
+                        task_update_mode = "new"
 
-                        att_models_dict[actor.name].delay_slew_stab = (
-                                att_models_dict[actor.name].delay_slew_stab + (delay_extra * sim_step_seconds)
-                        )
-                        att_models_dict[actor.name].delay_slew_stab = np.max([
-                            att_models_dict[actor.name].delay_slew_stab, delay_slew_stab
-                        ])
-                        task_update_mode = "updated"
-                        att_models_dict[actor.name].slew_active = True
-                    else:
-                        att_models_dict[actor.name].t_eul_commanded = t_datetime
-                        att_models_dict[actor.name].delay_slew_stab = delay_slew_stab
-                        att_models_dict[actor.name].slew_active = True
-                        task_update_mode = "taken"
+                else:
+                    task_update_mode = "taken"
 
-                        print(
-                            f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach "
-                            f"(current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg) "
-                            f"| Roll, pitch, yaw current={att_models_dict[actor.name]._actor_attitude_deg} deg "
-                            f"| set to target={eul_ang_cue_target} deg "
-                            f"| Setting time {delay_slew_stab:.1f} s "
-                            f"(slew {delay_slew:.1f} s, stab {delay_stab:.1f} s) | update mode {task_update_mode}"
-                        )
+                att_models_dict[actor.name].plan_slew( start_eul_deg=att_models_dict[actor.name]._planned_start_eul, target_eul_deg=att_models_dict[actor.name]._new_target_attitude_deg,
+                    omega_max_rad=omega_max_rad, alpha_max_rad=alpha_max_rad, zeta=zeta, wn_rad=wn_rad, dt=sim_step_seconds / 10, mode="per_axis",
+                    t_start=att_models_dict[actor.name]._planned_start_time, w_stab_res=omega_stab_res, a_stab_res=alpha_stab_res )
 
-                    att_models_dict[actor.name].set_target_euler(eul_ang_cue_target)
+                offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)
 
-                elif attitude_mode == "planned":
+                print(f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach "
+                    f"(current={offnadir_cue_current:.1f} deg, target={att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._new_target_attitude_deg):.1f} deg) "
+                    f"| Roll, pitch, yaw current={att_models_dict[actor.name]._actor_attitude_deg} deg "
+                    f", set to target={att_models_dict[actor.name]._new_target_attitude_deg} deg | update mode {task_update_mode} "
+                    f"| Planned trajectory time {att_models_dict[actor.name].delay_slew_stab:.1f} s ")
 
-                    if not att_models_dict[actor.name].slew_active or not np.allclose(eul_ang_cue_target, att_models_dict[actor.name]._target_attitude_deg, atol=10.0):
-                            # Always plan from the CURRENT actual actor Euler, not the last target
-                            start_eul_deg = att_models_dict[actor.name]._actor_attitude_deg.copy()
-                            start_time_eul = elapsed_seconds
-                            att_models_dict[actor.name]._planned_start_eul = start_eul_deg
-                            att_models_dict[actor.name]._planned_start_time = start_time_eul
+            if att_models_dict[actor.name].slew_active:
+                att_models_dict[actor.name].follow_planned_slew(elapsed_seconds)
 
-                            task_update_mode = "new"
+                if np.allclose(att_models_dict[actor.name]._actor_attitude_deg,  att_models_dict[actor.name]._target_attitude_deg,  atol=0.1) and np.any(np.abs(att_models_dict[actor.name]._actor_angular_velocity)) <= 0.01 and np.any(np.abs(att_models_dict[actor.name]._actor_angular_acceleration) <= 0.01):
+                    att_models_dict[actor.name].slew_active = False
+                    print(f"\t\t !! {n_steps} {actor.name}: Completed move (planned trajectory)")
 
-                    else:
-                        task_update_mode = "taken"
-
-                    att_models_dict[actor.name].plan_slew(
-                        start_eul_deg=att_models_dict[actor.name]._planned_start_eul,
-                        target_eul_deg=eul_ang_cue_target,
-                        omega_max_rad=omega_max_rad,
-                        alpha_max_rad=alpha_max_rad,
-                        zeta=zeta,
-                        wn_rad=wn_rad,
-                        dt=sim_step_seconds / 10,
-                        mode="per_axis",
-                        t_start=att_models_dict[actor.name]._planned_start_time,
-                        w_stab_res=omega_stab_res,  # residual angular velocity
-                        a_stab_res=alpha_stab_res  # residual angular acceleration
-                    )
-
-                    # Updating an ongoing slew
-                    eul_current_target = np.array(att_models_dict[actor.name]._target_attitude_deg)
-                    eul_new_target = np.array(eul_ang_cue_target)
-
-                    print(f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach "
-                        f"(current={offnadir_cue_current:.1f} deg, target={offnadir_cue_deg_target:.1f} deg) "
-                        f"| Roll, pitch, yaw current={att_models_dict[actor.name]._actor_attitude_deg} deg "
-                        f", set to target={eul_ang_cue_target} deg | update mode {task_update_mode} " )
-                       # f"| Planned trajectory time {delay_slew_stab:.1f} {att_models_dict[actor.name].delay_slew_stab} s "
-                       # f"(slew {delay_slew:.1f} s, stab {delay_stab:.1f} s) ")
-
-                elif attitude_mode == "physics":
-                    att_models_dict[actor.name].set_target_euler(eul_ang_cue_target)
-                    print(
-                        f"\t\t!! {n_steps}  {actor.name}: Physics mode → set new target "
-                        f"{eul_ang_cue_target}, current={att_models_dict[actor.name]._actor_attitude_deg}"
-                    )
-
-            # --- Advance or complete the commanded motion ---
-            if attitude_mode == "pause":
-                if att_models_dict[actor.name].slew_active:
-                    if t_datetime >= (
-                            att_models_dict[actor.name].t_eul_commanded
-                            + timedelta(seconds=att_models_dict[actor.name].delay_slew_stab)
-                    ):
-                        att_models_dict[actor.name].set_actor_euler(
-                            att_models_dict[actor.name]._target_attitude_deg
-                        )
-                        att_models_dict[actor.name].t_eul_commanded = None
-                        att_models_dict[actor.name].delay_slew_stab = None
-                        att_models_dict[actor.name].slew_active = False
-                        print(f"\t\t !! {n_steps} {actor.name}: Completed move (pause mode)")
-
-            elif attitude_mode == "planned":
-                if att_models_dict[actor.name].slew_active:
-                    att_models_dict[actor.name].follow_planned_slew(elapsed_seconds)
-
-                    if np.allclose(att_models_dict[actor.name]._actor_attitude_deg,  att_models_dict[actor.name]._target_attitude_deg,  atol=0.1) and np.any(np.abs(att_models_dict[actor.name]._actor_angular_velocity)) <= 0.01 and np.any(np.abs(att_models_dict[actor.name]._actor_angular_acceleration) <= 0.01):
-                        att_models_dict[actor.name].slew_active = False
-                        print(f"\t\t !! {n_steps} {actor.name}: Completed move (planned trajectory)")
-
-            elif attitude_mode == "physics":
-                att_models_dict[actor.name].update_attitude(sim_step_seconds)
 
             #   if verbose and n_steps % print_interval == 0:
               #       delta_move_eul = eul_new_deg - prev_eul
@@ -670,12 +559,9 @@ while elapsed_seconds <= sim_duration_seconds:
 
         try:
             # check off-nadir angle, and where the center ray intersects the Earth
-            if (not att_models_dict[actor.name].slew_active) or attitude_mode == 'planned':
-                FovPoints = eo_tools_dict[actor.name].get_FovPoints(r_vec, v_vec, t_datetime)
-                FovPoints_cue.append(FovPoints)
 
-            else:
-                FovPoints=None
+            FovPoints = eo_tools_dict[actor.name].get_FovPoints(r_vec, v_vec, t_datetime)
+            FovPoints_cue.append(FovPoints)
 
             if plot_footprints and n_steps % plot_fov_interval == 0:
                 fov_polygons_cue[footprint_idx_cue] = FovPoints
@@ -683,13 +569,12 @@ while elapsed_seconds <= sim_duration_seconds:
 
         except:
             print(f"!! {actor.name}: no FOV intersection, continue to the next step")
-            offnadir_cue_deg_target = 0.0
             att_models_dict[actor.name].set_target_euler(eul_ang_cue_default)
             eo_tools_dict[actor.name].offnadir_unbound_target = None
 
             continue
 
-        if cue_illuminated and att_models_dict[actor.name].ready_for_confirmation(attitude_mode):
+        if cue_illuminated and not att_models_dict[actor.name].slew_active:
         # only observe if stable
 
             for whale_idx, whale in all_targets.items():

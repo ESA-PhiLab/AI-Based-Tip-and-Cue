@@ -236,14 +236,14 @@ class AttitudeModel:
 
         # Target attitude (deg)
         self._target_attitude_deg = None
+        self._new_target_attitude_deg = actor_initial_attitude_deg
 
         # Command bookkeeping
         self.t_eul_commanded = None
         self.delay_slew_stab = None
 
-        # NEW: flag to track planned slews
+        # flag to track planned slews
         self.slew_active = False
-
         self._planned_start_eul = None  # Euler angles at the start of slew
         self._planned_start_time = None  # elapsed_seconds when slew started
 
@@ -620,32 +620,6 @@ class AttitudeModel:
         # Same extra delay formula you use in 'pause'
         delay_extra = delta_eul / np.rad2deg(omega_max_rad) + delay_stab_extra
         return delay_extra
-
-    def ready_for_confirmation(self, mode: str) -> bool:
-        """
-        Check if the spacecraft is stable enough to confirm observations.
-
-        Parameters
-        ----------
-        mode : str
-            'pause' or 'planned'
-
-        Returns
-        -------
-        bool
-            True if stable enough to observe/confirm a target
-        """
-        if mode == "pause":
-            # Only ready once slew is finished
-            return not self.slew_active
-
-        elif mode == "planned":
-            # Same as pause → only at the very end
-            return not self.slew_active
-
-        else:
-            raise ValueError(f"Unknown mode {mode}, must be 'pause' or 'planned'")
-
 
 # -----------------------------------------------------------------------------
 # Controller estimator (unchanged behavior)

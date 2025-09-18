@@ -55,11 +55,11 @@ else:
 # ================================================================================
 # ORBIT
 
-nSats_tip = 1
-nSats_cue = 1
+nSats_tip = 2
+nSats_cue = 2
 
-nPlanes_tip = 1
-nPlanes_cue = 1
+nPlanes_tip =4
+nPlanes_cue =4
 
 delta_t_cue = 1*60          # Time spacing between tip and cue satellite [sec]
 
