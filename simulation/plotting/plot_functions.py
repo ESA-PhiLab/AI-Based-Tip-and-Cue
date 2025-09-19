@@ -301,9 +301,9 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
 
 def plot_offnadir_distribution(excel_file, bin_size_deg=5):
     try:
-        df = pd.read_excel(excel_file, sheet_name="Combined")
+        df = pd.read_excel(excel_file, sheet_name="Cue")
         if "offnadir_deg" not in df.columns:
-            print("offnadir_deg column not found in Combined")
+            print("offnadir_deg column not found in Cue")
             return
         angles = df["offnadir_deg"].dropna()
         if angles.empty:
@@ -347,9 +347,9 @@ def plot_offnadir_distribution(excel_file, bin_size_deg=5):
 
 def plot_latency_distribution(excel_file, latency_col, bin_size_sec=30):
     try:
-        df = pd.read_excel(excel_file, sheet_name="Combined")
+        df = pd.read_excel(excel_file, sheet_name="Cue")
         if latency_col not in df.columns:
-            print(f"{latency_col} column not found in Combined")
+            print(f"{latency_col} column not found in Cue")
             return
         latency = df[latency_col].dropna()
         if latency.empty:

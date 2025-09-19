@@ -10,7 +10,7 @@ import math
 # ================================================================================
 # SIMULATION
 
-sim_name =  "test2"   # "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
+sim_name = "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
 
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
@@ -28,7 +28,7 @@ flat_dem = False
 exclude_dark = True
 sim_time = 'slow'
 
-sim_duration_hours = 0.15
+sim_duration_hours = 24
 t0 = datetime(2025, 8, 19, 12, 53, 22, tzinfo=timezone.utc)
 
 if sim_time == 'slow':
