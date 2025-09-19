@@ -29,7 +29,7 @@ exclude_dark = True
 sim_time = 'slow'
 
 sim_duration_hours = 24
-t0 = datetime(2025, 8, 20, 00, 55, 22, tzinfo=timezone.utc)
+t0 = datetime(2025, 8, 20, 00, 53, 22, tzinfo=timezone.utc)
 
 if sim_time == 'slow':
     sim_step_seconds = 1

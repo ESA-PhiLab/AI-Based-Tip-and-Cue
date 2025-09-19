@@ -41,10 +41,10 @@ plot_propagation = True
 plot_footprints = True
 plot_whale_trajectories = True
 
-create_image = True
+create_image = False
 onboard_ai_tip = True
 onboard_ai_cue = True
-model_attitude_control = True
+model_attitude_control = False
 
 logging = True
 verbose = False
@@ -426,6 +426,7 @@ while elapsed_seconds <= sim_duration_seconds:
                             whale.ai_class_predicted="not-whale"
                             confirmed_targets_neg[whale_idx] = whale
                             n_confirmed_neg +=1
+                            cleanup_idx.append(whale_idx)
 
                             print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, no Cue assigned (actual={whale.ai_class_true})")
 
@@ -742,6 +743,7 @@ while elapsed_seconds <= sim_duration_seconds:
                         whale.state_confirming= 2
 
                         n_confirmed_cue += 1
+                        cleanup_idx.append(whale_idx)
 
                         if whale.confirmed_cue:
                             whale.ai_class_predicted="whale"
