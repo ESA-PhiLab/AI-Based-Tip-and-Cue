@@ -1,5 +1,5 @@
 import random
-from simulation.propagate_whales import Whale
+from simulation.whales import Whale
 import random
 
 

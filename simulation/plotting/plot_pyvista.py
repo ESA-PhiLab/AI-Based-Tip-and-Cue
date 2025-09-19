@@ -1,6 +1,6 @@
 # plot_pyvista.py
 # Add Sun lighting in ECI: init_sun_light(), update_sun_light_eci(), sun_eci_vector()
-# Keeps existing ECI Earth-rotation sign fix.
+# Now uses direct ECI/ECEF with Y-flip applied before PyVista rendering
 
 import math
 from datetime import datetime, timezone
@@ -13,7 +13,7 @@ from pyvista import examples
 import pymap3d as pm
 
 from settings import R_earth
-from custom_paseos.utils.point_transformation import Point_Geodetic2ECEF, Point_ECI2Geodetic
+from custom_paseos.utils.point_transformation import Point_Geodetic2ECI, Point_ECI2Geodetic
 from custom_paseos.utils.help_functions import compute_orbital_period
 
 # --- Orekit (used for precise Sun position in EME2000/ECI) ---
@@ -21,6 +21,16 @@ import orekit  # VM must be initialized by caller before using these functions
 from org.orekit.bodies import CelestialBodyFactory
 from org.orekit.frames import FramesFactory
 from org.orekit.time import AbsoluteDate, TimeScalesFactory
+
+
+# --------------------------- Axis fix ---------------------------
+
+def _eci_to_pv(coords: np.ndarray) -> np.ndarray:
+    """Flip Y axis to map ECI/ECEF coords into PyVista's rendering frame."""
+    coords = np.asarray(coords, dtype=float)
+    if coords.ndim == 1:
+        return np.array([-coords[0], -coords[1], coords[2]], dtype=float)
+    return np.column_stack([-coords[:, 0], -coords[:, 1], coords[:, 2]])
 
 
 # --------------------------- Basic Map Helpers (optional) ---------------------------
@@ -48,7 +58,7 @@ def make_plotter() -> pv.Plotter:
 
     earth = examples.planets.load_earth(radius=R_earth)  # radius in meters
     earth_texture = examples.load_globe_texture()
-    pl.add_mesh(earth, texture=earth_texture, smooth_shading=True)
+    earth_actor = pl.add_mesh(earth, texture=earth_texture, smooth_shading=True)
     pl.show_axes()
     pl.view_isometric()
     return pl
@@ -58,29 +68,22 @@ def whales_to_points(whales: dict) -> np.ndarray:
     if not whales:
         return np.zeros((0, 3), dtype=float)
     pts = np.array(
-        [Point_Geodetic2ECEF(w["lat"], w["lon"], float(w.get("alt", 0.0))).flatten()
+        [Point_Geodetic2ECI(w["lat"], w["lon"], float(w.get("alt", 0.0))).flatten()
          for _, w in sorted(whales.items())],
         dtype=float,
     )
-    pts[:, 0] *= -1.0
-    pts[:, 1] *= -1.0
     return pts
 
 
 def sats_to_points(sat_positions_ecef: List[np.ndarray]) -> np.ndarray:
     if len(sat_positions_ecef) == 0:
         return np.zeros((0, 3), dtype=float)
-    pts = np.asarray(sat_positions_ecef, dtype=float)
-    pts[:, 0] *= -1.0
-    pts[:, 1] *= -1.0
-    return pts
+    return np.asarray(sat_positions_ecef, dtype=float)
 
 
 def _latlon_list_to_ecef(latlon: np.ndarray) -> np.ndarray:
     latlon = np.asarray(latlon, dtype=float)
-    pts = np.array([Point_Geodetic2ECEF(lat, lon, 0.0).flatten() for lat, lon in latlon], dtype=float)
-    pts[:, 0] *= -1.0
-    pts[:, 1] *= -1.0
+    pts = np.array([Point_Geodetic2ECI(lat, lon, 0.0).flatten() for lat, lon in latlon], dtype=float)
     return pts
 
 
@@ -107,15 +110,15 @@ def fovline_from_latlon(latlon: np.ndarray, close: bool = True) -> pv.PolyData:
 
 
 def init_fov_layers(
-    pl: pv.Plotter,
-    n_tip: int,
-    n_cue: int,
-    tip_fill_color: str = "orange",
-    cue_fill_color: str = "cyan",
-    tip_edge_color: str = "white",
-    cue_edge_color: str = "white",
-    opacity: float = 0.35,
-    line_width: float = 5.0,
+        pl: pv.Plotter,
+        n_tip: int,
+        n_cue: int,
+        tip_fill_color: str = "orange",
+        cue_fill_color: str = "cyan",
+        tip_edge_color: str = "white",
+        cue_edge_color: str = "white",
+        opacity: float = 0.35,
+        line_width: float = 5.0,
 ):
     placeholder_latlon = np.array([[0.0, 0.0], [0.0, 1e-6], [1e-6, 0.0]], dtype=float)
 
@@ -141,12 +144,12 @@ def init_fov_layers(
 
 
 def update_fov_layers(
-    tip_fill,
-    tip_edge,
-    cue_fill,
-    cue_edge,
-    fovpoints_tip_list: List[np.ndarray],
-    fovpoints_cue_list: List[np.ndarray],
+        tip_fill,
+        tip_edge,
+        cue_fill,
+        cue_edge,
+        fovpoints_tip_list: List[np.ndarray],
+        fovpoints_cue_list: List[np.ndarray],
 ):
     for pd_fill, pd_edge, latlon in zip(tip_fill, tip_edge, fovpoints_tip_list):
         latlon = np.asarray(latlon)
@@ -184,15 +187,6 @@ def update_fov_layers(
 
 
 # --------------------------- ECI Plotter (rotating Earth) ---------------------------
-
-def _eci_to_pv(points_eci: np.ndarray) -> np.ndarray:
-    pts = np.asarray(points_eci, dtype=float).copy()
-    if pts.ndim == 1:
-        pts = pts[None, :]
-    pts[:, 0] *= -1.0
-    pts[:, 1] *= -1.0
-    return pts
-
 
 def _eci_to_greenwich_angle_rad(t: datetime) -> float:
     if t.tzinfo is None:
@@ -242,8 +236,7 @@ def geodetic_to_eci(lat_deg: float, lon_deg: float, alt_m: float, t: datetime) -
 def sats_to_points_eci(sat_positions_eci: List[np.ndarray]) -> np.ndarray:
     if len(sat_positions_eci) == 0:
         return np.zeros((0, 3), dtype=float)
-    eci = np.asarray(sat_positions_eci, dtype=float)
-    return _eci_to_pv(eci)
+    return _eci_to_pv(np.asarray(sat_positions_eci, dtype=float))
 
 
 def fovpoly_from_latlon_eci(latlon: np.ndarray, t: datetime) -> pv.PolyData:
@@ -253,9 +246,9 @@ def fovpoly_from_latlon_eci(latlon: np.ndarray, t: datetime) -> pv.PolyData:
     if latlon.ndim != 2 or latlon.shape[1] != 2 or len(latlon) < 3:
         raise ValueError("FoV polygon needs at least 3 rows of [lat, lon].")
     eci = np.array([geodetic_to_eci(lat, lon, 0.0, t) for lat, lon in latlon], dtype=float)
-    pts = _eci_to_pv(eci)
-    faces = _faces_from_fan(len(pts))
-    return pv.PolyData(pts, faces)
+    eci = _eci_to_pv(eci)
+    faces = _faces_from_fan(len(eci))
+    return pv.PolyData(eci, faces)
 
 
 def fovline_from_latlon_eci(latlon: np.ndarray, t: datetime, close: bool = True) -> pv.PolyData:
@@ -263,22 +256,22 @@ def fovline_from_latlon_eci(latlon: np.ndarray, t: datetime, close: bool = True)
         t = t.replace(tzinfo=timezone.utc)
     latlon = np.asarray(latlon, dtype=float)
     eci = np.array([geodetic_to_eci(lat, lon, 0.0, t) for lat, lon in latlon], dtype=float)
-    pts = _eci_to_pv(eci)
-    if close and len(pts) > 0 and not np.allclose(pts[0], pts[-1]):
-        pts = np.vstack([pts, pts[0]])
-    return pv.lines_from_points(pts, close=False)
+    eci = _eci_to_pv(eci)
+    if close and len(eci) > 0 and not np.allclose(eci[0], eci[-1]):
+        eci = np.vstack([eci, eci[0]])
+    return pv.lines_from_points(eci, close=False)
 
 
 def init_fov_layers_eci(
-    pl: pv.Plotter,
-    n_tip: int,
-    n_cue: int,
-    tip_fill_color: str = "orange",
-    cue_fill_color: str = "cyan",
-    tip_edge_color: str = "white",
-    cue_edge_color: str = "white",
-    opacity: float = 0.35,
-    line_width: float = 5.0,
+        pl: pv.Plotter,
+        n_tip: int,
+        n_cue: int,
+        tip_fill_color: str = "orange",
+        cue_fill_color: str = "cyan",
+        tip_edge_color: str = "white",
+        cue_edge_color: str = "white",
+        opacity: float = 0.35,
+        line_width: float = 5.0,
 ):
     placeholder = np.array([[0.0, 0.0], [0.0, 1e-6], [1e-6, 0.0]], dtype=float)
     t0 = datetime(2000, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -305,13 +298,13 @@ def init_fov_layers_eci(
 
 
 def update_fov_layers_eci(
-    tip_fill,
-    tip_edge,
-    cue_fill,
-    cue_edge,
-    fovpoints_tip_list: List[np.ndarray],
-    fovpoints_cue_list: List[np.ndarray],
-    t: datetime,
+        tip_fill,
+        tip_edge,
+        cue_fill,
+        cue_edge,
+        fovpoints_tip_list: List[np.ndarray],
+        fovpoints_cue_list: List[np.ndarray],
+        t: datetime,
 ):
     if t.tzinfo is None:
         t = t.replace(tzinfo=timezone.utc)
@@ -321,12 +314,12 @@ def update_fov_layers_eci(
             continue
         latlon = np.asarray(latlon, dtype=float)
         eci = np.array([geodetic_to_eci(lat, lon, 0.0, t) for lat, lon in latlon], dtype=float)
-        pts = _eci_to_pv(eci)
-        faces = _faces_from_fan(len(pts))
-        pd_fill.points = pts
+        eci = _eci_to_pv(eci)
+        faces = _faces_from_fan(len(eci))
+        pd_fill.points = eci
         pd_fill.faces = np.asarray(faces, dtype=np.int32)
 
-        line_pts = pts
+        line_pts = eci
         if not np.allclose(line_pts[0], line_pts[-1]):
             line_pts = np.vstack([line_pts, line_pts[0]])
         n_line = len(line_pts)
@@ -339,12 +332,12 @@ def update_fov_layers_eci(
             continue
         latlon = np.asarray(latlon, dtype=float)
         eci = np.array([geodetic_to_eci(lat, lon, 0.0, t) for lat, lon in latlon], dtype=float)
-        pts = _eci_to_pv(eci)
-        faces = _faces_from_fan(len(pts))
-        pd_fill.points = pts
+        eci = _eci_to_pv(eci)
+        faces = _faces_from_fan(len(eci))
+        pd_fill.points = eci
         pd_fill.faces = np.asarray(faces, dtype=np.int32)
 
-        line_pts = pts
+        line_pts = eci
         if not np.allclose(line_pts[0], line_pts[-1]):
             line_pts = np.vstack([line_pts, line_pts[0]])
         n_line = len(line_pts)
@@ -393,10 +386,8 @@ def whales_to_points_eci(whales, t: datetime) -> np.ndarray:
         lat, lon, alt = w.lat, w.lon, w.alt
         x, y, z = pm.geodetic2ecef(lat, lon, alt)
         X, Y, Z = pm.ecef2eci(x, y, z, t)
-        # PyVista axis flip
-        rows.append([-X, -Y, Z])
-    return np.asarray(rows, dtype=float)
-
+        rows.append([X, Y, Z])
+    return _eci_to_pv(np.asarray(rows, dtype=float))
 
 
 # --------------------------- Sun light in ECI ---------------------------
@@ -421,13 +412,10 @@ def init_sun_light(pl: pv.Plotter) -> pv.Light:
     """
     light = pv.Light(light_type='scene light', color='white')
     light.intensity = 1.0
-    #light.ambient_color = 'white'
     light.diffuse_color = 'white'
-    # light.specular_color = 'white'
     light.focal_point = (0.0, 0.0, 0.0)
-
     pl.add_light(light)
-    return light  # <-- make sure this line is here
+    return light
 
 
 def update_sun_light_eci(light: pv.Light, t: datetime, distance_scale: float = 1e8) -> None:
@@ -436,27 +424,24 @@ def update_sun_light_eci(light: pv.Light, t: datetime, distance_scale: float = 1
     distance_scale controls how far away the directional light position is placed.
     """
     s_eci = sun_eci_vector(t)
-    s_pv = _eci_to_pv(s_eci).ravel()
-    norm = float(np.linalg.norm(s_pv))
+    s_eci = _eci_to_pv(s_eci)
+    norm = float(np.linalg.norm(s_eci))
     if norm == 0.0:
         return
-    # For a directional light, VTK uses direction from light.position -> light.focal_point.
-    # Place the light along the Sun direction so rays come from the Sun toward the origin.
-    light.position = tuple((s_pv / norm) * distance_scale)
+    light.position = tuple((s_eci / norm) * distance_scale)
+
 
 def update_points_from_targets(points_array, targets_dict, t_datetime):
     """
     Update a (N,3) numpy array with Whale positions in ECI.
     NaN for whales not in the dict.
     """
-    # Hide everything by default
     points_array[:] = np.nan
-
     for whale_idx, whale in targets_dict.items():
         pos = whales_to_points_eci({whale_idx: whale}, t_datetime)[0]
         points_array[whale_idx] = pos
-
     return points_array
+
 
 def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=None):
     """
@@ -464,22 +449,18 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
     satellites, whales, FoV meshes and Sun light. Keeps same window open and
     preserves Earth rotation continuity by passing in last_theta.
     """
-    pl.clear()  # remove all actors/lights, keep the same window
+    pl.clear()
 
-    # --- Background (stars/space) ---
     cubemap = examples.download_cubemap_space_4k()
     pl.add_actor(cubemap.to_skybox())
     pl.set_environment_texture(cubemap, is_srgb=True)
 
-    # --- Earth ---
     earth_mesh = examples.planets.load_earth(radius=R_earth)
     earth_tex = examples.load_globe_texture()
     earth_actor = pl.add_mesh(earth_mesh, texture=earth_tex, smooth_shading=True)
 
-    # Preserve Earth rotation state
     earth_state = {"last_theta": last_theta}
 
-    # --- Whales ---
     whales_plot_all = pv.PolyData(np.zeros((len(all_targets), 3)))
     pl.add_points(whales_plot_all, color="red", point_size=8, render_points_as_spheres=True)
 
@@ -490,7 +471,7 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
     task_pts = np.full((n_whales, 3), np.nan)
     whales_plot_tasked = pv.PolyData(task_pts.copy())
     pl.add_points(whales_plot_tasked, color="orange", point_size=12, render_points_as_spheres=True)
-    
+
     obs_cue_pts = np.full((n_whales, 3), np.nan)
     whales_plot_observed_cue = pv.PolyData(obs_cue_pts.copy())
     pl.add_points(whales_plot_observed_cue, color="orange", point_size=9, render_points_as_spheres=True)
@@ -503,14 +484,12 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
     whales_plot_confirmed_neg = pv.PolyData(conf_pts_neg.copy())
     pl.add_points(whales_plot_confirmed_neg, color="navy", point_size=10, render_points_as_spheres=True)
 
-    # --- Satellites ---
     cloud_tip_sats = pv.PolyData(np.zeros((len(tip_actors), 3)))
     pl.add_points(cloud_tip_sats, color="yellowgreen", point_size=20, render_points_as_spheres=True)
 
     cloud_cue_sats = pv.PolyData(np.zeros((len(cue_actors), 3)))
     pl.add_points(cloud_cue_sats, color="lightseagreen", point_size=15, render_points_as_spheres=True)
 
-    # --- FoV meshes ---
     tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes = init_fov_layers_eci(
         pl, n_tip=len(tip_actors), n_cue=len(cue_actors),
         tip_fill_color="orange", cue_fill_color="cyan",
@@ -518,12 +497,9 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
         opacity=0.35, line_width=5.0
     )
 
-    # --- Sun light ---
     sun_light = init_sun_light(pl)
 
-    # --- Text ---
-    # pl.add_text("Tip and Cue Simulation", font_size=12)
-    step_text = pl.add_text("Step: 0", font_size=10, position="lower_right", color = 'slategrey')
+    step_text = pl.add_text("Step: 0", font_size=10, position="lower_right", color='slategrey')
 
     return (earth_actor, earth_state, sun_light,
             whales_plot_all, whales_plot_observed_tip, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed_pos, whales_plot_confirmed_neg,
@@ -540,30 +516,20 @@ def update_plotter(pl,
                    all_targets, observed_targets_tip, tasked_targets, observed_targets_cue, confirmed_targets_pos, confirmed_targets_neg,
                    obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg,
                    FovPoints_tip, FovPoints_cue, step_text, n_steps):
-
-    """
-    Update all actors in the plotter for the current simulation step.
-    """
-    # Earth rotation + Sun
     update_earth_rotation_eci(earth_actor, t_datetime, earth_state)
     update_sun_light_eci(sun_light, t_datetime)
 
-    # Satellites (ECI)
     cloud_tip_sats.points = sats_to_points_eci(tip_positions)
     cloud_cue_sats.points = sats_to_points_eci(cue_positions)
 
-    # All whales
     whales_plot_all.points = whales_to_points_eci(all_targets, t_datetime)
 
-    # Observed whales cue
     obs_tip_pts = update_points_from_targets(obs_tip_pts, observed_targets_tip, t_datetime)
     whales_plot_observed_tip.points = obs_tip_pts
 
-    # Tasked whales
     task_pts = update_points_from_targets(task_pts, tasked_targets, t_datetime)
     whales_plot_tasked.points = task_pts
-    
-    # Observed whales cue
+
     obs_cue_pts = update_points_from_targets(obs_cue_pts, observed_targets_cue, t_datetime)
     whales_plot_observed_cue.points = obs_cue_pts
 
@@ -573,7 +539,6 @@ def update_plotter(pl,
     conf_pts_neg = update_points_from_targets(conf_pts_neg, confirmed_targets_neg, t_datetime)
     whales_plot_confirmed_neg.points = conf_pts_neg
 
-    # FoV polygons
     update_fov_layers_eci(
         tip_fill_meshes, tip_edge_meshes,
         cue_fill_meshes, cue_edge_meshes,
@@ -582,13 +547,13 @@ def update_plotter(pl,
 
     step_text.SetText(1, f"Step: {n_steps}")
 
-    # Refresh scene
     pl.update()
 
     return obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg
 
+
 def compute_movie_framerate(a, sim_step_seconds, plot_interval, movie_orbit_sec):
-    T_orbit = compute_orbital_period(a)  # orbital period [s]
+    T_orbit = compute_orbital_period(a)
     steps_per_orbit = T_orbit / sim_step_seconds
     frames_per_orbit = steps_per_orbit / plot_interval
     framerate = frames_per_orbit / movie_orbit_sec
@@ -596,4 +561,3 @@ def compute_movie_framerate(a, sim_step_seconds, plot_interval, movie_orbit_sec)
     if framerate < 1:
         framerate = 1
     return framerate, frames_per_orbit
-

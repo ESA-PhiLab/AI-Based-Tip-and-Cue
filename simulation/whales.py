@@ -1,4 +1,4 @@
-# propagate_whales.py
+# whales.py
 # Whale simulation with land avoidance, geodesic motion, and unified Whale class.
 
 import os

@@ -23,24 +23,25 @@ import paseos
 from custom_paseos.propagation.orekit_propagator import OrekitPropagator
 from custom_paseos.utils.point_transformation import Point_ECI2Geodetic, Point_Geodetic2ECI
 
-from simulation.propagate_whales import update_whales, load_land_mask, generate_random_water_targets, init_whales, build_land_mask
+from simulation.whales import update_whales, load_land_mask, generate_random_water_targets, init_whales, build_land_mask
 from simulation.simulation_functions import init_eo_tools, init_attitude_models, link_eo_attitude, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, count_orbits_completed, compute_coverage_fraction, _clear_actor_task
 from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate
-from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
+from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain, plot_constellation_pyvista_transparent_earth, plot_constellation_pyvista
 from simulation.sim_logging import init_excel_log, log_tip, log_cue, log_combined, log_img, gsd_offnadir, at_exit, Logger, compute_stats, format_hms, merge_tip_cue_combined
-from simulation.onboard_ai.onboard_ai_tip import tip_ai_decision
-from simulation.onboard_ai.onboard_ai_cue import cue_ai_decision
+
+from onboard_ai.onboard_ai_tip import tip_ai_decision
+from onboard_ai.onboard_ai_cue import cue_ai_decision
 
 from offnadir_imaging.rendering import generate_image
 
 show_constellation = False
 show_orbits = False
-plot_propagation = False  #True
+plot_propagation = True
 plot_footprints = True
 plot_whale_trajectories = True
 
-create_image = False
+create_image = True
 onboard_ai_tip = True
 onboard_ai_cue = True
 model_attitude_control = True
@@ -72,7 +73,8 @@ if logging:
     sys.stdout = Logger("output.log")
     sys.stderr = sys.stdout
 
-print(f"Initiate simulation {sim_name} | Logging {logging}")
+current_time_str = time.strftime("%H:%M:%S", time.localtime(time.time()))
+print(f"Initiate simulation {sim_name} | Logging {logging} | Runtime start {current_time_str}")
 
 utc = TimeScalesFactory.getUTC()
 t0_orekit = AbsoluteDate(t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second + t0.microsecond / 1e6, utc)
@@ -90,7 +92,7 @@ planet_lst_cue, sats_cue, _ = build_constellation(params_cue, "Cue", t0_pykep)
 all_planets = planet_lst_tip + planet_lst_cue
 
 if show_constellation:
-    # plot_constallation(planet_lst_tip, planet_lst_cue)
+    #plot_constellation_pyvista(planet_lst_tip, planet_lst_cue, t0)
     plot_constellation_pyvista_plain(planet_lst_tip, planet_lst_cue, t0)
 
 # Create actors
@@ -261,7 +263,7 @@ while elapsed_seconds <= sim_duration_seconds:
     t_start = time.time()
 
     t_pykep = sim.local_time
-    t_datetime = datetime(2000, 1, 1, 12, 0, 0) + timedelta(days=t_pykep.mjd2000)
+    t_datetime = datetime(2000, 1, 1, 0, 0, 0) + timedelta(days=t_pykep.mjd2000)
     t_abs = AbsoluteDate(t_datetime.year, t_datetime.month, t_datetime.day, t_datetime.hour, t_datetime.minute, t_datetime.second + t_datetime.microsecond / 1e6, utc)
 
     for actor in tip_actors + cue_actors:
@@ -347,31 +349,28 @@ while elapsed_seconds <= sim_duration_seconds:
                     if logging:
                         tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r[0], r[1], r[2], t_datetime).flatten()
 
-                        if logging:
-                            tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r[0], r[1], r[2], t_datetime).flatten()
+                        log_tip(writer_tip,
+                                detection_id=whale.detection_id,
+                                target_id=whale_idx, tip_actor=actor.name,
+                                tip_observation_date=t_datetime, tip_confirmation_date=None,
+                                tip_ai_decision=None, true_label=whale.ai_class_true, correct=None,
+                                offnadir_deg=offnadir_tip_deg, gsd_m=gsd_tip,
+                                target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
+                                tip_lat=tip_lat, tip_lon=tip_lon, tip_alt=tip_alt,
+                                x=r_vec[0], y=r_vec[1], z=r_vec[2],
+                                vx=v_vec[0], vy=v_vec[1], vz=v_vec[2])
 
-                            log_tip(writer_tip,
-                                    detection_id=whale.detection_id,
-                                    target_id=whale_idx, tip_actor=actor.name,
-                                    tip_observation_date=t_datetime, tip_confirmation_date=None,
-                                    tip_ai_decision=None, true_label=whale.ai_class_true, correct=None,
-                                    offnadir_deg=offnadir_tip_deg, gsd_m=gsd_tip,
-                                    target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
-                                    tip_lat=tip_lat, tip_lon=tip_lon, tip_alt=tip_alt,
-                                    x=r_vec[0], y=r_vec[1], z=r_vec[2],
-                                    vx=v_vec[0], vy=v_vec[1], vz=v_vec[2])
-
-                            log_combined(writer_combined,
-                                         detection_id=whale.detection_id,
-                                         target_id=whale_idx, tip_actor=actor.name, cue_actor=None,
-                                         tip_observation_date=t_datetime, tip_confirmation_date=None,
-                                         cue_observation_date=None, cue_confirmation_date=None,
-                                         tip_ai_decision=None, cue_ai_decision=None,
-                                         true_label=whale.ai_class_true, correct=None,
-                                         offnadir_deg=offnadir_tip_deg, gsd_m=gsd_tip,
-                                         latency_observation=None, latency_confirmation=None,
-                                         target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
-                                         cue_lat=None, cue_lon=None, cue_alt=None)
+                        log_combined(writer_combined,
+                                     detection_id=whale.detection_id,
+                                     target_id=whale_idx, tip_actor=actor.name, cue_actor=None,
+                                     tip_observation_date=t_datetime, tip_confirmation_date=None,
+                                     cue_observation_date=None, cue_confirmation_date=None,
+                                     tip_ai_decision=None, cue_ai_decision=None,
+                                     true_label=whale.ai_class_true, correct=None,
+                                     offnadir_deg=offnadir_tip_deg, gsd_m=gsd_tip,
+                                     latency_observation=None, latency_confirmation=None,
+                                     target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
+                                     cue_lat=None, cue_lon=None, cue_alt=None)
 
                 # TIP CONFIRMATION
                 if whale.t_observed_tip != None and whale.state_confirming < 1 and t_datetime > (whale.t_observed_tip + timedelta(seconds=delay_confirmation_tip)):
@@ -380,7 +379,7 @@ while elapsed_seconds <= sim_duration_seconds:
                             whale.confirmed_tip, label_tip = tip_ai_decision(whale, tip_tpr, tip_tnr, rng_ai_tip)
 
                         else:
-                            whale.confirmed_tip, label_tip = True, "whale"
+                            whale.confirmed_tip, label_tip = True, "whale-tipped"
 
                         task_coord = whale.coord_observed
 
@@ -419,7 +418,6 @@ while elapsed_seconds <= sim_duration_seconds:
                                 "coord": task_coord,
                                 "assign_time": t_datetime
                             })
-
 
                             whale.ai_class_predicted="whale-tipped"
                             print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, assigned to {best_cue} (actual={whale.ai_class_true})")
@@ -663,6 +661,7 @@ while elapsed_seconds <= sim_duration_seconds:
                     whale.cue_actor = actor.name
                     whale.t_observed_cue = t_datetime
                     whale.coord_observed = target_coord
+
                     if whale.detection_id is None:
                         whale.detection_id = str(uuid.uuid4())
 
@@ -1143,7 +1142,6 @@ if plot_footprints:
     fov_polygons_cue = [f for f in fov_polygons_cue if f is not None]
 
     t2 = time.time()
-    print(f"\tFOV: footprints cleanup time:  {t2 - t1:1f} s")
 
     if len(fov_polygons_tip) > 0:
         plot_all_fov_footprints_plotly(fov_polygons_tip, all_targets, observed_targets_tip, nPlanes_tip, nSats_tip, extension="tip", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories)
@@ -1152,7 +1150,7 @@ if plot_footprints:
         plot_all_fov_footprints_plotly(fov_polygons_cue, all_targets, observed_targets_cue, nPlanes_cue, nSats_cue, extension="cue", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories)
 
     t3 = time.time()
-    print(f"\tFOV: footprints plotting time: {t3 - t2:1f} s\n ")
+    print(f"\tFOV: footprints plotting time: {format_hms(t3 - t2)}\n ")
 
 if show_orbits:
     plot_orbits(trajectories)

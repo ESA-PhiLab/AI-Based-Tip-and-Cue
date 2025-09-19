@@ -8,7 +8,16 @@ import re
 from collections import defaultdict
 
 from settings import R_earth
-from .plot_pyvista import _eci_to_pv, init_sun_light, update_sun_light_eci
+from .plot_pyvista import init_sun_light, update_sun_light_eci
+
+# --------------------------- Axis fix ---------------------------
+
+def _eci_to_pv(coords: np.ndarray) -> np.ndarray:
+    """Flip X and Y axes to map ECI/ECEF coords into PyVista's rendering frame."""
+    coords = np.asarray(coords, dtype=float)
+    if coords.ndim == 1:
+        return np.array([-coords[0], -coords[1], coords[2]], dtype=float)
+    return np.column_stack([-coords[:, 0], -coords[:, 1], coords[:, 2]])
 
 
 def analyze_keplerian_constellation(planets):
@@ -96,7 +105,7 @@ def plot_constellation_pyvista(planet_lst_tip, planet_lst_cue, t_datetime=None):
         pl.add_mesh(line, color=color, line_width=1.5)
 
         sat_pos = _eci_to_pv(satellite_position(planet))
-        pl.add_mesh(pv.Sphere(radius=400e3, center=sat_pos[0]),
+        pl.add_mesh(pv.Sphere(radius=400e3, center=sat_pos),
                     color=color, smooth_shading=True)
 
     # --- CUE constellation ---
@@ -114,7 +123,7 @@ def plot_constellation_pyvista(planet_lst_tip, planet_lst_cue, t_datetime=None):
         pl.add_mesh(line, color=color, line_width=1.0)
 
         sat_pos = _eci_to_pv(satellite_position(planet))
-        pl.add_mesh(pv.Sphere(radius=250e3, center=sat_pos[0]),
+        pl.add_mesh(pv.Sphere(radius=250e3, center=sat_pos),
                     color=color, smooth_shading=True)
 
     # Sun light
@@ -164,7 +173,7 @@ def plot_constellation_pyvista_plain(planet_lst_tip, planet_lst_cue, t_datetime=
         pl.add_mesh(line, color=color, line_width=3.0)
 
         sat_pos = _eci_to_pv(satellite_position(planet))
-        pl.add_mesh(pv.Sphere(radius=400e3, center=sat_pos[0]),
+        pl.add_mesh(pv.Sphere(radius=400e3, center=sat_pos),
                     color=color, smooth_shading=True)
 
     # --- CUE constellation ---
@@ -182,12 +191,9 @@ def plot_constellation_pyvista_plain(planet_lst_tip, planet_lst_cue, t_datetime=
         pl.add_mesh(line, color=color, line_width=3.0)
 
         sat_pos = _eci_to_pv(satellite_position(planet))
-        pl.add_mesh(pv.Sphere(radius=250e3, center=sat_pos[0]),
+        pl.add_mesh(pv.Sphere(radius=250e3, center=sat_pos),
                     color=color, smooth_shading=True)
 
-    # Sun light
-    # sun_light = init_sun_light(pl)
-    # update_sun_light_eci(sun_light, t_datetime, distance_scale=1e11)
     pl.show_grid(color="black", font_size=10, bold=False)
 
     # Text
@@ -207,7 +213,6 @@ def plot_constellation_pyvista_transparent_earth(planet_lst_tip, planet_lst_cue,
     # White background
     pl.set_background("white")
 
-    # Earth in meters (semi-transparent)
     # Earth in meters (semi-transparent, no inside showing)
     earth_mesh = examples.planets.load_earth(radius=R_earth / 1000.0)
     earth_mesh.points *= 1000.0
@@ -217,12 +222,10 @@ def plot_constellation_pyvista_transparent_earth(planet_lst_tip, planet_lst_cue,
         texture=earth_tex,
         smooth_shading=True,
         opacity=0.6,
-        backface_culling=True  # don't draw backfaces
+        backface_culling=True
     )
     if t_datetime is None:
         t_datetime = datetime.now(timezone.utc)
-
-
 
     # --- TIP constellation ---
     nPlanes_tip, nSats_tip, _ = analyze_keplerian_constellation(planet_lst_tip)
@@ -240,7 +243,7 @@ def plot_constellation_pyvista_transparent_earth(planet_lst_tip, planet_lst_cue,
 
         sat_pos = _eci_to_pv(satellite_position(planet))
         pl.add_mesh(
-            pv.Sphere(radius=400e3, center=sat_pos[0]),
+            pv.Sphere(radius=400e3, center=sat_pos),
             color=color,
             smooth_shading=True
         )
@@ -261,7 +264,7 @@ def plot_constellation_pyvista_transparent_earth(planet_lst_tip, planet_lst_cue,
 
         sat_pos = _eci_to_pv(satellite_position(planet))
         pl.add_mesh(
-            pv.Sphere(radius=250e3, center=sat_pos[0]),
+            pv.Sphere(radius=250e3, center=sat_pos),
             color=color,
             smooth_shading=True
         )
@@ -272,8 +275,5 @@ def plot_constellation_pyvista_transparent_earth(planet_lst_tip, planet_lst_cue,
 
     # Text
     pl.add_text("Constellation Orbits with Satellites", font_size=12, color="black")
-
-    # Grid
-    # pl.show_grid(color="black", font_size=10, bold=False)
 
     pl.show()
