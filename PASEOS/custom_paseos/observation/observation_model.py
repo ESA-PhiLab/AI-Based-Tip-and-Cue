@@ -54,6 +54,8 @@ class EOTools:
         self.current_task = None  # currently active task (or None)
         self.offnadir_unbound_target = None  # last computed unconstrained off-nadir (deg)
 
+        self.slew_stab_time = None
+
 
         # -------------------------------------------------------------------------
     # Link to attitude model

@@ -91,11 +91,20 @@ def cleanup_timeout_targets(all_targets, tasked_targets, current_time, timeout, 
         tasked_targets.pop(idx, None)
 
         if w:
+            if w:
+                w.state_observing = 0
+                w.state_tasked = 0
+                w.state_confirming = 0
+                w.assigned_cue = None
+                w.detection_id = None
 
-            w.state_observing = 0
-            w.state_tasked = 0
-            w.state_confirming = 0
-            w.assigned_cue = None
+                # reset cycle times
+                w.t_observed_tip = None
+                w.t_confirmed_tip = None
+                w.t_tasked_tip = None
+                w.t_tasked_cue = None
+                w.t_observed_cue = None
+                w.t_confirmed_cue = None
 
     return all_cleanup_idx
 

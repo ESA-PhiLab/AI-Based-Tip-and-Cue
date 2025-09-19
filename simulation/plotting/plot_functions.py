@@ -23,7 +23,7 @@ import os
 import matplotlib
 import matplotlib.pyplot as plt
 
-from matplotlib.ticker import MultipleLocator, FuncFormatter
+from matplotlib.ticker import MultipleLocator, FuncFormatter, FormatStrFormatter
 
 plt.style.use("seaborn-v0_8-whitegrid")
 matplotlib.use("TkAgg")
@@ -217,7 +217,7 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
     # Whale trajectories
     if plot_whale_trajectories and whale_trajectories:
         if verbose:
-            print("Plot whale trajectories")
+            print(f"\tPlot whale trajectories {extension}")
         for whale_id, traj in whale_trajectories.items():
             fig.add_trace(go.Scattergeo(
                 lon=[p[1] for p in traj],
@@ -229,7 +229,7 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
             ))
 
     if verbose:
-        print(f"Plot footprints {extension}")
+        print(f"\tPlot footprints {extension}")
 
     nSats_tot = nPlanes * nSats
 
@@ -251,12 +251,12 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
             t_end = time.time()
             hours, rem = divmod(t_end - t_start, 3600)
             minutes, seconds = divmod(rem, 60)
-            print(f"\t {n} Added footprint | Time: {int(hours)}h {int(minutes)}m {seconds:.0f}s")
+            print(f"\t\t {n} Added footprint | Time: {int(hours)}h {int(minutes)}m {seconds:.0f}s")
             t_start = time.time()
 
     # Targets not observed
     if verbose:
-        print("Plot targets")
+        print(f"\tPlot targets {extension}")
 
     if all_targets:
         observed_ids = set(observed_targets.keys()) if observed_targets else set()
@@ -301,9 +301,9 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
 
 def plot_offnadir_distribution(excel_file, bin_size_deg=5):
     try:
-        df = pd.read_excel(excel_file, sheet_name="CombinedLog")
+        df = pd.read_excel(excel_file, sheet_name="Combined")
         if "offnadir_deg" not in df.columns:
-            print("offnadir_deg column not found in CombinedLog")
+            print("offnadir_deg column not found in Combined")
             return
         angles = df["offnadir_deg"].dropna()
         if angles.empty:
@@ -317,14 +317,19 @@ def plot_offnadir_distribution(excel_file, bin_size_deg=5):
         counts, _, _ = plt.hist(angles, bins=bins, edgecolor="black", color="tab:blue")
         plt.xlabel("Off-nadir angle (degrees)")
         plt.ylabel("Count")
-        plt.title(f"Distribution of Off-nadir Angles ({bin_size_deg}° bins)")
-        plt.xticks(bins)
+        # plt.title(f"Off-nadir Angle Distribution ({bin_size_deg}° bins)")
+        plt.xticks(bins*2)
 
         ymax = counts.max()
         if ymax <= 1:
             plt.yticks([0, 1])
         else:
             plt.gca().yaxis.set_major_locator(MultipleLocator(2))
+
+       # plt.gca().xaxis.set_major_locator(MultipleLocator(bin_size_deg / 2.0))
+       # plt.gca().xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
+
+
 
         plt.grid(False)                 # clear all grid lines
         plt.grid(axis="y", alpha=0.5)   # only horizontal grid
@@ -333,20 +338,20 @@ def plot_offnadir_distribution(excel_file, bin_size_deg=5):
         plot_path = os.path.join(f"offnadir.png")
         plt.savefig(plot_path, dpi=300)
         plt.close()
-        print(f"Saved off-nadir distribution plot -> {plot_path.replace(os.sep, '/')}")
+        # print(f"Saved off-nadir distribution plot -> {plot_path.replace(os.sep, '/')}")
 
     except Exception as e:
         print(f"Could not generate off-nadir distribution plot: {e}")
 
 
 
-def plot_latency_distribution(excel_file, bin_size_sec=30):
+def plot_latency_distribution(excel_file, latency_col, bin_size_sec=30):
     try:
-        df = pd.read_excel(excel_file, sheet_name="CombinedLog")
-        if "latency" not in df.columns:
-            print("latency column not found in CombinedLog")
+        df = pd.read_excel(excel_file, sheet_name="Combined")
+        if latency_col not in df.columns:
+            print(f"{latency_col} column not found in Combined")
             return
-        latency = df["latency"].dropna()
+        latency = df[latency_col].dropna()
         if latency.empty:
             print("No latency data to plot")
             return
@@ -362,7 +367,7 @@ def plot_latency_distribution(excel_file, bin_size_sec=30):
         # Axis labels
         plt.xlabel("Latency (minutes:seconds)")
         plt.ylabel("Count")
-        plt.title(f"Distribution of Latency ({bin_size_sec}s bins)")
+        # plt.title(f"Latency Distribution({bin_size_sec}s bins)")
 
         # Format x ticks as MM:SS
         def format_mmss(x, _):
@@ -372,7 +377,7 @@ def plot_latency_distribution(excel_file, bin_size_sec=30):
 
         ax = plt.gca()
         ax.xaxis.set_major_formatter(FuncFormatter(format_mmss))
-        ax.xaxis.set_major_locator(MultipleLocator(60))  # tick every 60s (1 min)
+        ax.xaxis.set_major_locator(MultipleLocator(bin_size_sec*2))  # tick every 60s (1 min)
 
         ymax = counts.max()
         if ymax <= 1:
@@ -384,10 +389,10 @@ def plot_latency_distribution(excel_file, bin_size_sec=30):
         plt.grid(axis="y", alpha=0.5)
         plt.tight_layout()
 
-        plot_path = os.path.join(f"latency.png")
+        plot_path = os.path.join(f"{latency_col}.png")
         plt.savefig(plot_path, dpi=300)
         plt.close()
-        print(f"Saved latency distribution plot to {plot_path.replace(os.sep, '/')}")
+        # print(f"Saved latency distribution plot to {plot_path.replace(os.sep, '/')}")
 
     except Exception as e:
         print(f"Could not generate latency distribution plot: {e}")

@@ -23,6 +23,8 @@ import matplotlib.pyplot as plt
 plt.style.use("seaborn-v0_8-whitegrid")
 matplotlib.use("TkAgg")
 
+import uuid
+
 
 from simulation.plotting.plot_functions import plot_offnadir_distribution, plot_latency_distribution
 
@@ -57,65 +59,127 @@ def append_excel_log(writer, row):
     wb.save(path)
     wb.close()
 
+def _to_scalar(val):
+    """Convert NumPy scalars/arrays or None into plain Python types safe for Excel."""
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple, np.ndarray)):
+        if len(val) == 0:
+            return None
+        return float(val[0])  # first element if it's an array/tuple
+    try:
+        return float(val)
+    except Exception:
+        return val
 
-def log_tip_observation(writer, target_id, tip_observation_date, tip_actor, offnadir_deg, gsd_m,
-                      target_lat, target_lon, target_alt, tip_lat, tip_lon, tip_alt,
-                      x, y, z, vx, vy, vz, tip_observation_counter):
-    """Log a tip observation event matching header_tip."""
+def format_hms(seconds: float) -> str:
+    h, rem = divmod(int(seconds), 3600)
+    m, s   = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
-    # if should_log_event(writer, target_id, tip_observation_date, min_gap_sec=1000):
-    row = [target_id,
-           tip_observation_date.isoformat(timespec="seconds") + "Z", tip_actor,
-           offnadir_deg, gsd_m,
-           target_lat, target_lon, target_alt,
-           tip_lat, tip_lon, tip_alt,
-           x, y, z, vx, vy, vz,
-           tip_observation_counter]
+
+def log_tip(writer, detection_id, target_id, tip_actor,
+            tip_observation_date, tip_confirmation_date,
+            tip_ai_decision, true_label, correct,
+            offnadir_deg, gsd_m,
+            target_lat, target_lon, target_alt,
+            tip_lat, tip_lon, tip_alt,
+            x, y, z, vx, vy, vz):
+    """Log a TIP observation/confirmation event matching header_tip."""
+    row = [
+        detection_id,
+        target_id,
+        tip_actor,
+        tip_observation_date.isoformat(timespec="seconds") + "Z" if tip_observation_date else None,
+        tip_confirmation_date.isoformat(timespec="seconds") + "Z" if tip_confirmation_date else None,
+        tip_ai_decision,
+        true_label,
+        correct,
+        _to_scalar(offnadir_deg),
+        _to_scalar(gsd_m),
+        _to_scalar(target_lat), _to_scalar(target_lon), _to_scalar(target_alt),
+        _to_scalar(tip_lat), _to_scalar(tip_lon), _to_scalar(tip_alt),
+        _to_scalar(x), _to_scalar(y), _to_scalar(z),
+        _to_scalar(vx), _to_scalar(vy), _to_scalar(vz)
+    ]
     append_excel_log(writer, row)
 
 
-def log_cue_observation(writer, target_id, cue_observation_date, cue_actor, offnadir_deg, gsd_m,
-                      target_lat, target_lon, target_alt, cue_lat, cue_lon, cue_alt,
-                      x, y, z, vx, vy, vz, roll, pitch, yaw, cue_observation_counter):
-    """Log a cue observation event matching header_cue."""
-
-    # if should_log_event(writer, target_id, cue_observation_date, min_gap_sec=1000):
-    row = [target_id,
-           cue_observation_date.isoformat(timespec="seconds") + "Z", cue_actor,
-           offnadir_deg, gsd_m,
-           target_lat, target_lon, target_alt,
-           cue_lat, cue_lon, cue_alt,
-           x, y, z, vx, vy, vz,
-           roll, pitch, yaw,
-           cue_observation_counter]
+def log_cue(writer, detection_id, target_id, cue_actor,
+            cue_observation_date, cue_confirmation_date,
+            cue_ai_decision, true_label, correct,
+            offnadir_deg, gsd_m,
+            latency_observation, latency_confirmation, slew_stab_time,
+            target_lat, target_lon, target_alt,
+            cue_lat, cue_lon, cue_alt,
+            x, y, z, vx, vy, vz, roll, pitch, yaw):
+    """Log a CUE observation/confirmation event matching header_cue."""
+    row = [
+        detection_id,
+        target_id,
+        cue_actor,
+        cue_observation_date.isoformat(timespec="seconds") + "Z" if cue_observation_date else None,
+        cue_confirmation_date.isoformat(timespec="seconds") + "Z" if cue_confirmation_date else None,
+        cue_ai_decision,
+        true_label,
+        correct,
+        _to_scalar(offnadir_deg),
+        _to_scalar(gsd_m),
+        _to_scalar(latency_observation),
+        _to_scalar(latency_confirmation),
+        _to_scalar(slew_stab_time),
+        _to_scalar(target_lat), _to_scalar(target_lon), _to_scalar(target_alt),
+        _to_scalar(cue_lat), _to_scalar(cue_lon), _to_scalar(cue_alt),
+        _to_scalar(x), _to_scalar(y), _to_scalar(z),
+        _to_scalar(vx), _to_scalar(vy), _to_scalar(vz),
+        _to_scalar(roll), _to_scalar(pitch), _to_scalar(yaw)
+    ]
     append_excel_log(writer, row)
 
 
-def log_combined_observation(writer, target_id, tip_observation_date, tip_actor, cue_observation_date, cue_actor,
-                           offnadir_deg, gsd_m, latency, target_lat, target_lon, target_alt,
-                           cue_lat, cue_lon, cue_alt, tip_observation_counter, cue_observation_counter):
-    """Log a combined tip+cue event matching header_combined."""
+def log_combined(writer, detection_id, target_id, tip_actor, cue_actor,
+                 tip_observation_date, tip_confirmation_date,
+                 cue_observation_date, cue_confirmation_date,
+                 tip_ai_decision, cue_ai_decision,
+                 true_label, correct,
+                 offnadir_deg, gsd_m,
+                 latency_observation, latency_confirmation,
+                 target_lat, target_lon, target_alt,
+                 cue_lat, cue_lon, cue_alt):
+    """Log a combined TIP+CUE event matching header_combined."""
+    row = [
+        detection_id,
+        target_id,
+        tip_actor,
+        cue_actor,
+        tip_observation_date.isoformat(timespec="seconds") + "Z" if tip_observation_date else None,
+        tip_confirmation_date.isoformat(timespec="seconds") + "Z" if tip_confirmation_date else None,
+        cue_observation_date.isoformat(timespec="seconds") + "Z" if cue_observation_date else None,
+        cue_confirmation_date.isoformat(timespec="seconds") + "Z" if cue_confirmation_date else None,
+        tip_ai_decision,
+        cue_ai_decision,
+        true_label,
+        correct,
+        _to_scalar(offnadir_deg),
+        _to_scalar(gsd_m),
+        _to_scalar(latency_observation),
+        _to_scalar(latency_confirmation),
+        _to_scalar(target_lat), _to_scalar(target_lon), _to_scalar(target_alt),
+        _to_scalar(cue_lat), _to_scalar(cue_lon), _to_scalar(cue_alt)
+    ]
+    append_excel_log(writer, row)
 
-    # if should_log_event(writer, target_id, cue_observation_date, min_gap_sec=1000):
 
-    if tip_observation_date != None:
-        tip_time_entry = tip_observation_date.isoformat(timespec="seconds") + "Z"
-    else:
-        tip_time_entry = None
-
-    if cue_observation_date != None:
-        cue_time_entry = cue_observation_date.isoformat(timespec="seconds") + "Z"
-    else:
-        cue_time_entry = None
-
-    row = [target_id,
-           tip_time_entry, tip_actor,
-           cue_time_entry, cue_actor,
-           offnadir_deg, gsd_m, latency,
-           target_lat, target_lon, target_alt,
-           cue_lat, cue_lon, cue_alt,
-           tip_observation_counter, cue_observation_counter]
-
+def log_img(writer, detection_id, cue_lat, cue_lon, cue_alt,
+            tgt_lat, tgt_lon, tgt_alt, t_datetime, dem_seed):
+    """Log an image generation event matching header_img_gen."""
+    row = [
+        detection_id,
+        _to_scalar(cue_lat), _to_scalar(cue_lon), _to_scalar(cue_alt),
+        _to_scalar(tgt_lat), _to_scalar(tgt_lon), _to_scalar(tgt_alt),
+        t_datetime.isoformat(timespec="seconds") + "Z" if t_datetime else None,
+        _to_scalar(dem_seed)
+    ]
     append_excel_log(writer, row)
 
 
@@ -191,10 +255,44 @@ def safe_move(src, dst, retries=5, delay=1.0):
     return False
 
 
-def at_exit(save_name, pl=None, verbose=True):
+def merge_tip_cue_combined(file_path: str) -> None:
+    """Merge observation + confirmation rows for TIP, CUE, COMBINED sheets.
+    Keeps the most recent entry if duplicates exist and overwrites the sheets in place.
 
-    if verbose:
-        print("Save files")
+    Args:
+        file_path (str): Path to Excel workbook.
+    """
+    key_col = "detection_id"
+    sheet_names = ["Tip", "Cue", "Combined"]
+
+    all_sheets = pd.read_excel(file_path, sheet_name=sheet_names)
+
+    with pd.ExcelWriter(file_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+        for sheet, df in all_sheets.items():
+            if key_col not in df.columns:
+                raise ValueError(f"{sheet} sheet has no column '{key_col}'")
+
+            # Reverse so last row is processed first
+            df = df.iloc[::-1]
+
+            merged_df = (
+                df.groupby(key_col, dropna=False, sort=False)
+                  .apply(lambda g: g.ffill().bfill().iloc[0])
+                  .reset_index(drop=True)
+            )
+
+            # Restore order
+            merged_df = merged_df.iloc[::-1].reset_index(drop=True)
+
+            # Overwrite original sheet
+            merged_df.to_excel(writer, sheet_name=sheet, index=False)
+
+
+
+
+
+def at_exit(save_name, pl=None, verbose_def=True, verbose_error=False):
+
     results_dir = os.path.join("results", save_name)
     os.makedirs(results_dir, exist_ok=True)
 
@@ -202,10 +300,10 @@ def at_exit(save_name, pl=None, verbose=True):
         try:
             pl.close()
             time.sleep(0.1)
-            if verbose:
+            if verbose_def:
                 print("Closed pyvista plotter")
         except Exception as e:
-            if verbose:
+            if verbose_error:
                 print(f"Could not close pyvista plotter: {e}")
 
     rename_map = {
@@ -213,10 +311,13 @@ def at_exit(save_name, pl=None, verbose=True):
         "simulation.mp4": f"mov_{save_name}.mov",
         "output.log": f"logs_{save_name}.log",
         "offnadir.png": f"offnadir_{save_name}.png",
-        "latency.png": f"latency_{save_name}.png",
-        f"footprints_tip.html": f"footprints_tip_{save_name}.html",
-        f"footprints_cue.html": f"footprints_cue_{save_name}.html"
+        "latency_observation.png": f"latency_observation_{save_name}.png",
+        "latency_confirmation.png": f"latency_confirmation_{save_name}.png",
+        "footprints_tip.html": f"footprints_tip_{save_name}.html",
+        "footprints_cue.html": f"footprints_cue_{save_name}.html"
     }
+
+    merged_excel_path = None
 
     for src, new_name in rename_map.items():
         if src == "output.log" and isinstance(sys.stdout, Logger):
@@ -226,20 +327,26 @@ def at_exit(save_name, pl=None, verbose=True):
                 sys.stderr = sys.__stderr__
                 time.sleep(0.1)
             except Exception as e:
-                if verbose:
+                if verbose_error:
                     print(f"Could not close print logs: {e}")
 
         if os.path.exists(src):
             dst = os.path.join(results_dir, new_name)
             safe_move(src, dst)
 
+            # Capture the moved Excel file path
+            if src == "sim_output.xlsx":
+                merged_excel_path = dst
         else:
-            if verbose:
+            if verbose_error:
                 print(f"Warning: {src} not found, skipping.")
 
     time.sleep(0.1)
-
     print(f"Saved results in {results_dir.replace(os.sep, '/')}")
+
+
+
+
 
 def compute_stats(series: pd.Series):
     """Return mean, min, max, std for a pandas Series (ignoring NaN)."""

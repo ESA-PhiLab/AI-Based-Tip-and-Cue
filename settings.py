@@ -55,13 +55,13 @@ else:
 # ================================================================================
 # ORBIT
 
-nSats_tip = 2
-nSats_cue = 2
+nSats_tip = 1
+nSats_cue = 1
 
-nPlanes_tip =4
-nPlanes_cue =4
+nPlanes_tip = 1
+nPlanes_cue = 1
 
-delta_t_cue = 1*60          # Time spacing between tip and cue satellite [sec]
+delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
 
 delay_confirmation_tip = 90      # https://www.jpl.nasa.gov/news/how-nasa-is-testing-ai-to-make-earth-observing-satellites-smarter
 delay_transmission_TC = 10

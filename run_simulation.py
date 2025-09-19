@@ -13,6 +13,7 @@ import pandas as pd
 import openpyxl
 import shutil
 import random
+import uuid
 
 from orekit.pyhelpers import setup_orekit_curdir
 
@@ -27,19 +28,22 @@ from simulation.simulation_functions import init_eo_tools, init_attitude_models,
 from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate
 from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
-from simulation.sim_logging import init_excel_log, log_tip_observation, log_cue_observation, log_combined_observation, gsd_offnadir, at_exit, Logger, compute_stats
+from simulation.sim_logging import init_excel_log, log_tip, log_cue, log_combined, log_img, gsd_offnadir, at_exit, Logger, compute_stats, format_hms, merge_tip_cue_combined
 from simulation.onboard_ai.onboard_ai_tip import tip_ai_decision
 from simulation.onboard_ai.onboard_ai_cue import cue_ai_decision
 
+from offnadir_imaging.rendering import generate_image
+
 show_constellation = False
 show_orbits = False
-plot_propagation = False#True
+plot_propagation = False  #True
 plot_footprints = True
 plot_whale_trajectories = True
 
-generate_image = False
+create_image = False
 onboard_ai_tip = True
 onboard_ai_cue = True
+model_attitude_control = True
 
 logging = True
 verbose = False
@@ -124,7 +128,6 @@ rng_ai_tip = random.Random(seed_ai_tip)   # seed for Tip AI
 rng_ai_cue = random.Random(seed_ai_cue)   # seed for Cue AI
 rng_dem = random.Random(seed_dem)
 
-
 n_targets_pos = int(round(n_targets * pos_fraction))
 n_targets_neg = n_targets - n_targets_pos
 
@@ -198,21 +201,24 @@ if plot_propagation:
     pl.open_movie( "simulation.mp4",  framerate=pv_framerate)
 
 if logging:
-    header_tip = ["target_id", "tip_observation_date", "tip_actor", "offnadir_deg", "GSD_m", "target_lat", "target_lon", "target_alt",
-                  "tip_lat", "tip_lon", "tip_alt", "x", "y", "z", "vx", "vy", "vz", "tip_observation_counter"]
+    header_tip = ["detection_id", "target_id","tip_actor", "tip_observation_time", "tip_confirmation_time", "tip_ai_decision", "true_label", "correct", "offnadir_deg", "gsd_m", "target_lat", "target_lon", "target_alt",
+                  "tip_lat", "tip_lon", "tip_alt", "x", "y", "z", "vx", "vy", "vz"]
 
-    header_cue = ["target_id", "cue_observation_date", "cue_actor", "offnadir_deg", "GSD_m", "target_lat", "target_lon", "target_alt",
-                  "cue_lat", "cue_lon", "cue_alt", "x", "y", "z", "vx", "vy", "vz", "roll", "pitch", "yaw", "cue_observation_counter"]
+    header_cue = ["detection_id", "target_id", "cue_actor", "cue_observation_time", "cue_confirmation_time", "cue_ai_decision", "true_label", "correct", "offnadir_deg", "gsd_m", "latency_observation", "latency_confirmation", "slew_stab_time", "target_lat", "target_lon", "target_alt",
+                  "cue_lat", "cue_lon", "cue_alt", "x", "y", "z", "vx", "vy", "vz", "roll", "pitch", "yaw"]
 
-    header_combined = ["target_id", "tip_observation_date", "tip_actor", "cue_observation_date", "cue_actor", "offnadir_deg", "GSD_m", "latency", "target_lat", "target_lon", "target_alt",
-                  "cue_lat", "cue_lon", "cue_alt", "tip_observation_counter", "cue_observation_counter"]
+    header_combined = ["detection_id", "target_id", "tip_actor", "cue_actor", "tip_observation_time", "tip_confirmation_time", "cue_observation_time", "cue_confirmation_time", "tip_ai_decision", "cue_ai_decision", "true_label", "correct", "offnadir_deg", "gsd_m", "latency_observation", "latency_confirmation", "target_lat", "target_lon", "target_alt", "cue_lat", "cue_lon", "cue_alt"]
+
+    header_img_gen = ["detection_id", "cue_lat", "cue_lon", "cue_alt", "tgt_lat", "tgt_lon",
+                            "tgt_alt", "t_datetime", "dem_seed"]
 
     header_overview = ["Metric", "Value", "Comment"]
 
     writer_overview = init_excel_log("sim_output.xlsx", header_overview, sheet_name="Overview")
-    writer_combined = init_excel_log("sim_output.xlsx", header_combined, sheet_name="CombinedLog")
-    writer_tip = init_excel_log("sim_output.xlsx", header_tip, sheet_name="TipLog")
-    writer_cue = init_excel_log("sim_output.xlsx", header_cue, sheet_name="CueLog")
+    writer_combined = init_excel_log("sim_output.xlsx", header_combined, sheet_name="Combined")
+    writer_tip = init_excel_log("sim_output.xlsx", header_tip, sheet_name="Tip")
+    writer_cue = init_excel_log("sim_output.xlsx", header_cue, sheet_name="Cue")
+    writer_img_gen = init_excel_log("sim_output.xlsx", header_img_gen, sheet_name="Img")
 
     results_dir = os.path.join("results", sim_name)
     os.makedirs(results_dir, exist_ok=True)
@@ -227,7 +233,7 @@ if logging:
         if verbose:
             print(f"Warning: {copy_file} not found, skipping.")
 
-    atexit.register(at_exit, save_name=sim_name, pl=pl if plot_propagation else None)
+    atexit.register(at_exit, save_name=sim_name, pl=pl if plot_propagation else None, verbose_def=True, verbose_error=False)
     print("Initiated logging files")
 
 observed_idx_tip = None
@@ -315,6 +321,7 @@ while elapsed_seconds <= sim_duration_seconds:
                 target_coord = whale.position()
                 in_footprint = eo_tools_dict[actor.name].check_point_in_footprint(target_coord, FovPoints)
 
+                # TIP OBSERVATION
                 if in_footprint and whale.state_observing != 1:
 
                     print(f"!! {actor.name}: Observed Target {whale_idx}")
@@ -325,27 +332,55 @@ while elapsed_seconds <= sim_duration_seconds:
                     whale.state_observing = 1
                     whale.coord_observed = whale.position()
 
+                    if whale.detection_id is None:
+                        whale.detection_id = str(uuid.uuid4())
+
+
                     observed_targets_tip[whale_idx] = whale
                     observed_idx_tip = whale_idx
                     tip_observed = True
                     n_observed_tip += 1
-
-                    if onboard_ai_tip:
-                        whale.confirmed_tip = tip_ai_decision(whale, tip_tpr, tip_tnr, rng_ai_tip)
-
-                    else:
-                        whale.confirmed_tip = True
 
                     h_m = float(np.linalg.norm(np.array(r))) - R_earth
                     gsd_tip = gsd_offnadir(gsd0_tip, h_m, offnadir_tip_deg)
 
                     if logging:
                         tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r[0], r[1], r[2], t_datetime).flatten()
-                        log_tip_observation(writer_tip, whale_idx, t_datetime, actor.name, offnadir_tip_deg, gsd_tip, target_coord[0], target_coord[1], target_coord[2], tip_lat,
-                                          tip_lon, tip_alt, r[0], r[1], r[2], v[0], v[1], v[2], tip_observation_counter=1)
 
+                        if logging:
+                            tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r[0], r[1], r[2], t_datetime).flatten()
 
+                            log_tip(writer_tip,
+                                    detection_id=whale.detection_id,
+                                    target_id=whale_idx, tip_actor=actor.name,
+                                    tip_observation_date=t_datetime, tip_confirmation_date=None,
+                                    tip_ai_decision=None, true_label=whale.ai_class_true, correct=None,
+                                    offnadir_deg=offnadir_tip_deg, gsd_m=gsd_tip,
+                                    target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
+                                    tip_lat=tip_lat, tip_lon=tip_lon, tip_alt=tip_alt,
+                                    x=r_vec[0], y=r_vec[1], z=r_vec[2],
+                                    vx=v_vec[0], vy=v_vec[1], vz=v_vec[2])
+
+                            log_combined(writer_combined,
+                                         detection_id=whale.detection_id,
+                                         target_id=whale_idx, tip_actor=actor.name, cue_actor=None,
+                                         tip_observation_date=t_datetime, tip_confirmation_date=None,
+                                         cue_observation_date=None, cue_confirmation_date=None,
+                                         tip_ai_decision=None, cue_ai_decision=None,
+                                         true_label=whale.ai_class_true, correct=None,
+                                         offnadir_deg=offnadir_tip_deg, gsd_m=gsd_tip,
+                                         latency_observation=None, latency_confirmation=None,
+                                         target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
+                                         cue_lat=None, cue_lon=None, cue_alt=None)
+
+                # TIP CONFIRMATION
                 if whale.t_observed_tip != None and whale.state_confirming < 1 and t_datetime > (whale.t_observed_tip + timedelta(seconds=delay_confirmation_tip)):
+
+                        if onboard_ai_tip:
+                            whale.confirmed_tip, label_tip = tip_ai_decision(whale, tip_tpr, tip_tnr, rng_ai_tip)
+
+                        else:
+                            whale.confirmed_tip, label_tip = True, "whale"
 
                         task_coord = whale.coord_observed
 
@@ -396,6 +431,31 @@ while elapsed_seconds <= sim_duration_seconds:
 
                             print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, no Cue assigned (actual={whale.ai_class_true})")
 
+                        if logging:
+                            log_tip(writer_tip,
+                                    detection_id=whale.detection_id,
+                                    target_id=whale_idx, tip_actor=actor.name,
+                                    tip_observation_date=None, tip_confirmation_date=t_datetime,
+                                    tip_ai_decision=label_tip, true_label=whale.ai_class_true,
+                                    correct=(label_tip == whale.ai_class_true),
+                                    offnadir_deg=None, gsd_m=None,
+                                    target_lat=None, target_lon=None, target_alt=None,
+                                    tip_lat=None, tip_lon=None, tip_alt=None,
+                                    x=None, y=None, z=None, vx=None, vy=None, vz=None)
+
+                            log_combined(writer_combined,
+                                         detection_id=whale.detection_id,
+                                         target_id=whale_idx, tip_actor=actor.name, cue_actor=whale.assigned_cue,
+                                         tip_observation_date=None, tip_confirmation_date=t_datetime,
+                                         cue_observation_date=None, cue_confirmation_date=None,
+                                         tip_ai_decision=label_tip, cue_ai_decision=None,
+                                         true_label=whale.ai_class_true,
+                                         correct=(label_tip == whale.ai_class_true),
+                                         offnadir_deg=None, gsd_m=None,
+                                         latency_observation=None, latency_confirmation=None,
+                                         target_lat=None, target_lon=None, target_alt=None,
+                                         cue_lat=None, cue_lon=None, cue_alt=None)
+
         # Do not change attitude for tip
         att_models_dict[actor.name].set_target_euler(eul_ang_tip_default)
         # att_models_dict[actor.name]._actor_attitude_deg = att_models_dict[actor.name]._target_attitude_deg
@@ -425,7 +485,7 @@ while elapsed_seconds <= sim_duration_seconds:
             print(f"!! {actor.name}: failed to compute illumination state, set to True preventing exclusion.")
             print(r_vec, sun_vec_eci, earth.getEquatorialRadius())
 
-
+        # CUE TASKING
         if cue_illuminated:
             for whale_idx, whale in tasked_targets.items():
                 if whale.assigned_cue != actor.name and whale.assigned_cue is not None:
@@ -506,7 +566,6 @@ while elapsed_seconds <= sim_duration_seconds:
 
                             att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
                             _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_ang_cue_default)
-                            whale.t_observed_tip = None
 
                             # Global removal happens at the next loop via cleanup_timeout_targets:
                             if task_id in tasked_targets:
@@ -515,43 +574,53 @@ while elapsed_seconds <= sim_duration_seconds:
             if eo_tools_dict[actor.name].current_task is None:
                 if not np.allclose(att_models_dict[actor.name]._target_attitude_deg, eul_ang_cue_default, atol=0.1):
                     att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
-                    print(f"\t\t {n_steps}!! {actor.name}: Set roll, pitch, yaw target back to default {eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg")
+                    print(f"!! {actor.name}: Set roll, pitch, yaw target back to default {eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg")
 
 
                     # eo_tools_dict[actor.name].offnadir_unbound_target = None
 
-            # --- Handle new target attitude ---
-            if not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=0.1):
+            # CUE ATTITUDE CONTROL
+            if model_attitude_control:
+                # --- Handle new target attitude ---
+                if not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=0.1):
 
-                if not att_models_dict[actor.name].slew_active or not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=10.0):
+                    if not att_models_dict[actor.name].slew_active or not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=10.0):
 
-                        att_models_dict[actor.name]._planned_start_eul = att_models_dict[actor.name]._actor_attitude_deg.copy()
-                        att_models_dict[actor.name]._planned_start_time = elapsed_seconds
+                            att_models_dict[actor.name]._planned_start_eul = att_models_dict[actor.name]._actor_attitude_deg.copy()
+                            att_models_dict[actor.name]._planned_start_time = elapsed_seconds
 
-                        task_update_mode = "new"
+                            task_update_mode = "new"
 
-                else:
-                    task_update_mode = "taken"
+                    else:
+                        task_update_mode = "taken"
 
-                att_models_dict[actor.name].plan_slew( start_eul_deg=att_models_dict[actor.name]._planned_start_eul, target_eul_deg=att_models_dict[actor.name]._new_target_attitude_deg,
-                    omega_max_rad=omega_max_rad, alpha_max_rad=alpha_max_rad, zeta=zeta, wn_rad=wn_rad, dt=sim_step_seconds / 10, mode="per_axis",
-                    t_start=att_models_dict[actor.name]._planned_start_time, w_stab_res=omega_stab_res, a_stab_res=alpha_stab_res )
+                    att_models_dict[actor.name].plan_slew( start_eul_deg=att_models_dict[actor.name]._planned_start_eul, target_eul_deg=att_models_dict[actor.name]._new_target_attitude_deg,
+                        omega_max_rad=omega_max_rad, alpha_max_rad=alpha_max_rad, zeta=zeta, wn_rad=wn_rad, dt=sim_step_seconds / 10, mode="per_axis",
+                        t_start=att_models_dict[actor.name]._planned_start_time, w_stab_res=omega_stab_res, a_stab_res=alpha_stab_res )
 
-                offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)
 
-                print(f"\t\t!! {n_steps}  {actor.name}: Target {task_id} in reach "
-                    f"(current={offnadir_cue_current:.1f} deg, target={att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._new_target_attitude_deg):.1f} deg) "
-                    f"| Roll, pitch, yaw current={att_models_dict[actor.name]._actor_attitude_deg} deg "
-                    f", set to target={att_models_dict[actor.name]._new_target_attitude_deg} deg | update mode {task_update_mode} "
-                    f"| Planned trajectory time {att_models_dict[actor.name].delay_slew_stab:.1f} s ")
 
-            if att_models_dict[actor.name].slew_active:
-                att_models_dict[actor.name].follow_planned_slew(elapsed_seconds)
+                    if task_update_mode == 'new' and eo_tools_dict[actor.name].offnadir_unbound_target != None:
+                        offnadir_unbound = eo_tools_dict[actor.name].offnadir_unbound_target
+                        offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)
+                        offnadir_cue_target, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._new_target_attitude_deg)
+                        current_target_eul = att_models_dict[actor.name]._actor_attitude_deg
+                        new_target_eul = att_models_dict[actor.name]._new_target_attitude_deg
 
-                if np.allclose(att_models_dict[actor.name]._actor_attitude_deg,  att_models_dict[actor.name]._target_attitude_deg,  atol=0.1) and np.any(np.abs(att_models_dict[actor.name]._actor_angular_velocity)) <= 0.01 and np.any(np.abs(att_models_dict[actor.name]._actor_angular_acceleration) <= 0.01):
-                    att_models_dict[actor.name].slew_active = False
-                    print(f"\t\t !! {n_steps} {actor.name}: Completed move (planned trajectory)")
 
+                        print(f"!! {actor.name}: Target {task_id} in reach at {offnadir_unbound:.1f} deg"
+                            f" (current={offnadir_cue_current:.1f} deg, target={offnadir_cue_target:.1f} deg, duration={att_models_dict[actor.name].delay_slew_stab:.1f} s)")
+                          #  f"| Roll, pitch, yaw current=[{current_target_eul[0]:.1f}, {current_target_eul[1]:.1f}, {current_target_eul[2]:.2f}] deg "
+                          #  f", set to target=[{new_target_eul[0]:.1f}, {new_target_eul[1]:.1f}, {new_target_eul[2]:.1f}] deg"
+
+                if att_models_dict[actor.name].slew_active:
+                    att_models_dict[actor.name].follow_planned_slew(elapsed_seconds)
+
+                    if np.allclose(att_models_dict[actor.name]._actor_attitude_deg,  att_models_dict[actor.name]._target_attitude_deg,  atol=0.1) and np.any(np.abs(att_models_dict[actor.name]._actor_angular_velocity)) <= 0.01 and np.any(np.abs(att_models_dict[actor.name]._actor_angular_acceleration) <= 0.01):
+                        att_models_dict[actor.name].slew_active = False
+                        current_eul = att_models_dict[actor.name]._actor_attitude_deg
+                        print(f"!! {actor.name}: Completed move to roll, pitch, yaw {current_eul[0]:.1f}, {current_eul[1]:.1f}, {current_eul[2]:.1f} deg")
+                        eo_tools_dict[actor.name].slew_stab_time = att_models_dict[actor.name].delay_slew_stab
 
             #   if verbose and n_steps % print_interval == 0:
               #       delta_move_eul = eul_new_deg - prev_eul
@@ -585,13 +654,17 @@ while elapsed_seconds <= sim_duration_seconds:
                 in_footprint = eo_tools_dict[actor.name].check_point_in_footprint(target_coord, FovPoints)
                 offnadir_cue_deg, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)
 
+
+                # CUE OBSERVATION
                 if in_footprint and whale.state_observing != 2 and offnadir_cue_deg <= (offnadir_limit + offnadir_margin):
 
-                    print(f"!! {n_steps} {actor.name}: Observed Target {whale_idx} at off-nadir {offnadir_cue_deg:.1f} deg")
+                    print(f"!! {actor.name}: Observed Target {whale_idx} at off-nadir {offnadir_cue_deg:.1f} deg")
 
                     whale.cue_actor = actor.name
                     whale.t_observed_cue = t_datetime
                     whale.coord_observed = target_coord
+                    if whale.detection_id is None:
+                        whale.detection_id = str(uuid.uuid4())
 
                     whale.delay_confirmation_cue = delay_confirmation_cue
                     whale.state_observing = 2
@@ -614,44 +687,64 @@ while elapsed_seconds <= sim_duration_seconds:
 
                     cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r[0], r[1], r[2], t_datetime).flatten()
                     cue_lat, cue_lon, cue_alt = float(cue_lat), float(cue_lon), float(cue_alt)
+                    dem_seed = rng_dem.randint(0, 1000)
+
+                    if create_image:
+                        print("Generate image")
+                        DN255_rgb_offnadir, DN255_rgb_sunglint, radiance_sunglint, DN255_combined = generate_image(img_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1], target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
 
                     if whale.tip_actor != None and whale.t_observed_tip != None:
-                        if t_datetime < whale.t_observed_tip + timedelta(seconds=observation_time_limit):
-                            latency = (whale.t_observed_cue - whale.t_observed_tip).total_seconds()
+                        if t_datetime <= whale.t_observed_tip + timedelta(seconds=observation_time_limit):
+                            latency_observation = (whale.t_observed_cue - whale.t_observed_tip).total_seconds()
                     else:
-                        latency = 0.0
+                        latency_observation = 0.0
+
 
                     if logging:
+                        log_cue(writer_cue,
+                                detection_id=whale.detection_id,
+                                target_id=whale_idx, cue_actor=actor.name,
+                                cue_observation_date=t_datetime, cue_confirmation_date=None,
+                                cue_ai_decision=None, true_label=whale.ai_class_true, correct=None,
+                                offnadir_deg=offnadir_cue_deg, gsd_m=gsd_cue,
+                                latency_observation=latency_observation, latency_confirmation=None,
+                                slew_stab_time=eo_tools_dict[actor.name].slew_stab_time,
+                                target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
+                                cue_lat=cue_lat, cue_lon=cue_lon, cue_alt=cue_alt,
+                                x=r_vec[0], y=r_vec[1], z=r_vec[2],
+                                vx=v_vec[0], vy=v_vec[1], vz=v_vec[2],
+                                roll=att_models_dict[actor.name]._actor_attitude_deg[0],
+                                pitch=att_models_dict[actor.name]._actor_attitude_deg[1],
+                                yaw=att_models_dict[actor.name]._actor_attitude_deg[2])
 
-                        log_cue_observation(writer_cue, whale_idx, t_datetime, actor.name, offnadir_cue_deg, gsd_cue, target_coord[0], target_coord[1], target_coord[2], cue_lat,
-                                          cue_lon, cue_alt, r[0], r[1], r[2], v[0], v[1], v[2],     att_models_dict[actor.name]._actor_attitude_deg[0], att_models_dict[actor.name]._actor_attitude_deg[1], att_models_dict[actor.name]._actor_attitude_deg[2], cue_observation_counter=1)
+                        log_combined(writer_combined,
+                                     detection_id=whale.detection_id,
+                                     target_id=whale_idx, tip_actor=whale.tip_actor, cue_actor=actor.name,
+                                     tip_observation_date=whale.t_observed_tip, tip_confirmation_date=whale.t_confirmed_tip,
+                                     cue_observation_date=t_datetime, cue_confirmation_date=None,
+                                     tip_ai_decision=None, cue_ai_decision=None,
+                                     true_label=whale.ai_class_true, correct=None,
+                                     offnadir_deg=offnadir_cue_deg, gsd_m=gsd_cue,
+                                     latency_observation=latency_observation, latency_confirmation=None,
+                                     target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
+                                     cue_lat=cue_lat, cue_lon=cue_lon, cue_alt=cue_alt)
 
-                        log_combined_observation(writer_combined, whale_idx, whale.t_observed_tip, whale.tip_actor, whale.t_observed_cue, whale.cue_actor, offnadir_cue_deg, gsd_cue,
-                                               latency, whale.lat, whale.lon, whale.alt, cue_lat, cue_lon, cue_alt, tip_observation_counter=1, cue_observation_counter=1)
+                        log_img(writer_img_gen, whale.detection_id, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1],target_coord[2], t_datetime, dem_seed)
 
-
-
-                    if generate_image:
-                        print("Generate image")
-
-                        DN255_rgb_offnadir, DN255_rgb_sunglint, radiance_sunglint, DN255_combined = generate_image(
-                            img_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1],
-                            target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, rng_dem)
-
-                    if onboard_ai_cue:
-                        whale.confirmed_cue = cue_ai_decision(whale, cue_tpr, cue_tnr, rng_ai_cue)
-
-                    else:
-                        whale.confirmed_cue = True
-
+                # CUE CONFIRMATION
                 if whale.t_observed_cue != None and whale.state_confirming < 2 and t_datetime > (whale.t_observed_cue + timedelta(seconds=delay_confirmation_cue)):
+                        if onboard_ai_cue:
+                            whale.confirmed_cue, label_cue = cue_ai_decision(whale, cue_tpr, cue_tnr, rng_ai_cue)
+
+                        else:
+                            whale.confirmed_cue, label_cue = True, "whale"
 
                         whale.t_confirmed_cue = t_datetime
                         whale.state_confirming= 2
 
                         n_confirmed_cue += 1
 
-                        if whale.confirmed_cue:  # Add better decision to prevent twice!!
+                        if whale.confirmed_cue:
                             whale.ai_class_predicted="whale"
                             confirmed_targets_pos[whale_idx] = whale
                             n_confirmed_pos += 1
@@ -661,9 +754,47 @@ while elapsed_seconds <= sim_duration_seconds:
                             confirmed_targets_neg[whale_idx] = whale
                             n_confirmed_neg += 1
 
+                        if whale.tip_actor != None and whale.t_observed_tip != None:
+                            if t_datetime <= whale.t_observed_tip + timedelta(seconds=observation_time_limit):
+                                latency_confirmation = (whale.t_confirmed_cue - whale.t_observed_tip).total_seconds()
+
+                        elif whale.cue_actor != None and whale.t_observed_cue != None:
+                            if t_datetime <= whale.t_observed_cue + timedelta(seconds=observation_time_limit):
+                                latency_confirmation = whale.t_confirmed_cue - whale.t_observed_cue
+
+                        else:
+                            latency_confirmation = None
+
                         print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted} (actual={whale.ai_class_true})")
 
+                        if logging:
+                            log_cue(writer_cue,
+                                    detection_id=whale.detection_id,
+                                    target_id=whale_idx, cue_actor=actor.name,
+                                    cue_observation_date=None, cue_confirmation_date=t_datetime,
+                                    cue_ai_decision=label_cue, true_label=whale.ai_class_true,
+                                    correct=(label_cue == whale.ai_class_true),
+                                    offnadir_deg=None, gsd_m=None,
+                                    latency_observation=None, latency_confirmation=latency_confirmation,
+                                    slew_stab_time=eo_tools_dict[actor.name].slew_stab_time,
+                                    target_lat=None, target_lon=None, target_alt=None,
+                                    cue_lat=None, cue_lon=None, cue_alt=None,
+                                    x=None, y=None, z=None, vx=None, vy=None, vz=None,
+                                    roll=None, pitch=None, yaw=None)
 
+                            log_combined(writer_combined,
+                                         detection_id=whale.detection_id,
+                                         target_id=whale_idx, tip_actor=whale.tip_actor, cue_actor=actor.name,
+                                         tip_observation_date=None, tip_confirmation_date=None,
+                                         cue_observation_date=None, cue_confirmation_date=t_datetime,
+                                         tip_ai_decision=whale.ai_class_predicted if whale.confirmed_tip else None,
+                                         cue_ai_decision=label_cue,
+                                         true_label=whale.ai_class_true,
+                                         correct=(label_cue == whale.ai_class_true),
+                                         offnadir_deg=None, gsd_m=None,
+                                         latency_observation=None, latency_confirmation=latency_confirmation,
+                                         target_lat=None, target_lon=None, target_alt=None,
+                                         cue_lat=None, cue_lon=None, cue_alt=None)
 
         if verbose == True and n_steps % print_interval == 0:
             cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
@@ -673,6 +804,7 @@ while elapsed_seconds <= sim_duration_seconds:
             if cue_observed and observed_idx_cue is not None:
                 whale_dbg = all_targets[observed_idx_cue]
                 print(f"\t\tTarget: idx={observed_idx_cue} | off nadir angle={offnadir_cue_deg:.1f} | gsd={gsd_cue:.2f} | lat={whale_dbg.lat:.1f}, lon={whale_dbg.lon:.1f}, alt={whale_dbg.alt:.1f}")
+
 
     if n_steps % 100 == 0:
         gc.collect()  # Empty garbage
@@ -699,9 +831,11 @@ while elapsed_seconds <= sim_duration_seconds:
     t_end = time.time()
 
     if n_steps % print_interval == 0:
-        print(f" {n_steps} Time iteration: {t_mid - t_start:.2f} | Time plot: {t_end - t_mid:.2f} "
+        print(f"\t\t{n_steps} Time iteration: {t_mid - t_start:.2f} | Time plot: {t_end - t_mid:.2f} "
               f"| Simulation time: {int(elapsed_hours)}h {(int(elapsed_seconds) - int(elapsed_hours) * 3600) // 60}m {(int(elapsed_seconds) - int(elapsed_hours) * 3600) % 60}s")
 
+    for whale in all_targets.values():
+        whale.update_detection_id()
 
     # for actor in tip_actors + cue_actors:
     #     att_models_dict[actor.name].update_attitude(sim_step_seconds)
@@ -713,166 +847,303 @@ while elapsed_seconds <= sim_duration_seconds:
     n_steps += 1
 
 t_sim_end = time.time()
-total_sim_time = t_sim_end - t_sim_start
-hours_sim, rem = divmod(total_sim_time, 3600)
+runtime = t_sim_end - t_sim_start
+hours_sim, rem = divmod(runtime, 3600)
 minutes_sim, seconds_sim = divmod(rem, 60)
 
 print(f"\nTotal simulation time: {int(hours_sim)}h {int(minutes_sim)}m {seconds_sim:.0f}s | "
-      f"Time per iteration: {total_sim_time/n_steps:.2f}s | plot_propagation {plot_propagation}\n")
+      f"Time per iteration: {runtime/n_steps:.2f}s | plot_propagation {plot_propagation}")
 
-observation_efficiency_tip = n_observed_tip / n_targets
-observation_efficiency_cue = n_observed_cue / n_targets
-confirmation_efficiency = n_confirmed_cue / n_targets
+runtime_per_hour = runtime / sim_duration_hours if sim_duration_hours > 0 else 0
+runtime_per_day  = runtime / (sim_duration_hours / 24) if sim_duration_hours > 0 else 0
 
-# --- Order: Satellites + Whales first ---
-print(f"Number of satellites:             {nSats_tip + nSats_cue} (Tip={nSats_tip}, Cue={nSats_cue})")
-print(f"Total targets:                    {n_targets} (positive={n_targets_pos}, negative={n_targets_neg})")
-print(f"Simulation time:                  {sim_duration_hours} h")
+# =========================
+# --- Report (ordered) ---
+# =========================
+print(f"\n\n---------------------- Mission Summary {sim_name} -----------------------------------\n")
+# --- System setup ---
+n_sats_total = nSats_tip + nSats_cue
+print(f"Number of satellites:                       {n_sats_total} (Tip={nSats_tip}, Cue={nSats_cue})")
+print(f"Total targets:                              {n_targets} (positive={n_targets_pos}, negative={n_targets_neg})")
+print(f"Simulation time:                            {sim_duration_hours} h\n")
 
-# --- Orbits ---
+# --- Coverage ---
 n_float_tip, n_full_tip, residual_tip, T_tip = count_orbits_completed(a_tip, sim_duration_seconds)
 n_float_cue, n_full_cue, residual_cue, T_cue = count_orbits_completed(a_cue, sim_duration_seconds)
 
-if T_tip != T_cue:
-    print(f"Tip: orbits completed={n_float_tip:.3f} "
-          f"(full={n_full_tip}, residual={residual_tip:.2f}s, period={T_tip:.1f}s)")
-    print(f"Cue: orbits completed={n_float_cue:.3f} "
-          f"(full={n_full_cue}, residual={residual_cue:.2f}s, period={T_cue:.1f}s)\n")
-else:
-    print(f"Orbits completed:                 {n_float_tip:.3f} "
-          f"(full={n_full_tip}, residual={residual_tip:.2f}s, period={T_tip:.1f}s)\n")
-
-# --- Observation / Efficiencies ---
-print(f"Tip observed:                     {n_observed_tip} (without duplicates: {len(observed_targets_tip)})")
-print(f"Tip confirmed:                    {n_confirmed_tip}")
-print(f"Tip tasks sent:                   {n_tasked_tip}")
-print(f"Cue tasks started:                {n_tasked_cue}")
-print(f"Cue observed:                     {n_observed_cue} (without duplicates: {len(observed_targets_cue)})")
-print(f"Cue confirmed:                    {n_confirmed_cue}\n")
-
-print(f"Positive confirmed:               {n_confirmed_pos} (without duplicates: {len(confirmed_targets_pos)}, actual: {n_targets_pos})")
-print(f"Negative confirmed:               {n_confirmed_neg} (without duplicates: {len(confirmed_targets_neg)}, actual: {n_targets_neg})\n")
-
-print(f"Observation efficiency Tip:       {observation_efficiency_tip * 100:.2f}% of whales ({n_targets} total)")
-print(f"Observation efficiency Cue:       {observation_efficiency_cue * 100:.2f}% of whales ({n_targets} total)")
-print(f"Confirmation efficiency Cue:      {confirmation_efficiency * 100:.2f}% of whales ({n_targets} total)\n")
+print(f"Tip: orbits completed                       {n_float_tip:.3f} "
+      f"(full={n_full_tip}, residual={residual_tip:.2f}s, period={T_tip:.1f}s)")
+print(f"Cue: orbits completed                       {n_float_cue:.3f} "
+      f"(full={n_full_cue}, residual={residual_cue:.2f}s, period={T_cue:.1f}s)\n")
 
 if plot_footprints:
-
-    t1 = time.time()
-    fov_polygons_tip = [f for f in fov_polygons_tip if f is not None]
-    fov_polygons_cue = [f for f in fov_polygons_cue if f is not None]
-
-    area_total_km2, area_mission_km2, area_covered_km2, area_covered_per_orbit_km2, area_mission_fraction_total, area_covered_fraction_total, area_covered_fraction_mission, area_covered_per_orbit_fraction_total, area_covered_per_orbit_fraction_mission = compute_coverage_fraction(
+    (area_total_km2, area_mission_km2, area_covered_km2, area_covered_per_orbit_km2,
+     area_mission_fraction_total, area_covered_fraction_total, area_covered_fraction_mission,
+     area_covered_per_orbit_fraction_total, area_covered_per_orbit_fraction_mission) = compute_coverage_fraction(
         fov_polygons_tip, fov_polygons_cue, R_earth, i_tip_deg, a_tip, sim_duration_seconds)
 
-    print(f"Total coverage:                   {area_covered_km2:,.0f} km² "
-          f"({area_covered_fraction_total * 100:.2f}% of Earth, "
-          f"{area_covered_fraction_mission * 100:.2f}% of possible surface)")
-    print(f"Per orbit coverage:               {area_covered_per_orbit_km2:,.0f} km² "
-          f"({area_covered_per_orbit_fraction_total * 100:.2f}% of Earth, "
-          f"{area_covered_per_orbit_fraction_mission * 100:.2f}% of possible surface)")
+    print(f"Total coverage:                             {area_covered_km2:,.0f} km² "
+          f"({area_covered_fraction_total * 100:.2f}% Earth, "
+          f"{area_covered_fraction_mission * 100:.2f}% mission)")
+    print(f"Per orbit coverage:                         {area_covered_per_orbit_km2:,.0f} km² "
+          f"({area_covered_per_orbit_fraction_total * 100:.2f}% Earth, "
+          f"{area_covered_per_orbit_fraction_mission * 100:.2f}% mission)\n")
 
-    t2 = time.time()
-    print(f"FOV: footprints computation time: {t2-t1:1f} s")
+# --- TIP/CUE process flow ---
+print(f"Tip observed:                               {n_observed_tip} (unique: {len(observed_targets_tip)})")
+print(f"Tip confirmed:                              {n_confirmed_tip}")
+print(f"Tip tasks sent:                             {n_tasked_tip}")
+print(f"Cue tasks started:                          {n_tasked_cue}")
+print(f"Cue observed:                               {n_observed_cue} (unique: {len(observed_targets_cue)})")
+print(f"Cue confirmed:                              {n_confirmed_cue}\n")
 
-else:
-    area_covered_km2 = area_covered_per_orbit_km2 = None
-    area_covered_fraction_total = area_covered_fraction_mission = None
-    area_covered_per_orbit_fraction_total = area_covered_per_orbit_fraction_mission = None
-
+# --- Latency / off-nadir ---
 if logging:
-    df_combined = pd.read_excel("sim_output.xlsx", sheet_name="CombinedLog")
-    avg_latency_s, min_latency_s, max_latency_s, std_latency_s = compute_stats(df_combined["latency"])
-    avg_offnadir_deg, min_offnadir_deg, max_offnadir_deg, std_offnadir_deg = compute_stats(df_combined["offnadir_deg"])
+    df_combined = pd.read_excel("sim_output.xlsx", sheet_name="Combined")
+    avg_latency_obs_s, min_latency_obs_s, max_latency_obs_s, std_latency_obs_s = compute_stats(df_combined["latency_observation"])
+    avg_latency_conf_s, min_latency_conf_s, max_latency_conf_s, std_latency_conf_s = compute_stats(df_combined["latency_confirmation"])
+    avg_offnadir_deg,  min_offnadir_deg,  max_offnadir_deg,  std_offnadir_deg  = compute_stats(df_combined["offnadir_deg"])
 
-    print(f"Average latency:                  {avg_latency_s:.1f} s "
-          f"(min {min_latency_s:.1f} s, max {max_latency_s:.1f} s, std {std_latency_s:.1f} s)")
-    print(f"Average off-nadir angle:          {avg_offnadir_deg:.2f}°  "
+    print(f"Average latency (observation):              {avg_latency_obs_s:.1f} s "
+          f"(min {min_latency_obs_s:.1f}, max {max_latency_obs_s:.1f}, std {std_latency_obs_s:.1f})")
+    print(f"Average latency (confirmation):             {avg_latency_conf_s:.1f} s "
+          f"(min {min_latency_conf_s:.1f}, max {max_latency_conf_s:.1f}, std {std_latency_conf_s:.1f})")
+    print(f"Average off-nadir angle:                    {avg_offnadir_deg:.2f}° "
           f"(min {min_offnadir_deg:.2f}°, max {max_offnadir_deg:.2f}°, std {std_offnadir_deg:.2f}°)\n")
+
+# --- Outcome summary ---
+print(f"Positive confirmed:                         {n_confirmed_pos} (unique: {len(confirmed_targets_pos)}, actual={n_targets_pos})")
+print(f"Negative confirmed:                         {n_confirmed_neg} (unique: {len(confirmed_targets_neg)}, actual={n_targets_neg})\n")
+
+# --- Throughput ---
+tp = fp = tn = fn = 0
+for whale in all_targets.values():
+    if whale.ai_class_predicted is None:
+        continue
+    is_true = (whale.ai_class_true == "whale")
+    is_pred = (whale.ai_class_predicted == "whale")
+    if  is_true and  is_pred: tp += 1
+    if not is_true and  is_pred: fp += 1
+    if not is_true and not is_pred: tn += 1
+    if  is_true and not is_pred: fn += 1
+
+print(f"Throughput (True Positives):                {tp}")
+print(f"Throughput (Confirmations):                 {n_confirmed_cue}\n")
+
+# --- Confusion matrix ---
+print(f"True Positives (TP):                        {tp}")
+print(f"False Positives (FP):                       {fp}")
+print(f"True Negatives (TN):                        {tn}")
+print(f"False Negatives (FN):                       {fn}\n")
+
+# --- Derived classification metrics ---
+prec_den = (tp + fp) if (tp + fp) > 0 else 1
+rec_den  = (tp + fn) if (tp + fn) > 0 else 1
+tn_den   = (tn + fp) if (tn + fp) > 0 else 1
+fnr_den  = (tp + fn) if (tp + fn) > 0 else 1
+
+precision = tp / prec_den
+recall    = tp / rec_den
+f1        = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+false_alarm_rate = fp / tn_den
+miss_rate        = fn / fnr_den
+
+print(f"Precision:                                  {precision*100:.2f}%")
+print(f"Recall (sensitivity):                       {recall*100:.2f}%")
+print(f"F1-score:                                   {f1*100:.2f}%")
+print(f"False Alarm Rate:                           {false_alarm_rate*100:.2f}%")
+print(f"Miss Rate:                                  {miss_rate*100:.2f}%\n")
+
+# --- Process efficiencies ---
+observation_efficiency_tip = n_observed_tip / n_targets if n_targets > 0 else 0
+observation_efficiency_cue = n_observed_cue / n_targets if n_targets > 0 else 0
+confirmation_efficiency    = n_confirmed_cue / n_targets if n_targets > 0 else 0
+
+tip_task_util   = (n_tasked_tip / n_confirmed_tip) if n_confirmed_tip > 0 else 0
+cue_success_rate = (n_confirmed_cue / n_tasked_cue) if n_tasked_cue > 0 else 0
+
+print(f"Tip Observation efficiency:                 {observation_efficiency_tip * 100:.2f}% of whales")
+print(f"Cue Observation efficiency:                 {observation_efficiency_cue * 100:.2f}% of whales")
+print(f"Confirmation efficiency Cue:                {confirmation_efficiency * 100:.2f}% of whales")
+print(f"Tip Task Utilization:                       {tip_task_util*100:.2f}% (Tip tasks / Tip confirmations)")
+print(f"Cue Success Rate:                           {cue_success_rate*100:.2f}% (Cue confirmations / Cue tasks)\n")
+
+# --- Mission efficiency ---
+duration_days = sim_duration_seconds / 86400.0 if sim_duration_seconds > 0 else 0
+tp_per_sat           = tp / n_sats_total if n_sats_total > 0 else 0
+tp_per_orbit         = tp / (n_full_tip + n_full_cue) if (n_full_tip + n_full_cue) > 0 else 0
+tp_per_day           = tp / duration_days if duration_days > 0 else 0
+tp_per_sat_per_orbit = tp_per_orbit / n_sats_total if n_sats_total > 0 else 0
+tp_per_sat_per_day   = tp_per_day / n_sats_total if n_sats_total > 0 else 0
+
+conf_per_sat_all           = n_confirmed_cue / n_sats_total if n_sats_total > 0 else 0
+conf_per_orbit_all         = n_confirmed_cue / (n_full_tip + n_full_cue) if (n_full_tip + n_full_cue) > 0 else 0
+conf_per_day_all           = n_confirmed_cue / duration_days if duration_days > 0 else 0
+conf_per_sat_per_orbit_all = conf_per_orbit_all / n_sats_total if n_sats_total > 0 else 0
+conf_per_sat_per_day_all   = conf_per_day_all / n_sats_total if n_sats_total > 0 else 0
+
+cue_tasks_per_sat = n_tasked_cue / nSats_cue if nSats_cue > 0 else 0
+obs_per_cue_sat   = n_observed_cue / nSats_cue if nSats_cue > 0 else 0
+conf_per_cue_sat  = n_confirmed_cue / nSats_cue if nSats_cue > 0 else 0
+
+print(f"Tasks per Cue satellite:                    {cue_tasks_per_sat:.2f} tasks/sat")
+print(f"Observations per Cue satellite:             {obs_per_cue_sat:.2f} targets/sat")
+print(f"Confirmations per Cue satellite:            {conf_per_cue_sat:.2f} targets/sat\n")
+
+print(f"True Positives per satellite (all):         {tp_per_sat:.2f} TP/sat")
+print(f"True Positives per orbit (all sats):        {tp_per_orbit:.2f} TP/orbit")
+print(f"True Positives per day (all sats):          {tp_per_day:.2f} TP/day")
+print(f"True Positives per satellite per orbit:     {tp_per_sat_per_orbit:.2f} TP/sat/orbit")
+print(f"True Positives per satellite per day:       {tp_per_sat_per_day:.2f} TP/sat/day\n")
+
+print(f"Confirmations per satellite (all):          {conf_per_sat_all:.2f} conf/sat")
+print(f"Confirmations per orbit (all sats):         {conf_per_orbit_all:.2f} conf/orbit")
+print(f"Confirmations per day (all sats):           {conf_per_day_all:.2f} conf/day")
+print(f"Confirmations per satellite per orbit:      {conf_per_sat_per_orbit_all:.2f} conf/sat/orbit")
+print(f"Confirmations per satellite per day:        {conf_per_sat_per_day_all:.2f} conf/sat/day\n")
+
+# --- Runtime ---
+print(f"Total runtime (wall-clock):                 {format_hms(runtime)}")
+print(f"Runtime per simulation hour:                {format_hms(runtime_per_hour)}")
+print(f"Runtime per simulation day:                 {format_hms(runtime_per_day)}\n")
+
 
 # --- Write Overview log row-wise with blank lines ---
 if logging:
-
     wb = openpyxl.load_workbook("sim_output.xlsx")
     ws = wb["Overview"]
-
-    overview_data = [
-        ("Number of satellites", nSats_tip + nSats_cue, f"(Tip={nSats_tip}, Cue={nSats_cue})"),
-        ("Total targets", n_targets, f"(positive={n_targets_pos}, negative={n_targets_neg})"),
-        ("Simulation time (h)", sim_duration_hours, ""),
-
-        ("Tip orbits completed", round(n_float_tip, 3),
-         f"(full={n_full_tip}, residual={residual_tip:.2f}s, period={T_tip:.1f}s)"),
-        ("Cue orbits completed", round(n_float_cue, 3),
-         f"(full={n_full_cue}, residual={residual_cue:.2f}s, period={T_cue:.1f}s)"),
-        ("", "", ""),  # blank row
-
-        ("Tip observed", n_observed_tip, f"(verification: {len(observed_targets_tip)})"),
-        ("Tip confirmed", n_confirmed_tip, ""),
-        ("Tip tasks sent", n_tasked_tip, ""),
-        ("Cue tasks started", n_tasked_cue, ""),
-        ("Cue observed", n_observed_cue, f"(verification: {len(observed_targets_cue)})"),
-        ("Cue confirmed", n_confirmed_cue, ""),
-
-        ("", "", ""),  # blank row
-        ("Positive confirmed", n_confirmed_pos, f"(without duplicates: {len(confirmed_targets_pos)}, actual: {n_targets_pos})"),
-        ("Negative confirmed", n_confirmed_neg, f"(without duplicates: {len(confirmed_targets_neg)}, actual: {n_targets_neg})"),
-
-        ("", "", ""),  # blank row
-        ("Tip observation efficiency (%)", round(observation_efficiency_tip * 100, 2),
-         f"of whales ({n_targets} total)"),
-        ("Cue observation efficiency (%)", round(observation_efficiency_cue * 100, 2),
-         f"of whales ({n_targets} total)"),
-        ("Cue confirmation efficiency (%)", round(confirmation_efficiency * 100, 2),
-         f"of whales ({n_targets} total)"),
-        ("", "", ""),  # blank row
-
-        ("Total coverage (km²)", round(area_covered_km2, 1) if area_covered_km2 else "",
-         f"({area_covered_fraction_total * 100:.2f}% Earth, {area_covered_fraction_mission * 100:.2f}% mission)" if area_covered_fraction_total else ""),
-        ("Coverage per orbit (km²)", round(area_covered_per_orbit_km2, 1) if area_covered_per_orbit_km2 else "",
-         f"({area_covered_per_orbit_fraction_total * 100:.2f}% Earth, {area_covered_per_orbit_fraction_mission * 100:.2f}% mission)" if area_covered_per_orbit_fraction_total else ""),
-        ("", "", ""),  # blank row
-
-        ("Average latency (s)", round(avg_latency_s, 1),
-         f"(min {min_latency_s:.1f}, max {max_latency_s:.1f}, std {std_latency_s:.1f})"),
-        ("Average off-nadir (deg)", round(avg_offnadir_deg, 2),
-         f"(min {min_offnadir_deg:.2f}, max {max_offnadir_deg:.2f}, std {std_offnadir_deg:.2f})"),
-    ]
 
     # Clear old rows (keep header)
     ws.delete_rows(2, ws.max_row)
 
-    # Write new rows
+    overview_data = [
+        # --- System setup ---
+        ("Number of satellites", n_sats_total, f"(Tip={nSats_tip}, Cue={nSats_cue})"),
+        ("Total targets", n_targets, f"(positive={n_targets_pos}, negative={n_targets_neg})"),
+        ("Simulation time (h)", sim_duration_hours, ""),
+        ("", "", ""),
+
+        # --- Coverage ---
+        ("Tip orbits completed", round(n_float_tip, 3),
+         f"(full={n_full_tip}, residual={residual_tip:.2f}s, period={T_tip:.1f}s)"),
+        ("Cue orbits completed", round(n_float_cue, 3),
+         f"(full={n_full_cue}, residual={residual_cue:.2f}s, period={T_cue:.1f}s)"),
+        ("Total coverage (km²)", round(area_covered_km2, 1) if area_covered_km2 else "",
+         f"({area_covered_fraction_total * 100:.2f}% Earth, {area_covered_fraction_mission * 100:.2f}% mission)" if area_covered_fraction_total else ""),
+        ("Coverage per orbit (km²)", round(area_covered_per_orbit_km2, 1) if area_covered_per_orbit_km2 else "",
+         f"({area_covered_per_orbit_fraction_total * 100:.2f}% Earth, {area_covered_per_orbit_fraction_mission * 100:.2f}% mission)" if area_covered_per_orbit_fraction_total else ""),
+        ("", "", ""),
+
+        # --- TIP/CUE process flow ---
+        ("Tip observed", n_observed_tip, f"(unique: {len(observed_targets_tip)})"),
+        ("Tip confirmed", n_confirmed_tip, ""),
+        ("Tip tasks sent", n_tasked_tip, ""),
+        ("Cue tasks started", n_tasked_cue, ""),
+        ("Cue observed", n_observed_cue, f"(unique: {len(observed_targets_cue)})"),
+        ("Cue confirmed", n_confirmed_cue, ""),
+        ("", "", ""),
+
+        # --- Latency / off-nadir ---
+        ("Average latency (observation)", round(avg_latency_obs_s, 1),
+         f"(min {min_latency_obs_s:.1f}, max {max_latency_obs_s:.1f}, std {std_latency_obs_s:.1f})"),
+        ("Average latency (confirmation)", round(avg_latency_conf_s, 1),
+         f"(min {min_latency_conf_s:.1f}, max {max_latency_conf_s:.1f}, std {std_latency_conf_s:.1f})"),
+        ("Average off-nadir angle", round(avg_offnadir_deg, 2),
+         f"(min {min_offnadir_deg:.2f}, max {max_offnadir_deg:.2f}, std {std_offnadir_deg:.2f})"),
+        ("", "", ""),
+
+        # --- Outcome summary ---
+        ("Positive confirmed", n_confirmed_pos, f"(unique: {len(confirmed_targets_pos)}, actual: {n_targets_pos})"),
+        ("Negative confirmed", n_confirmed_neg, f"(unique: {len(confirmed_targets_neg)}, actual: {n_targets_neg})"),
+        ("Throughput (True Positives)", tp, ""),
+        ("Throughput (Confirmations)", n_confirmed_cue, ""),
+        ("", "", ""),
+
+        # --- Confusion matrix ---
+        ("True Positives (TP)", tp, ""),
+        ("False Positives (FP)", fp, ""),
+        ("True Negatives (TN)", tn, ""),
+        ("False Negatives (FN)", fn, ""),
+        ("", "", ""),
+
+        # --- Derived classification metrics ---
+        ("Precision (%)", round(precision * 100, 2), ""),
+        ("Recall (sensitivity, %)", round(recall * 100, 2), ""),
+        ("F1-score (%)", round(f1 * 100, 2), ""),
+        ("False Alarm Rate (%)", round(false_alarm_rate * 100, 2), ""),
+        ("Miss Rate (%)", round(miss_rate * 100, 2), ""),
+        ("", "", ""),
+
+        # --- Process efficiencies ---
+        ("Tip Observation efficiency (%)", round(observation_efficiency_tip * 100, 2),
+         f"of whales ({n_targets} total)"),
+        ("Cue Observation efficiency (%)", round(observation_efficiency_cue * 100, 2),
+         f"of whales ({n_targets} total)"),
+        ("Confirmation efficiency Cue (%)", round(confirmation_efficiency * 100, 2),
+         f"of whales ({n_targets} total)"),
+        ("Tip Task Utilization (%)", round(tip_task_util * 100, 2), "Tip tasks / Tip confirmations"),
+        ("Cue Success Rate (%)", round(cue_success_rate * 100, 2), "Cue confirmations / Cue tasks"),
+        ("", "", ""),
+
+        # --- Mission efficiency ---
+        ("Tasks per Cue satellite", round(cue_tasks_per_sat, 2), ""),
+        ("Observations per Cue satellite", round(obs_per_cue_sat, 2), ""),
+        ("Confirmations per Cue satellite", round(conf_per_cue_sat, 2), ""),
+
+        ("True Positives per satellite (all)", round(tp_per_sat, 2), ""),
+        ("True Positives per orbit (all sats)", round(tp_per_orbit, 2), ""),
+        ("True Positives per day (all sats)", round(tp_per_day, 2), ""),
+        ("True Positives per satellite per orbit", round(tp_per_sat_per_orbit, 2), ""),
+        ("True Positives per satellite per day", round(tp_per_sat_per_day, 2), ""),
+
+        ("Confirmations per satellite (all)", round(conf_per_sat_all, 2), ""),
+        ("Confirmations per orbit (all sats)", round(conf_per_orbit_all, 2), ""),
+        ("Confirmations per day (all sats)", round(conf_per_day_all, 2), ""),
+        ("Confirmations per satellite per orbit", round(conf_per_sat_per_orbit_all, 2), ""),
+        ("Confirmations per satellite per day", round(conf_per_sat_per_day_all, 2), ""),
+        ("", "", ""),
+
+        # --- Runtime ---
+        ("Total runtime (wall-clock)", format_hms(runtime), ""),
+        ("Runtime per simulation hour", format_hms(runtime_per_hour), ""),
+        ("Runtime per simulation day", format_hms(runtime_per_day), ""),
+    ]
+
     for row in overview_data:
         ws.append(row)
 
-    # --- Auto-adjust column widths ---
+    # Auto-adjust column widths
     for col in ws.columns:
         max_length = 0
         col_letter = col[0].column_letter
         for cell in col:
-            try:
-                if cell.value:
-                    max_length = max(max_length, len(str(cell.value)))
-            except:
-                pass
-        adjusted_width = max_length + 2  # padding
-        ws.column_dimensions[col_letter].width = adjusted_width
+            if cell.value:
+                max_length = max(max_length, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = max_length + 2
 
     wb.save("sim_output.xlsx")
+    time.sleep(0.1)
+    merge_tip_cue_combined("sim_output.xlsx")
 
     if os.path.exists("sim_output.xlsx"):
-        plot_offnadir_distribution("sim_output.xlsx", bin_size_deg=5)
-        plot_latency_distribution("sim_output.xlsx", bin_size_sec=30)
+        plot_offnadir_distribution("sim_output.xlsx", bin_size_deg=2.5)
+        plot_latency_distribution("sim_output.xlsx", 'latency_observation', bin_size_sec=15)
+        plot_latency_distribution("sim_output.xlsx", 'latency_confirmation', bin_size_sec=15)
         if verbose:
             print("Created offnadir and latency distribution plots")
 
-at_exit(sim_name, pl=(pl if plot_propagation else None), verbose=verbose)
+print("\n")
+at_exit(sim_name, pl=(pl if plot_propagation else None), verbose_def=True, verbose_error=False)
 
 if plot_footprints:
-    print(f"Generate footprint plots with len {len(fov_polygons_cue)}")
+    print(f"\n\n\tGenerate footprint plots with len {len(fov_polygons_cue)}")
     t1 = time.time()
+
+    fov_polygons_tip = [f for f in fov_polygons_tip if f is not None]
+    fov_polygons_cue = [f for f in fov_polygons_cue if f is not None]
+
+    t2 = time.time()
+    print(f"\tFOV: footprints cleanup time:  {t2 - t1:1f} s")
 
     if len(fov_polygons_tip) > 0:
         plot_all_fov_footprints_plotly(fov_polygons_tip, all_targets, observed_targets_tip, nPlanes_tip, nSats_tip, extension="tip", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories)
@@ -880,8 +1151,8 @@ if plot_footprints:
     if len(fov_polygons_cue) > 0:
         plot_all_fov_footprints_plotly(fov_polygons_cue, all_targets, observed_targets_cue, nPlanes_cue, nSats_cue, extension="cue", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories)
 
-    t2 = time.time()
-    print(f"FOV: footprints plotting time: {t2 - t1:1f} s")
+    t3 = time.time()
+    print(f"\tFOV: footprints plotting time: {t3 - t2:1f} s\n ")
 
 if show_orbits:
     plot_orbits(trajectories)

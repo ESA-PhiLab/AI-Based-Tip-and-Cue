@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from settings import R_earth, max_abs_lat
+import uuid
 
 # --------------------------- UTILS ---------------------------
 
@@ -131,6 +132,8 @@ class Whale:
     tip_observation_counter: int = 0
     cue_observation_counter: int = 0
 
+    detection_id: Optional[str] = None
+
     def step(self, mask: np.ndarray, res_deg: float, dt_sec: float, whale_propagation: dict):
         """Advance whale position with OU speed, diffusive heading, and land avoidance."""
         if dt_sec <= 0.0:
@@ -167,6 +170,26 @@ class Whale:
 
     def position(self) -> tuple[float, float, float]:
         return self.lat, self.lon, self.alt
+
+    def update_detection_id(self):
+        """Assign or reset detection_id based on AI classification & state."""
+
+        # Assign at first observation
+        if self.detection_id is None and (self.t_observed_tip or self.t_observed_cue):
+            self.detection_id = str(uuid.uuid4())
+
+        # Reset if TIP confirmed negative (predicted not-whale)
+        if self.t_confirmed_tip and self.ai_class_predicted == "not-whale":
+            self.detection_id = None
+
+        # Reset if CUE confirmation happened (always ends cycle)
+        if self.t_confirmed_cue:
+            self.detection_id = None
+
+        # Reset if target was dropped before confirmation
+        if self.state_observing == 0 and self.state_tasked == 0 and self.state_confirming == 0:
+            if self.t_observed_tip or self.t_observed_cue:
+                self.detection_id = None
 
 # --------------------------- INITIAL TARGETS ---------------------------
 
@@ -216,6 +239,7 @@ def init_whales(known_targets: list[tuple[float, float, float]],  seed_val: Opti
 def update_whales(all_targets: dict[int, Whale], mask: np.ndarray, res_deg: float, dt: float, whale_propagation: dict):
     for w in all_targets.values():
         w.step(mask, res_deg, dt_sec=dt, whale_propagation=whale_propagation)
+
 
 
 
