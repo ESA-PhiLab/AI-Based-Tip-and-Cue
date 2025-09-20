@@ -6,11 +6,15 @@ import math
 from datetime import datetime, timezone
 from typing import List
 
+
 import numpy as np
 import pyvista as pv
 from matplotlib import pyplot as plt
+import matplotlib.colors as mcolors
+
 from pyvista import examples
 import pymap3d as pm
+import gc
 
 from settings import R_earth
 from paseos.custom_paseos.utils.point_transformation import Point_Geodetic2ECI, Point_ECI2Geodetic
@@ -196,8 +200,11 @@ def _eci_to_greenwich_angle_rad(t: datetime) -> float:
     return math.atan2(ye, xe)
 
 
-def make_plotter_eci():
-    pl = pv.Plotter(lighting="none", window_size=(1920, 1072))
+def make_plotter_eci(uhd):
+    window_size = (3840, 2160) if uhd else (1920, 1072)
+    off_screen = True if uhd else False
+
+    pl = pv.Plotter(lighting="none", window_size=window_size, off_screen=off_screen)
     cubemap = examples.download_cubemap_space_4k()
     pl.add_actor(cubemap.to_skybox())
     pl.set_environment_texture(cubemap, is_srgb=True)
@@ -443,116 +450,6 @@ def update_points_from_targets(points_array, targets_dict, t_datetime):
         points_array[whale_idx] = pos
     return points_array
 
-
-def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=None):
-    """
-    Clear an existing PyVista plotter window and re-add background, Earth,
-    satellites, whales, FoV meshes and Sun light. Keeps same window open and
-    preserves Earth rotation continuity by passing in last_theta.
-    """
-    pl.clear()
-
-    cubemap = examples.download_cubemap_space_4k()
-    pl.add_actor(cubemap.to_skybox())
-    pl.set_environment_texture(cubemap, is_srgb=True)
-
-    earth_mesh = examples.planets.load_earth(radius=R_earth)
-    earth_tex = examples.load_globe_texture()
-    earth_actor = pl.add_mesh(earth_mesh, texture=earth_tex, smooth_shading=True)
-
-    earth_state = {"last_theta": last_theta}
-
-    whales_plot_all = pv.PolyData(np.zeros((len(all_targets), 3)))
-    pl.add_points(whales_plot_all, color="red", point_size=8, render_points_as_spheres=True)
-
-    obs_tip_pts = np.full((n_whales, 3), np.nan)
-    whales_plot_observed_tip = pv.PolyData(obs_tip_pts.copy())
-    pl.add_points(whales_plot_observed_tip, color="orange", point_size=9, render_points_as_spheres=True)
-
-    task_pts = np.full((n_whales, 3), np.nan)
-    whales_plot_tasked = pv.PolyData(task_pts.copy())
-    pl.add_points(whales_plot_tasked, color="orange", point_size=12, render_points_as_spheres=True)
-
-    obs_cue_pts = np.full((n_whales, 3), np.nan)
-    whales_plot_observed_cue = pv.PolyData(obs_cue_pts.copy())
-    pl.add_points(whales_plot_observed_cue, color="orange", point_size=9, render_points_as_spheres=True)
-
-    conf_pts_pos = np.full((n_whales, 3), np.nan)
-    whales_plot_confirmed_pos = pv.PolyData(conf_pts_pos.copy())
-    pl.add_points(whales_plot_confirmed_pos, color="green", point_size=10, render_points_as_spheres=True)
-
-    conf_pts_neg = np.full((n_whales, 3), np.nan)
-    whales_plot_confirmed_neg = pv.PolyData(conf_pts_neg.copy())
-    pl.add_points(whales_plot_confirmed_neg, color="navy", point_size=10, render_points_as_spheres=True)
-
-    cloud_tip_sats = pv.PolyData(np.zeros((len(tip_actors), 3)))
-    pl.add_points(cloud_tip_sats, color="yellowgreen", point_size=20, render_points_as_spheres=True)
-
-    cloud_cue_sats = pv.PolyData(np.zeros((len(cue_actors), 3)))
-    pl.add_points(cloud_cue_sats, color="lightseagreen", point_size=15, render_points_as_spheres=True)
-
-    tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes = init_fov_layers_eci(
-        pl, n_tip=len(tip_actors), n_cue=len(cue_actors),
-        tip_fill_color="orange", cue_fill_color="cyan",
-        tip_edge_color="white", cue_edge_color="white",
-        opacity=0.35, line_width=5.0
-    )
-
-    sun_light = init_sun_light(pl)
-
-    step_text = pl.add_text("Step: 0", font_size=10, position="lower_right", color='slategrey')
-
-    return (earth_actor, earth_state, sun_light,
-            whales_plot_all, whales_plot_observed_tip, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed_pos, whales_plot_confirmed_neg,
-            cloud_tip_sats, cloud_cue_sats, tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
-            obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg, step_text)
-
-
-def update_plotter(pl,
-                   earth_actor, earth_state,
-                   sun_light, cloud_tip_sats, cloud_cue_sats,
-                   whales_plot_all, whales_plot_observed_tip, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed_pos, whales_plot_confirmed_neg,
-                   tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
-                   t_datetime, tip_positions, cue_positions,
-                   all_targets, observed_targets_tip, tasked_targets, observed_targets_cue, confirmed_targets_pos, confirmed_targets_neg,
-                   obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg,
-                   FovPoints_tip, FovPoints_cue, step_text, n_steps):
-    update_earth_rotation_eci(earth_actor, t_datetime, earth_state)
-    update_sun_light_eci(sun_light, t_datetime)
-
-    cloud_tip_sats.points = sats_to_points_eci(tip_positions)
-    cloud_cue_sats.points = sats_to_points_eci(cue_positions)
-
-    whales_plot_all.points = whales_to_points_eci(all_targets, t_datetime)
-
-    obs_tip_pts = update_points_from_targets(obs_tip_pts, observed_targets_tip, t_datetime)
-    whales_plot_observed_tip.points = obs_tip_pts
-
-    task_pts = update_points_from_targets(task_pts, tasked_targets, t_datetime)
-    whales_plot_tasked.points = task_pts
-
-    obs_cue_pts = update_points_from_targets(obs_cue_pts, observed_targets_cue, t_datetime)
-    whales_plot_observed_cue.points = obs_cue_pts
-
-    conf_pts_pos = update_points_from_targets(conf_pts_pos, confirmed_targets_pos, t_datetime)
-    whales_plot_confirmed_pos.points = conf_pts_pos
-
-    conf_pts_neg = update_points_from_targets(conf_pts_neg, confirmed_targets_neg, t_datetime)
-    whales_plot_confirmed_neg.points = conf_pts_neg
-
-    update_fov_layers_eci(
-        tip_fill_meshes, tip_edge_meshes,
-        cue_fill_meshes, cue_edge_meshes,
-        FovPoints_tip, FovPoints_cue, t_datetime
-    )
-
-    step_text.SetText(1, f"Step: {n_steps}")
-
-    pl.update()
-
-    return obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg
-
-
 def compute_movie_framerate(a, sim_step_seconds, plot_interval, movie_orbit_sec):
     T_orbit = compute_orbital_period(a)
     steps_per_orbit = T_orbit / sim_step_seconds
@@ -562,3 +459,224 @@ def compute_movie_framerate(a, sim_step_seconds, plot_interval, movie_orbit_sec)
     if framerate < 1:
         framerate = 1
     return framerate, frames_per_orbit
+
+def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=None, uhd=True):
+    """Reset PyVista scene and add Earth, satellites, whales, FoVs, and Sun light."""
+    pl.clear()
+
+    res = 2 if uhd else 1
+
+    # Background
+    cubemap = examples.download_cubemap_space_4k()
+    pl.add_actor(cubemap.to_skybox())
+    pl.set_environment_texture(cubemap, is_srgb=True)
+
+    # Earth
+    earth_mesh = examples.planets.load_earth(radius=R_earth)
+    earth_tex = examples.load_globe_texture()
+    earth_actor = pl.add_mesh(earth_mesh, texture=earth_tex, smooth_shading=True)
+    earth_state = {"last_theta": last_theta}
+
+    # --- All whales (baseline size 8) ---
+    whale_points = np.zeros((n_whales, 3))
+    whales_poly = pv.PolyData(whale_points)
+    whales_poly["state"] = np.zeros(n_whales, dtype=int)
+
+    state_colors = ["red", "orange", "yellow", "cyan", "green", "navy"]
+    cmap = mcolors.ListedColormap(state_colors)
+
+    pl.add_points(
+        whales_poly,
+        scalars="state",
+        render_points_as_spheres=True,
+        point_size=8*res,
+        cmap=cmap,
+        clim=(0, 5),          # lock LUT range so 0..5 map correctly
+        nan_color="gray",
+        show_scalar_bar=False,
+    )
+
+    # --- Tasked whales (overlay, size 12, yellow) ---
+    # IMPORTANT: build with verts and keep them updated later
+    tasked_poly = make_points_polydata(0)
+    pl.add_points(
+        tasked_poly,
+        color="orange",
+        render_points_as_spheres=True,
+        point_size=12*res,
+    )
+
+    # Satellites
+    cloud_tip_sats = pv.PolyData(np.zeros((len(tip_actors), 3)))
+    pl.add_points(cloud_tip_sats, color="yellowgreen", point_size=20*res, render_points_as_spheres=True)
+
+    cloud_cue_sats = pv.PolyData(np.zeros((len(cue_actors), 3)))
+    pl.add_points(cloud_cue_sats, color="lightseagreen", point_size=15*res, render_points_as_spheres=True)
+
+    # FoVs
+    tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes = init_fov_layers_eci(
+        pl, n_tip=len(tip_actors), n_cue=len(cue_actors),
+        tip_fill_color="orange", cue_fill_color="cyan",
+        tip_edge_color="white", cue_edge_color="white",
+        opacity=0.35, line_width=5.0
+    )
+
+    # Sun
+    sun_light = init_sun_light(pl)
+
+    # Step label
+    step_text = pl.add_text("Step: 0", font_size=10, position="lower_right", color="slategrey")
+
+    return (earth_actor, earth_state, sun_light,
+            whales_poly, tasked_poly, cloud_tip_sats, cloud_cue_sats,
+            tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
+            step_text)
+
+
+def update_plotter(pl,
+                   earth_actor, earth_state,
+                   sun_light, whales_poly, tasked_poly,
+                   cloud_tip_sats, cloud_cue_sats,
+                   tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
+                   t_datetime, tip_positions, cue_positions,
+                   all_targets, observed_targets_tip, tasked_targets, observed_targets_cue,
+                   confirmed_targets_pos, confirmed_targets_neg,
+                   FovPoints_tip, FovPoints_cue, step_text, n_steps):
+
+    # Earth + Sun
+    update_earth_rotation_eci(earth_actor, t_datetime, earth_state)
+    update_sun_light_eci(sun_light, t_datetime)
+
+    # Satellites
+    cloud_tip_sats.points = sats_to_points_eci(tip_positions)
+    cloud_cue_sats.points = sats_to_points_eci(cue_positions)
+
+    # ---------------------- Whales (vectorized) ----------------------
+    whales = list(all_targets.values())
+    n_whales = len(whales)
+
+    if n_whales > 0:
+        lats = np.array([w.lat for w in whales])
+        lons = np.array([w.lon for w in whales])
+        alts = np.array([w.alt for w in whales])
+
+        x, y, z = pm.geodetic2ecef(lats, lons, alts)
+        X, Y, Z = pm.ecef2eci(x, y, z, t_datetime)
+        whales_poly.points = _eci_to_pv(np.column_stack([X, Y, Z]))
+
+        ids = np.array([w.id for w in whales], dtype=object)
+        state = np.zeros(n_whales, dtype=int)
+
+        # priority via order of assignment (later wins)
+        if observed_targets_cue:
+            state[np.isin(ids, list(observed_targets_cue.keys()))] = 3
+        if observed_targets_tip:
+            state[np.isin(ids, list(observed_targets_tip.keys()))] = 1
+        if confirmed_targets_neg:
+            state[np.isin(ids, list(confirmed_targets_neg.keys()))] = 5
+        if confirmed_targets_pos:
+            state[np.isin(ids, list(confirmed_targets_pos.keys()))] = 4
+
+        whales_poly["state"] = state
+
+        # --- Tasked whales overlay (bigger yellow) ---
+        if tasked_targets:
+            mask_tasked = np.isin(ids, list(tasked_targets.keys()))
+            new_pts = whales_poly.points[mask_tasked]
+            update_points_polydata(tasked_poly, new_pts)     # <-- ensures verts are correct
+        else:
+            update_points_polydata(tasked_poly, np.zeros((0, 3)))  # clear overlay cleanly
+
+    # ---------------------- FoVs ----------------------
+    update_fov_layers_eci(
+        tip_fill_meshes, tip_edge_meshes,
+        cue_fill_meshes, cue_edge_meshes,
+        FovPoints_tip, FovPoints_cue, t_datetime
+    )
+
+    # Step label
+    step_text.SetText(1, f"Step: {n_steps}")
+    pl.update()
+
+
+
+def _remove_light(pl, L):
+    if L is None:
+        return
+    try:
+        try:
+            pl.remove_light(L)      # detach from renderer if present
+        except Exception:
+            pass
+        try:
+            L.off()                 # be extra safe
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+def close_plotter_safely(pl, *, sun_light=None, extra_lights=None):
+    """
+    Cleanly tear down a PyVista plotter to avoid 'Exception ignored in: __del__'
+    messages from VTK/PyVista at interpreter shutdown.
+
+    Parameters
+    ----------
+    pl : pv.Plotter
+        The plotter to close.
+    sun_light : pv.Light | None
+        Optional handle to the Sun light to remove explicitly.
+    extra_lights : Iterable[pv.Light] | None
+        Any other lights to remove explicitly.
+    """
+    if pl is None:
+        return
+
+    # 1) stop movie writer if open
+    try:
+        if getattr(pl, "_movie_open", False):
+            pl._close_movie()
+    except Exception:
+        pass
+
+    # 2) remove any custom lights (prevents Light.__del__ traceback)
+    try:
+        _remove_light(pl, sun_light)
+        if extra_lights:
+            for L in extra_lights:
+                _remove_light(pl, L)
+    except Exception:
+        pass
+
+    # 3) disable picking and clear actors/widgets/text
+    try:
+        pl.disable_picking()
+    except Exception:
+        pass
+    try:
+        pl.clear()                  # remove actors from the scene
+    except Exception:
+        pass
+
+    # 4) free renderer resources and close window
+    try:
+        pl.deep_clean()
+    except Exception:
+        pass
+    try:
+        pl.close()                  # closes the render window + interactor
+    except Exception:
+        pass
+
+    # 5) close any other open plotters (paranoia)
+    try:
+        pv.close_all()
+    except Exception:
+        pass
+
+    # 6) make sure ref cycles are collected
+    gc.collect()
+# ----------------------------------------------------------------------------
+
+
+

@@ -23,6 +23,8 @@ import matplotlib.pyplot as plt
 plt.style.use("seaborn-v0_8-whitegrid")
 matplotlib.use("TkAgg")
 
+from .plotting.plot_pyvista import close_plotter_safely
+
 import uuid
 
 
@@ -295,14 +297,14 @@ def merge_tip_cue_combined(file_path: str) -> None:
 
 
 
-def at_exit(save_name, pl=None, verbose_def=True, verbose_error=False):
+def at_exit(save_name, pl=None, sun_light=None, verbose_def=False, verbose_error=False):
 
     results_dir = os.path.join("0_results", save_name)
     os.makedirs(results_dir, exist_ok=True)
 
     if pl is not None:
         try:
-            pl.close()
+            close_plotter_safely(pl, sun_light=sun_light)
             time.sleep(0.1)
             if verbose_def:
                 print("Closed pyvista plotter")
@@ -337,11 +339,11 @@ def at_exit(save_name, pl=None, verbose_def=True, verbose_error=False):
 
         if os.path.exists(src):
             dst = os.path.join(results_dir, new_name)
-            safe_move(src, dst)
+            try:
+                safe_move(src, dst)
+            except:
+                pass
 
-            # Capture the moved Excel file path
-            if src == "sim_output.xlsx":
-                merged_excel_path = dst
         else:
             if verbose_error:
                 print(f"Warning: {src} not found, skipping.")

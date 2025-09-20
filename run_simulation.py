@@ -27,7 +27,7 @@ from simulation.targets.whales import update_whales, init_whales
 from simulation.targets.water_target_utils import load_land_mask, generate_random_water_targets, build_land_mask
 from simulation.sim_utils import init_eo_tools, init_attitude_models, link_eo_attitude, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, count_orbits_completed, compute_coverage_fraction, _clear_actor_task
 from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution, plot_viewing_time_distribution
-from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate, camera_position_xy
+from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate, camera_position_xy, close_plotter_safely
 from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
 from simulation.sim_logging import init_excel_log, log_tip, log_cue, log_combined, log_img, gsd_offnadir, at_exit, Logger, compute_stats, format_hms, merge_tip_cue_combined
 
@@ -38,7 +38,7 @@ from offnadir_imaging.rendering import generate_image
 
 show_constellation = False
 show_orbits = False
-plot_propagation = True
+plot_propagation, uhd = True, True
 plot_footprints = True
 plot_whale_trajectories = False
 
@@ -53,7 +53,7 @@ verbose = False
 if real_run:
     show_constellation = False
     show_orbits = False
-    plot_propagation = True
+    plot_propagation, uhd = True, True
     plot_footprints = True
     plot_whale_trajectories = False
 
@@ -212,12 +212,13 @@ tasked_targets, observed_targets_tip, observed_targets_cue, confirmed_targets_po
 whale_trajectories = {idx: np.full((n_steps_total, 2), np.nan, dtype=float) for idx in all_targets.keys()}
 
 if plot_propagation:
-    pl, earth_actor, earth_state = make_plotter_eci()
+    pl, earth_actor, earth_state = make_plotter_eci(uhd)
 
     (earth_actor, earth_state, sun_light,
-     whales_plot_all, whales_plot_observed_tip, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed_pos, whales_plot_confirmed_neg,
-     cloud_tip_sats, cloud_cue_sats, tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
-     obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg, step_text) = reset_plotter(pl, all_targets, n_targets, tip_actors, cue_actors, last_theta=None)
+     whales_poly, tasked_poly, cloud_tip_sats, cloud_cue_sats,
+     tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
+     step_text) = reset_plotter(pl, all_targets, n_targets, tip_actors, cue_actors, last_theta=None, uhd=uhd)
+
 
     pl.show(cpos="yz", interactive_update=True, auto_close=False)
 
@@ -264,7 +265,7 @@ if logging:
         if verbose:
             print(f"Warning: {copy_file} not found, skipping.")
 
-    atexit.register(at_exit, save_name=sim_name, pl=pl if plot_propagation else None, verbose_def=True, verbose_error=False)
+    atexit.register(at_exit, save_name=sim_name, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
     print("Initiated logging files")
 
 observed_idx_tip = None
@@ -848,15 +849,16 @@ while elapsed_seconds <= sim_duration_seconds:
     t_mid = time.time()
 
     if plot_propagation and n_steps % plot_pyvista_interval == 0:
-        obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg = update_plotter(pl,
-                   earth_actor, earth_state,
-                   sun_light, cloud_tip_sats, cloud_cue_sats,
-                   whales_plot_all, whales_plot_observed_tip, whales_plot_tasked, whales_plot_observed_cue, whales_plot_confirmed_pos, whales_plot_confirmed_neg,
-                   tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
-                   t_datetime, tip_positions, cue_positions,
-                   all_targets, observed_targets_tip, tasked_targets, observed_targets_cue, confirmed_targets_pos, confirmed_targets_neg,
-                   obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg,
-                   FovPoints_tip, FovPoints_cue, step_text, n_steps)
+
+        update_plotter(pl,
+                       earth_actor, earth_state,
+                       sun_light, whales_poly, tasked_poly,
+                       cloud_tip_sats, cloud_cue_sats,
+                       tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
+                       t_datetime, tip_positions, cue_positions,
+                       all_targets, observed_targets_tip, tasked_targets, observed_targets_cue,
+                       confirmed_targets_pos, confirmed_targets_neg,
+                       FovPoints_tip, FovPoints_cue, step_text, n_steps)
 
         try:
             pl.write_frame()
@@ -894,6 +896,9 @@ runtime_per_hour = runtime / sim_duration_hours if sim_duration_hours > 0 else 0
 runtime_per_day  = runtime / (sim_duration_hours / 24) if sim_duration_hours > 0 else 0
 
 merge_tip_cue_combined("sim_output.xlsx")
+if plot_propagation:
+    close_plotter_safely(pl, sun_light=sun_light)
+    pl = None
 
 # =========================
 # --- Report (ordered) ---
@@ -1178,7 +1183,8 @@ if logging:
             print("Created offnadir and latency distribution plots")
 
 print("\n")
-at_exit(sim_name, pl=(pl if plot_propagation else None), verbose_def=True, verbose_error=False)
+at_exit(save_name=sim_name, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
+
 
 if plot_footprints:
     print(f"\n\n\tGenerate footprint plots with len {len(fov_polygons_cue)}")

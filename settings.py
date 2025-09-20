@@ -3,7 +3,7 @@ from offnadir_imaging.functions.get_satellite_data import get_satellite, get_spa
 from paseos.custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath, estimate_box_inertia, pass_time_from_nadir
 from paseos.custom_paseos.utils.constants import R_earth, mu_earth
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import numpy as np
 import math
 
@@ -40,7 +40,7 @@ delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
 whale_seed = 42
 
 if not real_run:
-    sim_duration_hours = 1
+    sim_duration_hours = 0.20
     sim_time = 'fast'
 else:
     sim_duration_hours = 24
@@ -64,7 +64,7 @@ if sim_time == 'slow':
     movie_orbit_sec = 8.0
 
 elif sim_time == 'fast':
-    sim_step_seconds = 12
+    sim_step_seconds = 6
     plot_fov_interval = 1
     plot_pyvista_interval = 5
     print_interval = 5
@@ -88,6 +88,10 @@ i_cue_deg    = 97.8703              # Inclination [deg]
 RAAN_cue_deg = 336.4191             # RAAN [deg]
 argp_cue_deg = 110.0511             # Argument of periapsis [deg]
 M_cue_deg    = 250.1394             # Mean anomaly [deg]
+
+if not real_run:
+    M_cue_deg += 147
+    t0 += timedelta(seconds=-3*60)
 
 rp = R_earth + hp
 ra = R_earth + ha
