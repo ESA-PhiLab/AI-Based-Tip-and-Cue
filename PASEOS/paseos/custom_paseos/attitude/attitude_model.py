@@ -1,13 +1,15 @@
 import numpy as np
 import pykep as pk
-from custom_paseos.utils.constants import R_earth
 
-from custom_paseos.attitude.disturbance_calculations import (
+from ..utils.constants import R_earth
+
+from ..attitude.disturbance_calculations import (
     calculate_aero_torque,
     calculate_magnetic_torque,
     calculate_grav_torque,
 )
-from custom_paseos.utils.reference_frame_transformation import (
+
+from ..utils.reference_frame_transformation import (
     IRF2LVLH,
     LVLH2IRF,
     IRF2BRF_eul,

@@ -20,8 +20,8 @@ from orekit.pyhelpers import setup_orekit_curdir
 from paseos import ActorBuilder, SpacecraftActor
 import paseos
 
-from custom_paseos.propagation.orekit_propagator import OrekitPropagator
-from custom_paseos.utils.point_transformation import Point_ECI2Geodetic, Point_Geodetic2ECI
+from paseos.custom_paseos.propagation.orekit_propagator import OrekitPropagator
+from paseos.custom_paseos.utils.point_transformation import Point_ECI2Geodetic, Point_Geodetic2ECI
 
 from simulation.targets.whales import update_whales, init_whales
 from simulation.targets.water_target_utils import load_land_mask, generate_random_water_targets, build_land_mask
@@ -51,6 +51,7 @@ logging = True
 verbose = False
 
 if real_run:
+    show_constellation = False
     show_orbits = False
     plot_propagation = True
     plot_footprints = True
@@ -62,6 +63,7 @@ if real_run:
     model_attitude_control = True
 
     logging = True
+    verbose = False
 
 # Initialize Orekit
 vm = orekit.initVM()
@@ -80,6 +82,11 @@ conf.auto_max_age = None  # allow predictive values older than 30 days
 
 pv.global_theme.allow_empty_mesh = True
 paseos.set_log_level("WARNING")
+
+old_files = ["sim_output.xlsx", "simulation.mp4", "output.log"]
+for old_file in old_files:
+    if os.path.exists(old_file):
+      os.remove(old_file)
 
 # Time setup
 # Redirect both stdout and stderr
@@ -214,8 +221,8 @@ if plot_propagation:
 
     pl.show(cpos="yz", interactive_update=True, auto_close=False)
 
-    dist_factor = 6.0
-    angle_deg = 33.33
+    dist_factor = 6.25
+    angle_deg = -45.0
 
     pl.camera.position = camera_position_xy(dist_factor, angle_deg)  # look from -Y
     pl.camera.focal_point = (0, 0, 0)  # look at Earth center

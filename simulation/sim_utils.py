@@ -17,13 +17,14 @@ from org.orekit.orbits import KeplerianOrbit, PositionAngleType
 from org.orekit.utils import Constants
 from org.orekit.frames import FramesFactory
 
-from custom_paseos.utils.help_functions import compute_orbital_period
-from custom_paseos.utils.point_transformation import Point_Geodetic2ECEF
-from custom_paseos.observation.observation_model import EOTools
-from custom_paseos.attitude.attitude_model import AttitudeModel
+from paseos.custom_paseos.utils.help_functions import compute_orbital_period
+from paseos.custom_paseos.utils.point_transformation import Point_Geodetic2ECEF
+from paseos.custom_paseos.observation.observation_model import EOTools
+from paseos.custom_paseos.attitude.attitude_model import AttitudeModel
+from paseos.custom_paseos.utils.point_transformation import Point_Geodetic2ECI
 
 import numpy as np
-from custom_paseos.utils.point_transformation import Point_Geodetic2ECI
+
 
 
 # -----------------------------------------------------------------------------

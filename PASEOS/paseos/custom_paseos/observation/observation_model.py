@@ -15,7 +15,7 @@ from loguru import logger
 from datetime import datetime, timedelta
 from paseos.actors.spacecraft_actor import SpacecraftActor
 
-from custom_paseos.utils.reference_frame_transformation import (
+from ..utils.reference_frame_transformation import (
     LVLH2IRF,
     IRF2LVLH,
     LVLH2BRF_eul,
@@ -23,7 +23,7 @@ from custom_paseos.utils.reference_frame_transformation import (
     IRF2BRF_eul,
     BRF2IRF_eul,
 )
-from custom_paseos.utils.point_transformation import (
+from ..utils.point_transformation import (
     Point_ECI2Geodetic,
     Point_Geodetic2ECI,
 )

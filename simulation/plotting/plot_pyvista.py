@@ -13,8 +13,8 @@ from pyvista import examples
 import pymap3d as pm
 
 from settings import R_earth
-from custom_paseos.utils.point_transformation import Point_Geodetic2ECI, Point_ECI2Geodetic
-from custom_paseos.utils.help_functions import compute_orbital_period
+from paseos.custom_paseos.utils.point_transformation import Point_Geodetic2ECI, Point_ECI2Geodetic
+from paseos.custom_paseos.utils.help_functions import compute_orbital_period
 
 # --- Orekit (used for precise Sun position in EME2000/ECI) ---
 import orekit  # VM must be initialized by caller before using these functions

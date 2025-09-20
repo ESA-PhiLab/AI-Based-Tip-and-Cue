@@ -32,7 +32,6 @@ from orekit import JArray_double
 import numpy as np
 import sys, os
 
-
 from org.orekit.propagation.sampling import PythonOrekitFixedStepHandler, OrekitStepNormalizer
 
 class StepHandler(PythonOrekitFixedStepHandler):

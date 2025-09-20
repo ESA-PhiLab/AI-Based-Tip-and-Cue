@@ -13,9 +13,8 @@ offnadir_imaging/images/*
 offnadir_imaging/pySMARTS/*
 !offnadir_imaging/pySMARTS/.gitkeep
 
-
 PASEOS/*
-!PASEOS/custom_paseos/
+!PASEOS/paseos/custom_paseos/
 !PASEOS/.gitkeep
 
 test*
