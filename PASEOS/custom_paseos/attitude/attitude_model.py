@@ -241,11 +241,16 @@ class AttitudeModel:
         # Command bookkeeping
         self.t_eul_commanded = None
         self.delay_slew_stab = None
+        self.slew_stab_time_max = None
 
         # flag to track planned slews
         self.slew_active = False
         self._planned_start_eul = None  # Euler angles at the start of slew
         self._planned_start_time = None  # elapsed_seconds when slew started
+
+
+
+
 
 
     # -------------------------------------------------------------------------

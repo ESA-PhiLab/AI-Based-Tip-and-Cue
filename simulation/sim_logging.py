@@ -108,7 +108,7 @@ def log_tip(writer, detection_id, target_id, tip_actor,
 def log_cue(writer, detection_id, target_id, cue_actor,
             cue_observation_date, cue_confirmation_date,
             cue_ai_decision, true_label, correct,
-            offnadir_deg, gsd_m,
+            offnadir_deg, gsd_m, viewing_time,
             latency_observation, latency_confirmation, slew_stab_time,
             target_lat, target_lon, target_alt,
             cue_lat, cue_lon, cue_alt,
@@ -125,6 +125,7 @@ def log_cue(writer, detection_id, target_id, cue_actor,
         correct,
         _to_scalar(offnadir_deg),
         _to_scalar(gsd_m),
+        _to_scalar(viewing_time),
         _to_scalar(latency_observation),
         _to_scalar(latency_confirmation),
         _to_scalar(slew_stab_time),
@@ -137,12 +138,13 @@ def log_cue(writer, detection_id, target_id, cue_actor,
     append_excel_log(writer, row)
 
 
+
 def log_combined(writer, detection_id, target_id, tip_actor, cue_actor,
                  tip_observation_date, tip_confirmation_date,
                  cue_observation_date, cue_confirmation_date,
                  tip_ai_decision, cue_ai_decision,
                  true_label, correct,
-                 offnadir_deg, gsd_m,
+                 offnadir_deg, gsd_m, viewing_time,
                  latency_observation, latency_confirmation,
                  target_lat, target_lon, target_alt,
                  cue_lat, cue_lon, cue_alt):
@@ -162,12 +164,14 @@ def log_combined(writer, detection_id, target_id, tip_actor, cue_actor,
         correct,
         _to_scalar(offnadir_deg),
         _to_scalar(gsd_m),
+        _to_scalar(viewing_time),
         _to_scalar(latency_observation),
         _to_scalar(latency_confirmation),
         _to_scalar(target_lat), _to_scalar(target_lon), _to_scalar(target_alt),
         _to_scalar(cue_lat), _to_scalar(cue_lon), _to_scalar(cue_alt)
     ]
     append_excel_log(writer, row)
+
 
 
 def log_img(writer, detection_id, cue_lat, cue_lon, cue_alt,
@@ -311,6 +315,7 @@ def at_exit(save_name, pl=None, verbose_def=True, verbose_error=False):
         "simulation.mp4": f"mov_{save_name}.mov",
         "output.log": f"logs_{save_name}.log",
         "offnadir.png": f"plot_offnadir_{save_name}.png",
+        "viewing_time.png": f"plot_viewing_time_{save_name}.png",
         "latency_observation.png": f"plot_latency_observation_{save_name}.png",
         "latency_confirmation.png": f"plot_latency_confirmation_{save_name}.png",
         "footprints_tip.html": f"footprints_tip_{save_name}.html",

@@ -10,7 +10,7 @@ import math
 # ================================================================================
 # SIMULATION
 
-sim_name = "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
+sim_name = 'test2' # "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
 
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
@@ -28,7 +28,7 @@ flat_dem = False
 exclude_dark = True
 sim_time = 'slow'
 
-sim_duration_hours = 0.15
+sim_duration_hours = 0.3
 t0 = datetime(2025, 8, 20, 00, 53, 22, tzinfo=timezone.utc)
 
 if sim_time == 'slow':
@@ -61,7 +61,7 @@ nSats_cue = 1
 nPlanes_tip = 1
 nPlanes_cue = 1
 
-delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
+delta_t_cue = 10*60          # Time spacing between tip and cue satellite [sec]
 
 delay_confirmation_tip = 90      # https://www.jpl.nasa.gov/news/how-nasa-is-testing-ai-to-make-earth-observing-satellites-smarter
 delay_transmission_TC = 10
@@ -116,7 +116,7 @@ J_sat = estimate_box_inertia(sat_mass, sat_length, sat_width, sat_height)       
 # SENSOR
 
 elevation_min = 10.0    # degrees
-offnadir_limit = 50.0     # max 62.5 deg
+offnadir_limit = 40.0     # max 62.5 deg
 offnadir_margin = offnadir_limit * 0.02 # offnadir_limit * 0.05   # accounting for overshoot
 
 resolution = 124  # pixels of render

@@ -26,7 +26,7 @@ from custom_paseos.utils.point_transformation import Point_ECI2Geodetic, Point_G
 from simulation.targets.whales import update_whales, init_whales
 from simulation.targets.water_target_utils import load_land_mask, generate_random_water_targets, build_land_mask
 from simulation.sim_utils import init_eo_tools, init_attitude_models, link_eo_attitude, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, count_orbits_completed, compute_coverage_fraction, _clear_actor_task
-from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution
+from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution, plot_viewing_time_distribution
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate
 from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
 from simulation.sim_logging import init_excel_log, log_tip, log_cue, log_combined, log_img, gsd_offnadir, at_exit, Logger, compute_stats, format_hms, merge_tip_cue_combined
@@ -38,9 +38,9 @@ from offnadir_imaging.rendering import generate_image
 
 show_constellation = False
 show_orbits = False
-plot_propagation = True
+plot_propagation = False
 plot_footprints = True
-plot_whale_trajectories = True
+plot_whale_trajectories = False
 
 create_image = False
 onboard_ai_tip = True
@@ -136,7 +136,7 @@ n_targets_neg = n_targets - n_targets_pos
 
 # EO Tools
 eo_tools_dict = init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, offnadir_limit)
-att_models_dict = init_attitude_models(tip_actors, cue_actors, eul_ang_tip_default, eul_ang_cue_default)
+att_models_dict = init_attitude_models(tip_actors, cue_actors, eul_ang_tip_default, eul_ang_cue_default, omega_max_rad, alpha_max_rad, zeta, wn_rad, offnadir_limit, offnadir_margin)
 link_eo_attitude(eo_tools_dict, att_models_dict)
 
 if len(tip_actors) != 0:
@@ -207,10 +207,11 @@ if logging:
     header_tip = ["detection_id", "target_id","tip_actor", "tip_observation_time", "tip_confirmation_time", "tip_ai_decision", "true_label", "correct", "offnadir_deg", "gsd_m", "target_lat", "target_lon", "target_alt",
                   "tip_lat", "tip_lon", "tip_alt", "x", "y", "z", "vx", "vy", "vz"]
 
-    header_cue = ["detection_id", "target_id", "cue_actor", "cue_observation_time", "cue_confirmation_time", "cue_ai_decision", "true_label", "correct", "offnadir_deg", "gsd_m", "latency_observation", "latency_confirmation", "slew_stab_time", "target_lat", "target_lon", "target_alt",
-                  "cue_lat", "cue_lon", "cue_alt", "x", "y", "z", "vx", "vy", "vz", "roll", "pitch", "yaw"]
+    header_cue = ["detection_id", "target_id", "cue_actor", "cue_observation_time", "cue_confirmation_time", "cue_ai_decision","true_label", "correct", "offnadir_deg", "gsd_m", "viewing_time","latency_observation", "latency_confirmation", "slew_stab_time",
+                  "target_lat", "target_lon", "target_alt", "cue_lat", "cue_lon", "cue_alt", "x", "y", "z", "vx", "vy", "vz", "roll", "pitch", "yaw"]
 
-    header_combined = ["detection_id", "target_id", "tip_actor", "cue_actor", "tip_observation_time", "tip_confirmation_time", "cue_observation_time", "cue_confirmation_time", "tip_ai_decision", "cue_ai_decision", "true_label", "correct", "offnadir_deg", "gsd_m", "latency_observation", "latency_confirmation", "target_lat", "target_lon", "target_alt", "cue_lat", "cue_lon", "cue_alt"]
+    header_combined = ["detection_id", "target_id", "tip_actor", "cue_actor", "tip_observation_time", "tip_confirmation_time", "cue_observation_time", "cue_confirmation_time", "tip_ai_decision", "cue_ai_decision", "true_label", "correct", "offnadir_deg", "gsd_m", "viewing_time",
+                       "latency_observation", "latency_confirmation", "target_lat", "target_lon", "target_alt", "cue_lat", "cue_lon", "cue_alt"]
 
     header_img_gen = ["detection_id", "cue_lat", "cue_lon", "cue_alt", "tgt_lat", "tgt_lon",
                             "tgt_alt", "t_datetime", "dem_seed"]
@@ -282,8 +283,8 @@ while elapsed_seconds <= sim_duration_seconds:
 
     cleanup_idx = []
 
-    for idx in all_cleanup_idx:
-        print(f"!! Removed Target {idx} tasking request")
+    for idx in all_cleanup_idx and verbose:
+        print(f"!! Reset Target {idx} observation history")
 
     # Sun vector in ECI (for satellite shadow check)
     sun_pos_eci = sun.getPVCoordinates(t_abs, FramesFactory.getEME2000()).getPosition()
@@ -368,7 +369,7 @@ while elapsed_seconds <= sim_duration_seconds:
                                      cue_observation_date=None, cue_confirmation_date=None,
                                      tip_ai_decision=None, cue_ai_decision=None,
                                      true_label=whale.ai_class_true, correct=None,
-                                     offnadir_deg=offnadir_tip_deg, gsd_m=gsd_tip,
+                                     offnadir_deg=offnadir_tip_deg, gsd_m=gsd_tip, viewing_time=None,
                                      latency_observation=None, latency_confirmation=None,
                                      target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
                                      cue_lat=None, cue_lon=None, cue_alt=None)
@@ -421,6 +422,7 @@ while elapsed_seconds <= sim_duration_seconds:
                             })
 
                             whale.ai_class_predicted="whale-tipped"
+
                             print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, assigned to {best_cue} (actual={whale.ai_class_true})")
 
                         elif not whale.confirmed_tip:
@@ -437,7 +439,7 @@ while elapsed_seconds <= sim_duration_seconds:
                                     target_id=whale_idx, tip_actor=actor.name,
                                     tip_observation_date=None, tip_confirmation_date=t_datetime,
                                     tip_ai_decision=label_tip, true_label=whale.ai_class_true,
-                                    correct=(label_tip == whale.ai_class_true),
+                                    correct=((label_tip == "whale-tipped" and whale.ai_class_true == 'whale') or (label_tip == whale.ai_class_true)),
                                     offnadir_deg=None, gsd_m=None,
                                     target_lat=None, target_lon=None, target_alt=None,
                                     tip_lat=None, tip_lon=None, tip_alt=None,
@@ -451,7 +453,7 @@ while elapsed_seconds <= sim_duration_seconds:
                                          tip_ai_decision=label_tip, cue_ai_decision=None,
                                          true_label=whale.ai_class_true,
                                          correct=(label_tip == whale.ai_class_true),
-                                         offnadir_deg=None, gsd_m=None,
+                                         offnadir_deg=None, gsd_m=None, viewing_time=None,
                                          latency_observation=None, latency_confirmation=None,
                                          target_lat=None, target_lon=None, target_alt=None,
                                          cue_lat=None, cue_lon=None, cue_alt=None)
@@ -508,7 +510,7 @@ while elapsed_seconds <= sim_duration_seconds:
                         for task in eo_tools_dict[actor.name].task_queue:
                             will_be_visible, _ = eo_tools_dict[actor.name].will_be_visible_within(
                                 task["coord"], r_vec, v_vec, t_datetime,
-                                delta_t_cue, el_min_deg=elevation_min, step=60.0
+                                2.5* 60, el_min_deg=elevation_min, step=60.0
                             )
 
                             if will_be_visible:
@@ -541,29 +543,33 @@ while elapsed_seconds <= sim_duration_seconds:
                         task_coord = eo_tools_dict[actor.name].current_task["coord"]
 
                         in_view = eo_tools_dict[actor.name].is_in_sight(task_coord, r_vec, v_vec, t_datetime, el_min_deg=elevation_min)
+                        will_be_in_view_soon, t_until = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, att_models_dict[actor.name].slew_stab_time_max, el_min_deg=elevation_min, step=30.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
+                        will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_cue, el_min_deg=elevation_min,  step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
 
                         # r_future, v_future = eo_tools_dict[actor.name]._kepler_propagate_universal(r_vec, v_vec, sim_step_seconds)
                         # t_future = t_datetime + timedelta(seconds=sim_step_seconds)
 
-                        pointing_vec_brf_target, _, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max')
-                        eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
+
+                        if (will_be_in_view_soon or in_view) and not eo_tools_dict[actor.name].move_set:
+                            pointing_vec_brf_target, _, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max', dt_step_coarse=sim_step_seconds)
+                            eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
+                            eo_tools_dict[actor.name].move_set = True
 
                         if eo_tools_dict[actor.name].offnadir_unbound_target == None or eo_tools_dict[actor.name].offnadir_unbound_target - offnadir_unbound >= 0 or offnadir_unbound > 60.0:     # Compare wrt previous state or initial state is unset
                             moving_toward = True
                         else:
                             moving_toward = False
 
-                        will_be_in_view, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_cue, el_min_deg=elevation_min, step=60.0)
 
-                        if (in_view or will_be_in_view) and not (offnadir_unbound >= (offnadir_limit + offnadir_margin) and not moving_toward):
+                        if (in_view or will_be_in_view_soon) and not (offnadir_unbound >= (offnadir_limit + offnadir_margin) and not moving_toward):
                             att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_brf_target)
 
-                        else:
+
+                        if not will_be_in_view_later:
                             # Task finished → reset and pick next later
                             print(f"!! {actor.name}: Target {task_id} out of view, delete task")
 
                             # reset local EO tool state
-
                             att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
                             _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_ang_cue_default)
 
@@ -581,6 +587,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
             # CUE ATTITUDE CONTROL
             if model_attitude_control:
+
                 # --- Handle new target attitude ---
                 if not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=0.1):
 
@@ -620,6 +627,7 @@ while elapsed_seconds <= sim_duration_seconds:
                         att_models_dict[actor.name].slew_active = False
                         current_eul = att_models_dict[actor.name]._actor_attitude_deg
                         print(f"!! {actor.name}: Completed move to roll, pitch, yaw {current_eul[0]:.1f}, {current_eul[1]:.1f}, {current_eul[2]:.1f} deg")
+
 
                         eo_tools_dict[actor.name].slew_stab_time = att_models_dict[actor.name].delay_slew_stab
                         att_models_dict[actor.name].delay_slew_stab = None
@@ -700,6 +708,8 @@ while elapsed_seconds <= sim_duration_seconds:
                     else:
                         latency_observation = 0.0
 
+                    viewing_time_left = eo_tools_dict[actor.name].compute_viewing_time(
+                        r_vec, v_vec, task_coord, t_datetime, offnadir_limit, offnadir_margin=offnadir_margin, dt_max=observation_time_limit )
 
                     if logging:
                         log_cue(writer_cue,
@@ -707,7 +717,7 @@ while elapsed_seconds <= sim_duration_seconds:
                                 target_id=whale_idx, cue_actor=actor.name,
                                 cue_observation_date=t_datetime, cue_confirmation_date=None,
                                 cue_ai_decision=None, true_label=whale.ai_class_true, correct=None,
-                                offnadir_deg=offnadir_cue_deg, gsd_m=gsd_cue,
+                                offnadir_deg=offnadir_cue_deg, gsd_m=gsd_cue, viewing_time=viewing_time_left,
                                 latency_observation=latency_observation, latency_confirmation=None,
                                 slew_stab_time=eo_tools_dict[actor.name].slew_stab_time,
                                 target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
@@ -725,14 +735,14 @@ while elapsed_seconds <= sim_duration_seconds:
                                      cue_observation_date=t_datetime, cue_confirmation_date=None,
                                      tip_ai_decision=None, cue_ai_decision=None,
                                      true_label=whale.ai_class_true, correct=None,
-                                     offnadir_deg=offnadir_cue_deg, gsd_m=gsd_cue,
+                                     offnadir_deg=offnadir_cue_deg, gsd_m=gsd_cue, viewing_time=viewing_time_left,
                                      latency_observation=latency_observation, latency_confirmation=None,
                                      target_lat=whale.lat, target_lon=whale.lon, target_alt=whale.alt,
                                      cue_lat=cue_lat, cue_lon=cue_lon, cue_alt=cue_alt)
 
                         log_img(writer_img_gen, whale.detection_id, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1],target_coord[2], t_datetime, dem_seed)
 
-                    _clear_actor_task(actor.name, whale_idx, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
+                    _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict)
 
                 # CUE CONFIRMATION
                 if whale.t_observed_cue != None and whale.state_confirming < 2 and t_datetime > (whale.t_observed_cue + timedelta(seconds=delay_confirmation_cue)):
@@ -746,7 +756,7 @@ while elapsed_seconds <= sim_duration_seconds:
                         whale.state_confirming= 2
 
                         n_confirmed_cue += 1
-                        cleanup_idx.append(whale_idx)
+                        # cleanup_idx.append(whale_idx)
 
                         if whale.confirmed_cue:
                             whale.ai_class_predicted="whale"
@@ -764,10 +774,12 @@ while elapsed_seconds <= sim_duration_seconds:
 
                         elif whale.cue_actor != None and whale.t_observed_cue != None:
                             if t_datetime <= whale.t_observed_cue + timedelta(seconds=observation_time_limit):
-                                latency_confirmation = whale.t_confirmed_cue - whale.t_observed_cue
+                                latency_confirmation = (whale.t_confirmed_cue - whale.t_observed_cue).total_seconds()
 
                         else:
                             latency_confirmation = None
+
+
 
                         print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted} (actual={whale.ai_class_true})")
 
@@ -778,7 +790,7 @@ while elapsed_seconds <= sim_duration_seconds:
                                     cue_observation_date=None, cue_confirmation_date=t_datetime,
                                     cue_ai_decision=label_cue, true_label=whale.ai_class_true,
                                     correct=(label_cue == whale.ai_class_true),
-                                    offnadir_deg=None, gsd_m=None,
+                                    offnadir_deg=None, gsd_m=None, viewing_time=None,
                                     latency_observation=None, latency_confirmation=latency_confirmation,
                                     slew_stab_time=None,
                                     target_lat=None, target_lon=None, target_alt=None,
@@ -795,7 +807,7 @@ while elapsed_seconds <= sim_duration_seconds:
                                          cue_ai_decision=label_cue,
                                          true_label=whale.ai_class_true,
                                          correct=(label_cue == whale.ai_class_true),
-                                         offnadir_deg=None, gsd_m=None,
+                                         offnadir_deg=None, gsd_m=None, viewing_time=None,
                                          latency_observation=None, latency_confirmation=latency_confirmation,
                                          target_lat=None, target_lon=None, target_alt=None,
                                          cue_lat=None, cue_lon=None, cue_alt=None)
@@ -907,13 +919,17 @@ if logging:
     avg_latency_obs_s, min_latency_obs_s, max_latency_obs_s, std_latency_obs_s = compute_stats(df_combined["latency_observation"])
     avg_latency_conf_s, min_latency_conf_s, max_latency_conf_s, std_latency_conf_s = compute_stats(df_combined["latency_confirmation"])
     avg_offnadir_deg,  min_offnadir_deg,  max_offnadir_deg,  std_offnadir_deg  = compute_stats(df_combined["offnadir_deg"])
+    avg_viewing_time, min_viewing_time, max_viewing_time, std_viewing_time = compute_stats(df_combined["viewing_time"])
 
-    print(f"Average latency (observation):              {avg_latency_obs_s:.1f} s "
-          f"(min {min_latency_obs_s:.1f}, max {max_latency_obs_s:.1f}, std {std_latency_obs_s:.1f})")
-    print(f"Average latency (confirmation):             {avg_latency_conf_s:.1f} s "
-          f"(min {min_latency_conf_s:.1f}, max {max_latency_conf_s:.1f}, std {std_latency_conf_s:.1f})")
     print(f"Average off-nadir angle:                    {avg_offnadir_deg:.2f}° "
-          f"(min {min_offnadir_deg:.2f}°, max {max_offnadir_deg:.2f}°, std {std_offnadir_deg:.2f}°)\n")
+          f"(min {min_offnadir_deg:.2f}°, max {max_offnadir_deg:.2f}°, std {std_offnadir_deg:.2f}°)")
+    print(f"Average viewing time:                       {avg_viewing_time:.1f} s "
+          f"(min {min_viewing_time:.1f}, max {max_viewing_time:.1f}, std {std_viewing_time:.1f} s)")
+    print(f"Average latency (observation):              {avg_latency_obs_s:.1f} s "
+          f"(min {min_latency_obs_s:.1f}, max {max_latency_obs_s:.1f}, std {std_latency_obs_s:.1f} s)")
+    print(f"Average latency (confirmation):             {avg_latency_conf_s:.1f} s "
+          f"(min {min_latency_conf_s:.1f}, max {max_latency_conf_s:.1f}, std {std_latency_conf_s:.1f} s)\n")
+
 
 # --- Outcome summary ---
 print(f"Positive confirmed:                         {n_confirmed_pos} (unique: {len(confirmed_targets_pos)}, actual={n_targets_pos})")
@@ -1048,12 +1064,15 @@ if logging:
         ("", "", ""),
 
         # --- Latency / off-nadir ---
-        ("Average latency (observation)", round(avg_latency_obs_s, 1),
-         f"(min {min_latency_obs_s:.1f}, max {max_latency_obs_s:.1f}, std {std_latency_obs_s:.1f})"),
-        ("Average latency (confirmation)", round(avg_latency_conf_s, 1),
-         f"(min {min_latency_conf_s:.1f}, max {max_latency_conf_s:.1f}, std {std_latency_conf_s:.1f})"),
-        ("Average off-nadir angle", round(avg_offnadir_deg, 2),
+        ("Average off-nadir angle (deg)", round(avg_offnadir_deg, 2),
          f"(min {min_offnadir_deg:.2f}, max {max_offnadir_deg:.2f}, std {std_offnadir_deg:.2f})"),
+        ("Average viewing time (s)", round(avg_viewing_time, 2),
+         f"(min {min_viewing_time:.2f}, max {max_viewing_time:.2f}, std {std_viewing_time:.2f})"),
+        ("Average latency, observation (s)", round(avg_latency_obs_s, 1),
+         f"(min {min_latency_obs_s:.1f}, max {max_latency_obs_s:.1f}, std {std_latency_obs_s:.1f})"),
+        ("Average latency, confirmation (s)", round(avg_latency_conf_s, 1),
+         f"(min {min_latency_conf_s:.1f}, max {max_latency_conf_s:.1f}, std {std_latency_conf_s:.1f})"),
+
         ("", "", ""),
 
         # --- Outcome summary ---
@@ -1133,6 +1152,7 @@ if logging:
         plot_offnadir_distribution("sim_output.xlsx", bin_size_deg=2.5)
         plot_latency_distribution("sim_output.xlsx", 'latency_observation', bin_size_sec=15)
         plot_latency_distribution("sim_output.xlsx", 'latency_confirmation', bin_size_sec=15)
+        plot_viewing_time_distribution("sim_output.xlsx", 'viewing_time', bin_size_sec=15)
         if verbose:
             print("Created offnadir and latency distribution plots")
 

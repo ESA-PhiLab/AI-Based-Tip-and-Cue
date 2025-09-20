@@ -397,3 +397,56 @@ def plot_latency_distribution(excel_file, latency_col, bin_size_sec=30):
     except Exception as e:
         print(f"Could not generate latency distribution plot: {e}")
 
+
+def plot_viewing_time_distribution(excel_file, viewing_time_col, bin_size_sec=30):
+    try:
+        df = pd.read_excel(excel_file, sheet_name="Cue")
+        if viewing_time_col not in df.columns:
+            print(f"{viewing_time_col} column not found in Cue")
+            return
+        viewing_time = df[viewing_time_col].dropna()
+        if viewing_time.empty:
+            print("No viewing time data to plot")
+            return
+
+        # Use seconds for binning
+        viewing_time_sec = viewing_time
+        max_viewing_time = int(np.ceil(viewing_time_sec.max() / bin_size_sec) * bin_size_sec)
+        bins = np.arange(0, max_viewing_time + bin_size_sec, bin_size_sec)
+
+        plt.figure(figsize=(8, 5))
+        counts, _, _ = plt.hist(viewing_time_sec, bins=bins, edgecolor="black", color="tab:orange")
+
+        # Axis labels
+        plt.xlabel("Viewing time (minutes:seconds)")
+        plt.ylabel("Count")
+        # plt.title(f"Viewing time Distribution({bin_size_sec}s bins)")
+
+        # Format x ticks as MM:SS
+        def format_mmss(x, _):
+            minutes = int(x // 60)
+            seconds = int(x % 60)
+            return f"{minutes:d}:{seconds:02d}"
+
+        ax = plt.gca()
+        ax.xaxis.set_major_formatter(FuncFormatter(format_mmss))
+        ax.xaxis.set_major_locator(MultipleLocator(bin_size_sec*2))  # tick every 60s (1 min)
+
+        ymax = counts.max()
+        if ymax <= 1:
+            plt.yticks([0, 1])
+        else:
+            ax.yaxis.set_major_locator(MultipleLocator(2))
+
+        plt.grid(False)
+        plt.grid(axis="y", alpha=0.5)
+        plt.tight_layout()
+
+        plot_path = os.path.join(f"{viewing_time_col}.png")
+        plt.savefig(plot_path, dpi=300)
+        plt.close()
+        # print(f"Saved viewing time distribution plot to {plot_path.replace(os.sep, '/')}")
+
+    except Exception as e:
+        print(f"Could not generate viewing time distribution plot: {e}")
+

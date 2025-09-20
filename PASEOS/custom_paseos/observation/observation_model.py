@@ -55,6 +55,7 @@ class EOTools:
         self.offnadir_unbound_target = None  # last computed unconstrained off-nadir (deg)
 
         self.slew_stab_time = None
+        self.move_set = False
 
 
         # -------------------------------------------------------------------------
@@ -188,15 +189,15 @@ class EOTools:
 
 
     def point_to_target_bounded(self, r_eci, v_eci, target_geodetic, t_datetime,
-                                offnadir_max=None, mode='cap'):
+                                offnadir_max=None, mode='max', dt_step_coarse=1.0):
         pointing_vec_brf_target, offnadir_unbound = self.point_to_target_unbounded(
             r_eci, v_eci, target_geodetic, t_datetime
         )
 
-        if offnadir_max is not None and offnadir_unbound > offnadir_max:
+        if offnadir_max is not None and offnadir_unbound > offnadir_max + 1e-3:
             pointing_vec_brf_target, offnadir_deg_target, time_to_sight = self.set_max_offnadir(
                 offnadir_max, offnadir_unbound, pointing_vec_brf_target,
-                r_eci, v_eci, target_geodetic, t_datetime, mode=mode
+                r_eci, v_eci, target_geodetic, t_datetime, mode=mode, dt_step_coarse=dt_step_coarse
             )
         else:
             offnadir_deg_target = offnadir_unbound
@@ -246,6 +247,74 @@ class EOTools:
                 return True, t  # visible in t seconds
 
         return False, None
+
+    def compute_viewing_time(self,
+                             r_eci, v_eci,
+                             target_geodetic, t_datetime,
+                             offnadir_max: float,
+                             offnadir_margin: float = 0.0,
+                             dt_step_coarse: float = 1.0,
+                             dt_step_fine: float = 0.5,
+                             dt_step_ultrafine: float = 0.1,
+                             dt_max: float = 600.0) -> float:
+        """
+        Compute remaining viewing time until target leaves strict off-nadir limit.
+
+        - Entry allowed if within (limit + margin).
+        - Viewing time counted only while off-nadir <= strict limit.
+        - If entering from margin, dwell starts when crossing into strict region.
+        - If exiting, dwell stops immediately when leaving strict region.
+        """
+
+        _, offnadir_now = self.point_to_target_unbounded(r_eci, v_eci, target_geodetic, t_datetime)
+
+        # --- Entry check ---
+        if offnadir_now > offnadir_max + offnadir_margin:
+            return 0.0
+
+        # Track whether we've entered strict region yet
+        inside_strict = offnadir_now <= offnadir_max + 1e-6
+
+        dt = 0.0
+        last_good = 0.0
+
+        if dt_step_fine > dt_step_coarse:
+            dt_step_fine = dt_step_coarse
+
+        if dt_step_ultrafine > dt_step_coarse:
+            dt_step_ultrafine = dt_step_coarse
+
+        while dt <= dt_max:
+            t_future = t_datetime + timedelta(seconds=dt)
+            r_future, v_future = self._kepler_propagate_universal(r_eci, v_eci, dt)
+            _, offnadir_future = self.point_to_target_unbounded(r_future, v_future, target_geodetic, t_future)
+
+            if offnadir_future <= offnadir_max + 1e-6:
+                # Now inside strict region
+                inside_strict = True
+                last_good = dt
+                # adaptive stepping
+                if offnadir_future < offnadir_max - 1.0:
+                    step = dt_step_coarse
+                elif offnadir_future < offnadir_max - 0.3:
+                    step = dt_step_fine
+                else:
+                    step = dt_step_ultrafine
+                dt += step
+
+            elif offnadir_future <= offnadir_max + offnadir_margin + 1e-6:
+                if not inside_strict:
+                    # Still in margin on the way IN → keep stepping finely
+                    dt += dt_step_ultrafine
+                else:
+                    # We were already inside strict, now leaving back into margin → stop
+                    return last_good
+
+            else:
+                # Beyond margin → stop regardless
+                return last_good
+
+        return last_good
 
     # -------------------------------------------------------------------------
     # Footprint helpers
@@ -384,14 +453,15 @@ class EOTools:
                          offnadir_deg_target: float,
                          pointing_vec_brf_target,
                          r_eci, v_eci, target_geodetic, t_datetime,
-                         dt_step_coarse: float = 10.0,
-                         dt_step_fine: float = 2.0,
-                         dt_step_ultrafine: float = 0.2,
+                         dt_step_coarse: float = 1.0,
+                         dt_step_fine: float = 0.5,
+                         dt_step_ultrafine: float = 0.1,
                          dt_max: float = 600.0,
-                         mode: str = 'cap'):
+                         mode: str = 'max'):
         """Predictive off-nadir limiter with adaptive step size."""
-        if offnadir_deg_target <= offnadir_max:
+        if offnadir_deg_target <= offnadir_max + 1e-3:
             return pointing_vec_brf_target, offnadir_deg_target, None
+
 
         if mode == 'cap':
             boresight_brf = np.array([0.0, 0.0, 1.0])
@@ -411,7 +481,15 @@ class EOTools:
             return new_vec, offnadir_max, None
 
         if mode == 'max':
+
+            if dt_step_fine > dt_step_coarse:
+                dt_step_fine = dt_step_coarse
+
+            if dt_step_ultrafine > dt_step_coarse:
+                dt_step_ultrafine = dt_step_coarse
+
             dt = 0.0
+
             while dt <= dt_max:
                 t_future = t_datetime + timedelta(seconds=dt)
                 r_future, v_future = self._kepler_propagate_universal(r_eci, v_eci, dt)
@@ -419,10 +497,11 @@ class EOTools:
                     r_future, v_future, target_geodetic, t_future
                 )
                 if offnadir_future <= offnadir_max:
+
                     return pointing_vec_brf_future, offnadir_future, dt
-                if offnadir_future > offnadir_max + 2.0:
+                if offnadir_future > offnadir_max + 1.0:
                     step = dt_step_coarse
-                elif offnadir_future > offnadir_max + 0.5:
+                elif offnadir_future > offnadir_max + 0.3:
                     step = dt_step_fine
                 else:
                     step = dt_step_ultrafine

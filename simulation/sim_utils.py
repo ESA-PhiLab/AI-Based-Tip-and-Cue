@@ -36,7 +36,7 @@ def init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, offnadir_limit):
     return eo_tools
 
 
-def init_attitude_models(tip_actors, cue_actors, eul_ang_tip_init, eul_ang_cue_init):
+def init_attitude_models(tip_actors, cue_actors, eul_ang_tip_init, eul_ang_cue_init, omega_max_rad, alpha_max_rad, zeta, wn_rad, offnadir_limit, offnadir_margin):
     """Initialize attitude models for all actors (stateful dynamics)."""
     att_models = {}
     for actor in tip_actors:
@@ -45,6 +45,7 @@ def init_attitude_models(tip_actors, cue_actors, eul_ang_tip_init, eul_ang_cue_i
             actor_initial_attitude_deg=eul_ang_tip_init,  # degrees
             actor_initial_angular_velocity=[0.0, 0.0, 0.0],
         )
+
         att_models[actor.name].set_target_euler(eul_ang_tip_init)
 
     for actor in cue_actors:
@@ -54,6 +55,18 @@ def init_attitude_models(tip_actors, cue_actors, eul_ang_tip_init, eul_ang_cue_i
             actor_initial_angular_velocity=[0.0, 0.0, 0.0],
         )
         att_models[actor.name].set_target_euler(eul_ang_cue_init)
+
+        att_models[actor.name].slew_stab_time_max, _, _ = att_models[actor.name].get_pointing_stabilization_time(
+            current_eul=[0.0, 0.0, 0.0],
+            target_eul=[offnadir_limit + offnadir_margin, offnadir_limit + offnadir_margin, offnadir_limit + offnadir_margin],
+            omega_max_rad=omega_max_rad,
+            alpha_max_rad=alpha_max_rad,
+            zeta=zeta,
+            wn_rad=wn_rad,
+            mode="per_axis",
+            current_w_rad=[0.0, 0.0, 0.0],
+            current_a_rad=[0.0, 0.0, 0.0]
+        )
     return att_models
 
 
@@ -74,21 +87,24 @@ def cleanup_timeout_targets(all_targets, tasked_targets, current_time, timeout, 
     Remove tasks that have timed out or were scheduled for cleanup.
     Also clears the cue actor's local state & MPC.
     """
-    expired = [idx for idx, w in tasked_targets.items()
+
+    expired = [idx for idx, w in all_targets.items()
                if ((w.t_observed_tip and current_time > w.t_observed_tip + timedelta(seconds=timeout)) or
                    (w.t_observed_cue and current_time > w.t_observed_cue + timedelta(seconds=timeout)))]
 
     all_cleanup_idx = list({*expired, *cleanup_idx})
 
     for idx in expired:
-        print(f"!! Time-out Target {idx}")
+        if all_targets[idx].t_observed_tip == None and all_targets[idx].t_observed_cue == None:
+            print(f"!! Time-out Target {idx}")
 
     for idx in all_cleanup_idx:
         w = all_targets.get(idx)
         if w and getattr(w, "assigned_cue", None):
             _clear_actor_task(w.assigned_cue, idx, eo_tools_dict, att_models_dict, eul_default)
 
-        tasked_targets.pop(idx, None)
+        if idx in tasked_targets:
+            tasked_targets.pop(idx, None)
 
         if w:
             if w:
@@ -118,6 +134,7 @@ def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_d
 
     eo.current_task = None
     eo.offnadir_unbound_target = None
+    eo.move_set = False
 
     # Always clean the task queue
     if hasattr(eo, "task_queue") and eo.task_queue:
