@@ -50,6 +50,19 @@ model_attitude_control = True
 logging = True
 verbose = False
 
+if real_run:
+    show_orbits = False
+    plot_propagation = True
+    plot_footprints = True
+    plot_whale_trajectories = False
+
+    create_image = False
+    onboard_ai_tip = True
+    onboard_ai_cue = True
+    model_attitude_control = True
+
+    logging = True
+
 # Initialize Orekit
 vm = orekit.initVM()
 setup_orekit_curdir(from_pip_library=True)
@@ -203,6 +216,10 @@ if plot_propagation:
     pl.show(cpos="xy", interactive_update=True, auto_close=False)
     pv_framerate, frames_per_orbit = compute_movie_framerate(a_cue, sim_step_seconds, plot_pyvista_interval, movie_orbit_sec)
     pl.open_movie( "simulation.mp4",  framerate=pv_framerate)
+
+    print("** Please move plotter to desired view **")
+
+
 
 if logging:
     header_tip = ["detection_id", "target_id","tip_actor", "tip_observation_time", "tip_confirmation_time", "tip_ai_decision", "true_label", "correct", "offnadir_deg", "gsd_m", "target_lat", "target_lon", "target_alt",

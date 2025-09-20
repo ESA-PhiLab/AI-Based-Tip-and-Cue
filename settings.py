@@ -37,26 +37,24 @@ nPlanes_cue = 1
 offnadir_limit = 50.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_cue = 5*60           # Time delay between Tip and Cue satellite (s)
 
-if real_run:
-    sim_duration_hours = 24
+if not real_run:
+    sim_duration_hours = 0.15
     sim_time = 'slow'
 else:
-    sim_duration_hours = 0.15
+    sim_duration_hours = 24
     sim_time = 'slow'
 
 t0 = datetime(2025, 8, 20, 00, 53, 22, tzinfo=timezone.utc)
 
-if real_run:
+if not real_run:
+    sim_name = "test1"
+else:
     nm_ext = ""
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
     nm_ext += "C" if nSats_cue * nPlanes_cue > 0 else ""
 
     extension = f"_offnadir{int(offnadir_limit)}_cuedelta{int(delta_t_cue/60)}" if nSats_tip * nPlanes_tip > 0 else ""
     sim_name = f"{nm_ext}_nPlanes{nPlanes_cue}_nSats{nSats_cue}" + extension
-else:
-    sim_name = "test1"
-
-print(sim_name)
 
 if sim_time == 'slow':
     sim_step_seconds = 1
