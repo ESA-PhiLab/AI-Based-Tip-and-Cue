@@ -27,7 +27,7 @@ from simulation.targets.whales import update_whales, init_whales
 from simulation.targets.water_target_utils import load_land_mask, generate_random_water_targets, build_land_mask
 from simulation.sim_utils import init_eo_tools, init_attitude_models, link_eo_attitude, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, count_orbits_completed, compute_coverage_fraction, _clear_actor_task
 from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution, plot_viewing_time_distribution
-from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate
+from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate, camera_position_xy
 from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
 from simulation.sim_logging import init_excel_log, log_tip, log_cue, log_combined, log_img, gsd_offnadir, at_exit, Logger, compute_stats, format_hms, merge_tip_cue_combined
 
@@ -38,7 +38,7 @@ from offnadir_imaging.rendering import generate_image
 
 show_constellation = False
 show_orbits = False
-plot_propagation = False
+plot_propagation = True
 plot_footprints = True
 plot_whale_trajectories = False
 
@@ -88,7 +88,7 @@ if logging:
     sys.stderr = sys.stdout
 
 current_time_str = time.strftime("%H:%M:%S", time.localtime(time.time()))
-print(f"Initiate simulation {sim_name} | Logging {logging} | Runtime start {current_time_str}")
+print(f"Initiate {sim_name} | Real Run {real_run} | Runtime start {current_time_str}")
 
 utc = TimeScalesFactory.getUTC()
 t0_orekit = AbsoluteDate(t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second + t0.microsecond / 1e6, utc)
@@ -139,7 +139,6 @@ eul_ang_cue_default = [0.0, 0.0, 0.0]
 offnadir_tip_deg = 0.0
 offnadir_cue_deg = 0.0
 offnadir_unbound = 0.0
-
 
 rng_ai_tip = random.Random(seed_ai_tip)   # seed for Tip AI
 rng_ai_cue = random.Random(seed_ai_cue)   # seed for Cue AI
@@ -213,13 +212,16 @@ if plot_propagation:
      cloud_tip_sats, cloud_cue_sats, tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
      obs_tip_pts, task_pts, obs_cue_pts, conf_pts_pos, conf_pts_neg, step_text) = reset_plotter(pl, all_targets, n_targets, tip_actors, cue_actors, last_theta=None)
 
-    pl.show(cpos="xy", interactive_update=True, auto_close=False)
+    pl.show(cpos="yz", interactive_update=True, auto_close=False)
+
+    dist_factor = 6.0
+    angle_deg = 33.33
+
+    pl.camera.position = camera_position_xy(dist_factor, angle_deg)  # look from -Y
+    pl.camera.focal_point = (0, 0, 0)  # look at Earth center
+
     pv_framerate, frames_per_orbit = compute_movie_framerate(a_cue, sim_step_seconds, plot_pyvista_interval, movie_orbit_sec)
     pl.open_movie( "simulation.mp4",  framerate=pv_framerate)
-
-    print("** Please move plotter to desired view **")
-
-
 
 if logging:
     header_tip = ["detection_id", "target_id","tip_actor", "tip_observation_time", "tip_confirmation_time", "tip_ai_decision", "true_label", "correct", "offnadir_deg", "gsd_m", "target_lat", "target_lon", "target_alt",
@@ -563,7 +565,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
                         in_view = eo_tools_dict[actor.name].is_in_sight(task_coord, r_vec, v_vec, t_datetime, el_min_deg=elevation_min)
                         will_be_in_view_soon, t_until = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, att_models_dict[actor.name].slew_stab_time_max, el_min_deg=elevation_min, step=30.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
-                        will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_cue, el_min_deg=elevation_min,  step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
+                        will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_tipcue, el_min_deg=elevation_min,  step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
                         moving_towards, _ = eo_tools_dict[actor.name].is_moving_towards_target(r_vec, v_vec, task_coord, t_datetime, dt_check=sim_step_seconds )
 
                         if (will_be_in_view_soon or in_view) and not (eo_tools_dict[actor.name].move_set and moving_towards):

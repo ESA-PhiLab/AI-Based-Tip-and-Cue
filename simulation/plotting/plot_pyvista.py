@@ -22,6 +22,8 @@ from org.orekit.bodies import CelestialBodyFactory
 from org.orekit.frames import FramesFactory
 from org.orekit.time import AbsoluteDate, TimeScalesFactory
 
+from ..constants import R_earth
+
 
 # --------------------------- Axis fix ---------------------------
 
@@ -47,21 +49,20 @@ def plot_mask(mask: np.ndarray, res_deg: float) -> None:
     plt.tight_layout()
     plt.show()
 
+import math
+
+def camera_position_xy(dist_factor: float, angle_deg: float) -> tuple[float, float, float]:
+
+    r = dist_factor * R_earth
+    theta = math.radians(angle_deg)
+    x = r * math.cos(theta)
+    y = r * math.sin(theta)
+    z = 0.0
+    return (x, y, z)
+
+
 
 # --------------------------- Static ECEF Plotter ---------------------------
-
-def make_plotter() -> pv.Plotter:
-    pl = pv.Plotter(lighting="none")
-    cubemap = examples.download_cubemap_space_4k()
-    pl.add_actor(cubemap.to_skybox())
-    pl.set_environment_texture(cubemap, is_srgb=True)
-
-    earth = examples.planets.load_earth(radius=R_earth)  # radius in meters
-    earth_texture = examples.load_globe_texture()
-    earth_actor = pl.add_mesh(earth, texture=earth_texture, smooth_shading=True)
-    pl.show_axes()
-    pl.view_isometric()
-    return pl
 
 
 def whales_to_points(whales: dict) -> np.ndarray:

@@ -26,7 +26,7 @@ generate_radiation = True
 flat_dem = False
 exclude_dark = True
 
-real_run = True
+real_run = False
 
 nSats_tip = 1
 nSats_cue = 1
@@ -35,7 +35,9 @@ nPlanes_tip = 1
 nPlanes_cue = 1
 
 offnadir_limit = 50.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
-delta_t_cue = 5*60           # Time delay between Tip and Cue satellite (s)
+delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
+
+whale_seed = 42
 
 if not real_run:
     sim_duration_hours = 0.15
@@ -44,8 +46,6 @@ else:
     sim_duration_hours = 24
     sim_time = 'slow'
 
-t0 = datetime(2025, 8, 20, 00, 53, 22, tzinfo=timezone.utc)
-
 if not real_run:
     sim_name = "test1"
 else:
@@ -53,7 +53,7 @@ else:
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
     nm_ext += "C" if nSats_cue * nPlanes_cue > 0 else ""
 
-    extension = f"_offnadir{int(offnadir_limit)}_cuedelta{int(delta_t_cue/60)}" if nSats_tip * nPlanes_tip > 0 else ""
+    extension = f"_offnadir{int(offnadir_limit)}_cuedelta{int(delta_t_tipcue/60)}" if nSats_tip * nPlanes_tip > 0 else ""
     sim_name = f"{nm_ext}_nPlanes{nPlanes_cue}_nSats{nSats_cue}" + extension
 
 if sim_time == 'slow':
@@ -80,31 +80,33 @@ else:
 # ================================================================================
 # ORBIT
 
-delay_confirmation_tip = 90      # https://www.jpl.nasa.gov/news/how-nasa-is-testing-ai-to-make-earth-observing-satellites-smarter
-delay_transmission_TC = 10
-delay_confirmation_cue = 60      # Time delay after detection by cue [sec]
-avg_time_delay = delta_t_cue
+t0 = datetime(2025, 9, 20, 2, 33, 39, tzinfo=timezone.utc)
 
-hp = 616.1e3                              # perigee altitude [m]        Like WV-3, from: https://www.n2yo.com/satellite/?s=40115
-ha = 624.4e3                              # apogee altitude [m]
-i_tip_deg    = 97.8717                    # Inclination [deg]
-RAAN_tip_deg = 324.9696                   # RAAN [deg]
-argp_tip_deg = 140.5945                   # Argument of periapsis [deg]
-M_tip_deg    = 219.5701 - 140             # Mean anomaly [deg]
+hp           = 615.7e3              # Perigee altitude [m]
+ha           = 624.6e3              # Apogee altitude [m]
+i_cue_deg    = 97.8703              # Inclination [deg]
+RAAN_cue_deg = 336.4191             # RAAN [deg]
+argp_cue_deg = 110.0511             # Argument of periapsis [deg]
+M_cue_deg    = 250.1394             # Mean anomaly [deg]
 
 rp = R_earth + hp
 ra = R_earth + ha
-a_tip = 0.5 * (ra + rp)                   # Semi-major axis [m]
-e_tip = (ra - rp) / (ra + rp)             # Eccentricity [-]
+a_cue = 0.5 * (ra + rp)             # Semi-major axis [m]
+e_cue = (ra - rp) / (ra + rp)       # Eccentricity [-]
 
-a_cue = a_tip                     # Semi-major axis [m]
-e_cue = e_tip                     # Eccentricity
-i_cue_deg = i_tip_deg             # Inclination [deg]
-RAAN_cue_deg = RAAN_tip_deg       # RAAN [deg]
-argp_cue_deg = argp_tip_deg       # Argument of periapsis [deg]
+a_tip = a_cue                       # Semi-major axis [m]
+e_tip = e_cue                       # Eccentricity
+i_tip_deg = i_cue_deg               # Inclination [deg]
+RAAN_tip_deg = RAAN_cue_deg         # RAAN [deg]
+argp_tip_deg = argp_cue_deg         # Argument of periapsis [deg]
 
-delta_M_cue = 360.0 * (delta_t_cue / compute_orbital_period(a_tip))
-M_cue_deg = M_tip_deg - delta_M_cue
+delta_M = 360.0 * (delta_t_tipcue / compute_orbital_period(a_cue))
+M_tip_deg = M_cue_deg + delta_M
+
+delay_confirmation_tip = 90      # https://www.jpl.nasa.gov/news/how-nasa-is-testing-ai-to-make-earth-observing-satellites-smarter
+delay_transmission_TC = 10
+delay_confirmation_cue = 60      # Time delay after detection by cue [sec]
+avg_time_delay = delta_t_tipcue
 
 # ================================================================================
 # ONBOARD AI
@@ -121,10 +123,10 @@ seed_ai_cue = seed_ai_tip*2
 # ================================================================================
 # SATELLITE
 
-sat_mass = 2800.0         # kg
+sat_mass = 2800.0                                   # kg
 sat_length, sat_width, sat_height = 4.5, 2.4, 2.2   # m (length, width, height)
-area_d = 5.0    # drag area
-area_s = 12.0   # sat area + solar panels
+area_d = 5.0                                        # drag area
+area_s = 12.0                                       # sat area + solar panels
 cr_s = 1.5
 cd = 2.2
 J_sat = estimate_box_inertia(sat_mass, sat_length, sat_width, sat_height)                               # Principal moments of inertia Cue satellite (kg m^2/s)
@@ -132,11 +134,11 @@ J_sat = estimate_box_inertia(sat_mass, sat_length, sat_width, sat_height)       
 # ================================================================================
 # SENSOR
 
-elevation_min = 10.0    # degrees
-offnadir_margin = offnadir_limit * 0.02 # offnadir_limit * 0.05   # accounting for overshoot
+elevation_min = 10.0                                    # Minimal elevation [deg]
+offnadir_margin = offnadir_limit * 0.02                 # Margin to add allow observation at offnadir max
 
-resolution = 124  # pixels of render
-sample_count = 512  # 8192 min, 2048 * 2**7 max
+resolution = 124                                        # Resolution of render
+sample_count = 512                                      # 8192 min, 2048 * 2**7 max
 
 swath_tip = 290  * 10**3  # m
 swath_cue = 13.1 * 10**3  # m
@@ -165,11 +167,10 @@ wn_rad = 0.42
 omega_stab_res = omega_max_rad/10
 alpha_stab_res = alpha_max_rad/10
 
-
 # ================================================================================
 # WHALES
 
-n_targets = 300
+n_targets = 500
 pos_fraction = 1.0
 
 worldmap_dir = "dataset/worldmaps"      # Folder with GSHHS shapefiles; mask .tif/.npy will be stored here
@@ -177,7 +178,7 @@ res_deg = 0.05                          # Raster resolution for land mask (deg/p
 mask_tif = "land_mask.tif"
 mask_npy = "land_mask.npy"
 
-whale_seed = 17
+
 max_abs_lat = 70.0                   # Optional: exclude very high latitudes (avoid polar mask artifacts)
 observation_time_limit = 20*60       # Observation time limit
 
