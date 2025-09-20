@@ -47,7 +47,7 @@ else:
     sim_time = 'slow'
 
 if not real_run:
-    sim_name = "test1"
+    sim_name = "test2"
 else:
     nm_ext = ""
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""

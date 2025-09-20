@@ -899,6 +899,7 @@ merge_tip_cue_combined("sim_output.xlsx")
 if plot_propagation:
     close_plotter_safely(pl, sun_light=sun_light)
     pl = None
+    sun_light = None
 
 # =========================
 # --- Report (ordered) ---

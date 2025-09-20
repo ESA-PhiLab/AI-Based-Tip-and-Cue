@@ -15,10 +15,12 @@ import matplotlib.colors as mcolors
 from pyvista import examples
 import pymap3d as pm
 import gc
+import math
 
 from settings import R_earth
 from paseos.custom_paseos.utils.point_transformation import Point_Geodetic2ECI, Point_ECI2Geodetic
 from paseos.custom_paseos.utils.help_functions import compute_orbital_period
+import pyvista as pv
 
 # --- Orekit (used for precise Sun position in EME2000/ECI) ---
 import orekit  # VM must be initialized by caller before using these functions
@@ -53,7 +55,7 @@ def plot_mask(mask: np.ndarray, res_deg: float) -> None:
     plt.tight_layout()
     plt.show()
 
-import math
+
 
 def camera_position_xy(dist_factor: float, angle_deg: float) -> tuple[float, float, float]:
 
@@ -615,29 +617,58 @@ def _remove_light(pl, L):
     except Exception:
         pass
 
-def close_plotter_safely(pl, *, sun_light=None, extra_lights=None):
-    """
-    Cleanly tear down a PyVista plotter to avoid 'Exception ignored in: __del__'
-    messages from VTK/PyVista at interpreter shutdown.
+# --- add once, anywhere near your close helper ---
+def _mute_pyvista_light_destructor():
+    try:
+        from pv.plotting.lights import Light
+        # Make destructor a no-op to avoid shutdown tracebacks
+        Light.__del__ = lambda self: None
+    except Exception:
+        pass
 
-    Parameters
-    ----------
-    pl : pv.Plotter
-        The plotter to close.
-    sun_light : pv.Light | None
-        Optional handle to the Sun light to remove explicitly.
-    extra_lights : Iterable[pv.Light] | None
-        Any other lights to remove explicitly.
-    """
+
+def close_plotter_safely(pl, *, sun_light=None, extra_lights=None):
+
     if pl is None:
+        _mute_pyvista_light_destructor()
         return
 
-    # 1) stop movie writer if open
+    # stop movie
     try:
         if getattr(pl, "_movie_open", False):
             pl._close_movie()
     except Exception:
         pass
+
+    # remove lights
+    try:
+        if sun_light is not None:
+            try: pl.remove_light(sun_light)
+            except Exception: pass
+    except Exception:
+        pass
+    if extra_lights:
+        for L in list(extra_lights):
+            try: pl.remove_light(L)
+            except Exception: pass
+
+    # clear scene and close
+    for f in (pl.disable_picking, pl.clear, pl.deep_clean, pl.close, pv.close_all):
+        try: f()
+        except Exception: pass
+
+    # drop strong refs BEFORE interpreter teardown
+    try:
+        del sun_light
+        del extra_lights
+    except Exception:
+        pass
+
+    # silence fragile destructor just in case
+    _mute_pyvista_light_destructor()
+
+    gc.collect()
+
 
     # 2) remove any custom lights (prevents Light.__del__ traceback)
     try:
