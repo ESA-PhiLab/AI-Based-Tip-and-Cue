@@ -248,6 +248,29 @@ class EOTools:
 
         return False, None
 
+    @staticmethod
+    def distance_to_target(r_eci, target_geodetic, t_datetime):
+        r = np.asarray(r_eci, float).reshape(3)
+        tgt_vec = np.array(Point_Geodetic2ECI(*target_geodetic, t_datetime)).reshape(3)
+        return np.linalg.norm(tgt_vec - r)
+
+    def is_moving_towards_target(self, r_eci, v_eci, target_geodetic, t_datetime, dt_check: float = 10.0):
+        """
+        Propagate satellite forward and compare distances.
+        Uses larger dt_check to capture if it is past closest approach.
+        """
+        distance_now = self.distance_to_target(r_eci, target_geodetic, t_datetime)
+
+        # Propagate forward
+        r_future, v_future = self._kepler_propagate_universal(r_eci, v_eci, dt_check)
+        r_future = np.asarray(r_future).reshape(3,1)
+        t_future = t_datetime + timedelta(seconds=dt_check)
+
+        distance_future = self.distance_to_target(r_future, target_geodetic, t_future)
+
+        range_rate = (distance_future - distance_now) / dt_check
+        return (range_rate < 0.0), range_rate
+
     def compute_viewing_time(self,
                              r_eci, v_eci,
                              target_geodetic, t_datetime,

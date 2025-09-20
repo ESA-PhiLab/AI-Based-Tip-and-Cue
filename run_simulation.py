@@ -127,6 +127,7 @@ offnadir_tip_deg = 0.0
 offnadir_cue_deg = 0.0
 offnadir_unbound = 0.0
 
+
 rng_ai_tip = random.Random(seed_ai_tip)   # seed for Tip AI
 rng_ai_cue = random.Random(seed_ai_cue)   # seed for Cue AI
 rng_dem = random.Random(seed_dem)
@@ -283,8 +284,9 @@ while elapsed_seconds <= sim_duration_seconds:
 
     cleanup_idx = []
 
-    for idx in all_cleanup_idx and verbose:
-        print(f"!! Reset Target {idx} observation history")
+    for idx in all_cleanup_idx:
+        if verbose:
+            print(f"!! Reset Target {idx} observation history")
 
     # Sun vector in ECI (for satellite shadow check)
     sun_pos_eci = sun.getPVCoordinates(t_abs, FramesFactory.getEME2000()).getPosition()
@@ -545,27 +547,19 @@ while elapsed_seconds <= sim_duration_seconds:
                         in_view = eo_tools_dict[actor.name].is_in_sight(task_coord, r_vec, v_vec, t_datetime, el_min_deg=elevation_min)
                         will_be_in_view_soon, t_until = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, att_models_dict[actor.name].slew_stab_time_max, el_min_deg=elevation_min, step=30.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
                         will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_cue, el_min_deg=elevation_min,  step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
+                        moving_towards, rr = eo_tools_dict[actor.name].is_moving_towards_target(r_vec, v_vec, task_coord, t_datetime, dt_check=sim_step_seconds )
 
-                        # r_future, v_future = eo_tools_dict[actor.name]._kepler_propagate_universal(r_vec, v_vec, sim_step_seconds)
-                        # t_future = t_datetime + timedelta(seconds=sim_step_seconds)
-
-
-                        if (will_be_in_view_soon or in_view) and not eo_tools_dict[actor.name].move_set:
+                        if (will_be_in_view_soon or in_view) and not (eo_tools_dict[actor.name].move_set and moving_towards):
                             pointing_vec_brf_target, _, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max', dt_step_coarse=sim_step_seconds)
-                            eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
+
                             eo_tools_dict[actor.name].move_set = True
+                            eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
 
-                        if eo_tools_dict[actor.name].offnadir_unbound_target == None or eo_tools_dict[actor.name].offnadir_unbound_target - offnadir_unbound >= 0 or offnadir_unbound > 60.0:     # Compare wrt previous state or initial state is unset
-                            moving_toward = True
-                        else:
-                            moving_toward = False
-
-
-                        if (in_view or will_be_in_view_soon) and not (offnadir_unbound >= (offnadir_limit + offnadir_margin) and not moving_toward):
+                        if (in_view or will_be_in_view_soon) and not (offnadir_unbound >= (offnadir_limit + offnadir_margin) and not moving_towards):
                             att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_brf_target)
 
 
-                        if not will_be_in_view_later:
+                        if not (in_view or will_be_in_view_later):
                             # Task finished → reset and pick next later
                             print(f"!! {actor.name}: Target {task_id} out of view, delete task")
 

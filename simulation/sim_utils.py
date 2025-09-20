@@ -22,6 +22,9 @@ from custom_paseos.utils.point_transformation import Point_Geodetic2ECEF
 from custom_paseos.observation.observation_model import EOTools
 from custom_paseos.attitude.attitude_model import AttitudeModel
 
+import numpy as np
+from custom_paseos.utils.point_transformation import Point_Geodetic2ECI
+
 
 # -----------------------------------------------------------------------------
 # Initialization
@@ -141,8 +144,6 @@ def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_d
         eo.task_queue = [t for t in eo.task_queue if t.get("target_id") != task_id]
 
     eo_tools_dict[actor_name] = eo
-
-
 
 # -----------------------------------------------------------------------------
 # Propagation and shadow/illumination
