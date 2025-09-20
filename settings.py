@@ -10,7 +10,6 @@ import math
 # ================================================================================
 # SIMULATION
 
-sim_name = 'test2' # "TC_nSats1_nPlanes1_50degoffnadir" # "TC_nSats1_nPlanes1_deltaCue2_5" #"Cue_Constellation_nSats4_nPlanes4"
 
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
@@ -26,10 +25,38 @@ crop_black_border = True
 generate_radiation = True
 flat_dem = False
 exclude_dark = True
-sim_time = 'slow'
 
-sim_duration_hours = 0.15
+real_run = True
+
+nSats_tip = 1
+nSats_cue = 1
+
+nPlanes_tip = 1
+nPlanes_cue = 1
+
+offnadir_limit = 50.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
+delta_t_cue = 5*60           # Time delay between Tip and Cue satellite (s)
+
+if real_run:
+    sim_duration_hours = 24
+    sim_time = 'slow'
+else:
+    sim_duration_hours = 0.15
+    sim_time = 'slow'
+
 t0 = datetime(2025, 8, 20, 00, 53, 22, tzinfo=timezone.utc)
+
+if real_run:
+    nm_ext = ""
+    nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
+    nm_ext += "C" if nSats_cue * nPlanes_cue > 0 else ""
+
+    extension = f"_offnadir{int(offnadir_limit)}_cuedelta{int(delta_t_cue/60)}" if nSats_tip * nPlanes_tip > 0 else ""
+    sim_name = f"{nm_ext}_nPlanes{nPlanes_cue}_nSats{nSats_cue}" + extension
+else:
+    sim_name = "test1"
+
+print(sim_name)
 
 if sim_time == 'slow':
     sim_step_seconds = 1
@@ -54,15 +81,6 @@ else:
 
 # ================================================================================
 # ORBIT
-
-nSats_tip = 1
-nSats_cue = 1
-
-nPlanes_tip = 1
-nPlanes_cue = 1
-
-delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
-offnadir_limit = 50.0        # max 62.5 deg
 
 delay_confirmation_tip = 90      # https://www.jpl.nasa.gov/news/how-nasa-is-testing-ai-to-make-earth-observing-satellites-smarter
 delay_transmission_TC = 10
