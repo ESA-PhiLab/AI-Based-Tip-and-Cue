@@ -360,6 +360,8 @@ def compute_stats(series: pd.Series):
         return float("nan"), float("nan"), float("nan"), float("nan")
     return s.mean(), s.min(), s.max(), s.std()
 
+
+
 class Logger:
     def __init__(self, filename):
         self.terminal = sys.__stdout__

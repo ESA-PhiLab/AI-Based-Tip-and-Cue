@@ -547,7 +547,7 @@ while elapsed_seconds <= sim_duration_seconds:
                         in_view = eo_tools_dict[actor.name].is_in_sight(task_coord, r_vec, v_vec, t_datetime, el_min_deg=elevation_min)
                         will_be_in_view_soon, t_until = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, att_models_dict[actor.name].slew_stab_time_max, el_min_deg=elevation_min, step=30.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
                         will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_cue, el_min_deg=elevation_min,  step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
-                        moving_towards, rr = eo_tools_dict[actor.name].is_moving_towards_target(r_vec, v_vec, task_coord, t_datetime, dt_check=sim_step_seconds )
+                        moving_towards, _ = eo_tools_dict[actor.name].is_moving_towards_target(r_vec, v_vec, task_coord, t_datetime, dt_check=sim_step_seconds )
 
                         if (will_be_in_view_soon or in_view) and not (eo_tools_dict[actor.name].move_set and moving_towards):
                             pointing_vec_brf_target, _, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max', dt_step_coarse=sim_step_seconds)
@@ -867,6 +867,8 @@ print(f"\nTotal simulation time: {int(hours_sim)}h {int(minutes_sim)}m {seconds_
 runtime_per_hour = runtime / sim_duration_hours if sim_duration_hours > 0 else 0
 runtime_per_day  = runtime / (sim_duration_hours / 24) if sim_duration_hours > 0 else 0
 
+merge_tip_cue_combined("sim_output.xlsx")
+
 # =========================
 # --- Report (ordered) ---
 # =========================
@@ -1140,7 +1142,6 @@ if logging:
 
     wb.save("sim_output.xlsx")
     time.sleep(0.1)
-    merge_tip_cue_combined("sim_output.xlsx")
 
     if os.path.exists("sim_output.xlsx"):
         plot_offnadir_distribution("sim_output.xlsx", bin_size_deg=2.5)

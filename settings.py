@@ -61,7 +61,8 @@ nSats_cue = 1
 nPlanes_tip = 1
 nPlanes_cue = 1
 
-delta_t_cue = 1*60          # Time spacing between tip and cue satellite [sec]
+delta_t_cue = 5*60          # Time spacing between tip and cue satellite [sec]
+offnadir_limit = 50.0        # max 62.5 deg
 
 delay_confirmation_tip = 90      # https://www.jpl.nasa.gov/news/how-nasa-is-testing-ai-to-make-earth-observing-satellites-smarter
 delay_transmission_TC = 10
@@ -116,7 +117,6 @@ J_sat = estimate_box_inertia(sat_mass, sat_length, sat_width, sat_height)       
 # SENSOR
 
 elevation_min = 10.0    # degrees
-offnadir_limit = 40.0     # max 62.5 deg
 offnadir_margin = offnadir_limit * 0.02 # offnadir_limit * 0.05   # accounting for overshoot
 
 resolution = 124  # pixels of render
