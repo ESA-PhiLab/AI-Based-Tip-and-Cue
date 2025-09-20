@@ -20,8 +20,8 @@ PASEOS/*
 
 test*
 
-results/*
-!results/.gitkeep
+0_results/*
+!0_results/.gitkeep
 
 installation_notes.txt
 

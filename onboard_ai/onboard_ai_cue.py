@@ -1,5 +1,5 @@
 import random
-from simulation.whales import Whale
+from simulation.targets.whales import Whale
 
 
 def cue_ai_decision(whale: Whale, tpr: float, tnr: float, rng: random.Random) -> (bool, str):

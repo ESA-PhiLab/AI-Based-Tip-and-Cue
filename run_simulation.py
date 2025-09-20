@@ -23,11 +23,12 @@ import paseos
 from custom_paseos.propagation.orekit_propagator import OrekitPropagator
 from custom_paseos.utils.point_transformation import Point_ECI2Geodetic, Point_Geodetic2ECI
 
-from simulation.whales import update_whales, load_land_mask, generate_random_water_targets, init_whales, build_land_mask
-from simulation.simulation_functions import init_eo_tools, init_attitude_models, link_eo_attitude, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, count_orbits_completed, compute_coverage_fraction, _clear_actor_task
+from simulation.targets.whales import update_whales, init_whales
+from simulation.targets.water_target_utils import load_land_mask, generate_random_water_targets, build_land_mask
+from simulation.sim_utils import init_eo_tools, init_attitude_models, link_eo_attitude, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, count_orbits_completed, compute_coverage_fraction, _clear_actor_task
 from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate
-from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain, plot_constellation_pyvista_transparent_earth, plot_constellation_pyvista
+from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
 from simulation.sim_logging import init_excel_log, log_tip, log_cue, log_combined, log_img, gsd_offnadir, at_exit, Logger, compute_stats, format_hms, merge_tip_cue_combined
 
 from onboard_ai.onboard_ai_tip import tip_ai_decision
@@ -44,7 +45,7 @@ plot_whale_trajectories = True
 create_image = False
 onboard_ai_tip = True
 onboard_ai_cue = True
-model_attitude_control = False
+model_attitude_control = True
 
 logging = True
 verbose = False
@@ -222,7 +223,7 @@ if logging:
     writer_cue = init_excel_log("sim_output.xlsx", header_cue, sheet_name="Cue")
     writer_img_gen = init_excel_log("sim_output.xlsx", header_img_gen, sheet_name="Img")
 
-    results_dir = os.path.join("results", sim_name)
+    results_dir = os.path.join("0_results", sim_name)
     os.makedirs(results_dir, exist_ok=True)
 
     copy_file = "settings.py"
@@ -619,7 +620,9 @@ while elapsed_seconds <= sim_duration_seconds:
                         att_models_dict[actor.name].slew_active = False
                         current_eul = att_models_dict[actor.name]._actor_attitude_deg
                         print(f"!! {actor.name}: Completed move to roll, pitch, yaw {current_eul[0]:.1f}, {current_eul[1]:.1f}, {current_eul[2]:.1f} deg")
+
                         eo_tools_dict[actor.name].slew_stab_time = att_models_dict[actor.name].delay_slew_stab
+                        att_models_dict[actor.name].delay_slew_stab = None
 
             #   if verbose and n_steps % print_interval == 0:
               #       delta_move_eul = eul_new_deg - prev_eul
@@ -680,8 +683,6 @@ while elapsed_seconds <= sim_duration_seconds:
                         del tasked_targets[whale_idx]
                         whale.state_tasked = 0
 
-                    _clear_actor_task(actor.name, whale_idx, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
-
                     h_m = float(np.linalg.norm(np.array(r))) - R_earth
                     gsd_cue = gsd_offnadir(gsd0_cue, h_m, offnadir_cue_deg)
 
@@ -731,6 +732,8 @@ while elapsed_seconds <= sim_duration_seconds:
 
                         log_img(writer_img_gen, whale.detection_id, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1],target_coord[2], t_datetime, dem_seed)
 
+                    _clear_actor_task(actor.name, whale_idx, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
+
                 # CUE CONFIRMATION
                 if whale.t_observed_cue != None and whale.state_confirming < 2 and t_datetime > (whale.t_observed_cue + timedelta(seconds=delay_confirmation_cue)):
                         if onboard_ai_cue:
@@ -777,7 +780,7 @@ while elapsed_seconds <= sim_duration_seconds:
                                     correct=(label_cue == whale.ai_class_true),
                                     offnadir_deg=None, gsd_m=None,
                                     latency_observation=None, latency_confirmation=latency_confirmation,
-                                    slew_stab_time=eo_tools_dict[actor.name].slew_stab_time,
+                                    slew_stab_time=None,
                                     target_lat=None, target_lon=None, target_alt=None,
                                     cue_lat=None, cue_lon=None, cue_alt=None,
                                     x=None, y=None, z=None, vx=None, vy=None, vz=None,

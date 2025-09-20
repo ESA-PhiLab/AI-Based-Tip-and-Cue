@@ -563,7 +563,7 @@ class AttitudeModel:
             self._actor_angular_velocity = np.zeros(3)
             self._actor_angular_acceleration = np.zeros(3)
             self.slew_active = False
-            self.delay_slew_stab = None
+
             return
 
         # Otherwise, interpolate between two trajectory points

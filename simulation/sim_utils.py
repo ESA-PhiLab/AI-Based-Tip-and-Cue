@@ -109,7 +109,7 @@ def cleanup_timeout_targets(all_targets, tasked_targets, current_time, timeout, 
     return all_cleanup_idx
 
 
-def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_default=[0.0, 0.0, 0.0]):
+def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_default=(0.0, 0.0, 0.0)):
     """Clear a specific task from an actor and reset its attitude target."""
     if actor_name is None or actor_name not in eo_tools_dict:
         return
@@ -124,7 +124,6 @@ def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_d
         eo.task_queue = [t for t in eo.task_queue if t.get("target_id") != task_id]
 
     eo_tools_dict[actor_name] = eo
-
 
 
 

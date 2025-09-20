@@ -293,7 +293,7 @@ def merge_tip_cue_combined(file_path: str) -> None:
 
 def at_exit(save_name, pl=None, verbose_def=True, verbose_error=False):
 
-    results_dir = os.path.join("results", save_name)
+    results_dir = os.path.join("0_results", save_name)
     os.makedirs(results_dir, exist_ok=True)
 
     if pl is not None:
@@ -310,9 +310,9 @@ def at_exit(save_name, pl=None, verbose_def=True, verbose_error=False):
         "sim_output.xlsx": f"results_{save_name}.xlsx",
         "simulation.mp4": f"mov_{save_name}.mov",
         "output.log": f"logs_{save_name}.log",
-        "offnadir.png": f"offnadir_{save_name}.png",
-        "latency_observation.png": f"latency_observation_{save_name}.png",
-        "latency_confirmation.png": f"latency_confirmation_{save_name}.png",
+        "offnadir.png": f"plot_offnadir_{save_name}.png",
+        "latency_observation.png": f"plot_latency_observation_{save_name}.png",
+        "latency_confirmation.png": f"plot_latency_confirmation_{save_name}.png",
         "footprints_tip.html": f"footprints_tip_{save_name}.html",
         "footprints_cue.html": f"footprints_cue_{save_name}.html"
     }

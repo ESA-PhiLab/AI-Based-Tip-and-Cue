@@ -16,7 +16,7 @@ import paseos
 
 from custom_paseos.propagation.orekit_propagator import OrekitPropagator
 from simulation.constellation import build_constellation
-from simulation.simulation_functions import propagate_actor
+from simulation.sim_utils import propagate_actor
 
 from org.orekit.time import AbsoluteDate, TimeScalesFactory
 

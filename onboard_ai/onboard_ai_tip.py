@@ -1,5 +1,4 @@
-import random
-from simulation.whales import Whale
+from simulation.targets.whales import Whale
 import random
 
 
