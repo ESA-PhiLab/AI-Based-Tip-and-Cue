@@ -299,7 +299,9 @@ def merge_tip_cue_combined(file_path: str) -> None:
 
 def at_exit(save_name, pl=None, sun_light=None, verbose_def=False, verbose_error=False):
 
-    results_dir = os.path.join("0_results", save_name)
+    default_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    results_dir = os.path.join(default_path, "0_results", save_name)
+
     os.makedirs(results_dir, exist_ok=True)
 
     if pl is not None:
@@ -317,14 +319,13 @@ def at_exit(save_name, pl=None, sun_light=None, verbose_def=False, verbose_error
         "simulation.mp4": f"mov_{save_name}.mov",
         "output.log": f"logs_{save_name}.log",
         "offnadir.png": f"plot_offnadir_{save_name}.png",
+        "gsd.png": f"plot_gsd_{save_name}.png",
         "viewing_time.png": f"plot_viewing_time_{save_name}.png",
         "latency_observation.png": f"plot_latency_observation_{save_name}.png",
         "latency_confirmation.png": f"plot_latency_confirmation_{save_name}.png",
         "footprints_tip.html": f"footprints_tip_{save_name}.html",
         "footprints_cue.html": f"footprints_cue_{save_name}.html"
     }
-
-    merged_excel_path = None
 
     for src, new_name in rename_map.items():
         if src == "output.log" and isinstance(sys.stdout, Logger):
@@ -338,7 +339,7 @@ def at_exit(save_name, pl=None, sun_light=None, verbose_def=False, verbose_error
                     print(f"Could not close print logs: {e}")
 
         if os.path.exists(src):
-            dst = os.path.join(results_dir, new_name)
+            dst = os.path.join(os.path.join(default_path, results_dir), new_name)
             try:
                 safe_move(src, dst)
             except:

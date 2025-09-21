@@ -38,7 +38,7 @@ def plot_earth(ax, radius=6371e3, color='lightgray', alpha=0.3, resolution=50):
     ax.plot_surface(x, y, z, color=color, alpha=alpha, edgecolor='none')
 
 
-def plot_constallation(planet_list_tip, planet_list_cue, R_earth=6371e3, plot_margin=500e3):
+def plot_constellation(planet_list_tip, planet_list_cue, R_earth=6371e3, plot_margin=500e3):
 
     nPlanes_tip, nSats_tip, a_tip = analyze_keplerian_constellation(planet_list_tip)
     nPlanes_cue, nSats_cue, a_cue = analyze_keplerian_constellation(planet_list_cue)
@@ -329,8 +329,6 @@ def plot_offnadir_distribution(excel_file, bin_size_deg=5):
        # plt.gca().xaxis.set_major_locator(MultipleLocator(bin_size_deg / 2.0))
        # plt.gca().xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
 
-
-
         plt.grid(False)                 # clear all grid lines
         plt.grid(axis="y", alpha=0.5)   # only horizontal grid
         plt.tight_layout()
@@ -343,7 +341,47 @@ def plot_offnadir_distribution(excel_file, bin_size_deg=5):
     except Exception as e:
         print(f"Could not generate off-nadir distribution plot: {e}")
 
+def plot_gsd_distribution(excel_file, bin_size_m=0.05):
+    try:
+        df = pd.read_excel(excel_file, sheet_name="Cue")
+        if "gsd_m" not in df.columns:
+            print("gsd column not found in Cue")
+            return
+        angles = df["gsd"].dropna()
+        if angles.empty:
+            print("No gsd data to plot")
+            return
 
+        max_angle = int(np.ceil(angles.max() / bin_size_m) * bin_size_m)
+        bins = np.arange(0, max_angle + bin_size_m, bin_size_m)
+
+        plt.figure(figsize=(8, 5))
+        counts, _, _ = plt.hist(angles, bins=bins, edgecolor="black", color="tab:blue")
+        plt.xlabel("Ground Sampling Distance (m)")
+        plt.ylabel("Count")
+        # plt.title(f"Off-nadir Angle Distribution ({bin_size_deg}° bins)")
+        plt.xticks(bins*2)
+
+        ymax = counts.max()
+        if ymax <= 1:
+            plt.yticks([0, 1])
+        else:
+            plt.gca().yaxis.set_major_locator(MultipleLocator(2))
+
+       # plt.gca().xaxis.set_major_locator(MultipleLocator(bin_size_deg / 2.0))
+       # plt.gca().xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
+
+        plt.grid(False)                 # clear all grid lines
+        plt.grid(axis="y", alpha=0.5)   # only horizontal grid
+        plt.tight_layout()
+
+        plot_path = os.path.join(f"gsd.png")
+        plt.savefig(plot_path, dpi=300)
+        plt.close()
+        # print(f"Saved off-nadir distribution plot -> {plot_path.replace(os.sep, '/')}")
+
+    except Exception as e:
+        print(f"Could not generate gsd distribution plot: {e}")
 
 def plot_latency_distribution(excel_file, latency_col, bin_size_sec=30):
     try:

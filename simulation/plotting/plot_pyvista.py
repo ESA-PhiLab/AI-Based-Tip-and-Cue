@@ -17,7 +17,7 @@ import pymap3d as pm
 import gc
 import math
 
-from settings import R_earth
+from paseos.custom_paseos.utils.constants import R_earth
 from paseos.custom_paseos.utils.point_transformation import Point_Geodetic2ECI, Point_ECI2Geodetic
 from paseos.custom_paseos.utils.help_functions import compute_orbital_period
 import pyvista as pv
@@ -597,7 +597,9 @@ def update_plotter(pl,
     )
 
     # Step label
-    step_text.SetText(1, f"Step: {n_steps}")
+    # Step label with timestamp
+    step_text.SetText(1, t_datetime.strftime("%d-%m-%y %H:%M:%S"))
+
     pl.update()
 
 

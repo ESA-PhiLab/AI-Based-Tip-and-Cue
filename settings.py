@@ -1,11 +1,13 @@
-import os
 from offnadir_imaging.functions.get_satellite_data import get_satellite, get_spatial_res
+
+
 from paseos.custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath, estimate_box_inertia, pass_time_from_nadir
 from paseos.custom_paseos.utils.constants import R_earth, mu_earth
 
 from datetime import datetime, timezone, timedelta
 import numpy as np
 import math
+import os
 
 # ================================================================================
 # SIMULATION
@@ -28,13 +30,13 @@ exclude_dark = True
 
 real_run = False
 
-nSats_tip = 1
-nSats_cue = 1
+nSats_tip = 0
+nSats_cue = 2
 
-nPlanes_tip = 1
-nPlanes_cue = 1
+nPlanes_tip = 0
+nPlanes_cue = 8
 
-offnadir_limit = 40.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
+offnadir_limit = 50.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
@@ -47,7 +49,7 @@ else:
     sim_time = 'slow'
 
 if not real_run:
-    sim_name = "test2"
+    sim_name = "test1"
 else:
     nm_ext = ""
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
@@ -59,7 +61,7 @@ else:
 if sim_time == 'slow':
     sim_step_seconds = 1
     plot_fov_interval =  1
-    plot_pyvista_interval = 30
+    plot_pyvista_interval = 20
     print_interval = 10
     movie_orbit_sec = 8.0
 

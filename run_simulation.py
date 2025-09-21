@@ -943,14 +943,20 @@ print(f"Cue confirmed:                              {n_confirmed_cue}\n")
 
 # --- Latency / off-nadir ---
 if logging:
-    df_combined = pd.read_excel("sim_output.xlsx", sheet_name="Combined")
-    avg_latency_obs_s, min_latency_obs_s, max_latency_obs_s, std_latency_obs_s = compute_stats(df_combined["latency_observation"])
-    avg_latency_conf_s, min_latency_conf_s, max_latency_conf_s, std_latency_conf_s = compute_stats(df_combined["latency_confirmation"])
-    avg_offnadir_deg,  min_offnadir_deg,  max_offnadir_deg,  std_offnadir_deg  = compute_stats(df_combined["offnadir_deg"])
-    avg_viewing_time, min_viewing_time, max_viewing_time, std_viewing_time = compute_stats(df_combined["viewing_time"])
+    df_cue = pd.read_excel("sim_output.xlsx", sheet_name="Cue")
+
+    avg_offnadir_deg,  min_offnadir_deg,  max_offnadir_deg,  std_offnadir_deg  = compute_stats(df_cue["offnadir_deg"])
+    avg_gsd,  min_gsd,  max_gsd,  std_gsd  = compute_stats(df_cue["gsd_m"])
+
+    avg_latency_obs_s, min_latency_obs_s, max_latency_obs_s, std_latency_obs_s = compute_stats(df_cue["latency_observation"])
+    avg_latency_conf_s, min_latency_conf_s, max_latency_conf_s, std_latency_conf_s = compute_stats(df_cue["latency_confirmation"])
+    avg_viewing_time, min_viewing_time, max_viewing_time, std_viewing_time = compute_stats(df_cue["viewing_time"])
 
     print(f"Average off-nadir angle:                    {avg_offnadir_deg:.2f}° "
           f"(min {min_offnadir_deg:.2f}°, max {max_offnadir_deg:.2f}°, std {std_offnadir_deg:.2f}°)")
+    print(f"Average GSD:                    {avg_gsd:.3f} m "
+          f"(min {min_gsd:.3f}, max {max_gsd:.3f}, std {std_gsd:.3f} m)\n")
+
     print(f"Average viewing time:                       {avg_viewing_time:.1f} s "
           f"(min {min_viewing_time:.1f}, max {max_viewing_time:.1f}, std {std_viewing_time:.1f} s)")
     print(f"Average latency (observation):              {avg_latency_obs_s:.1f} s "
@@ -1094,6 +1100,10 @@ if logging:
         # --- Latency / off-nadir ---
         ("Average off-nadir angle (deg)", round(avg_offnadir_deg, 2),
          f"(min {min_offnadir_deg:.2f}, max {max_offnadir_deg:.2f}, std {std_offnadir_deg:.2f})"),
+        ("Average GSD (m)", round(avg_gsd, 3),
+         f"(min {min_gsd:.3f}, max {max_gsd:.3f}, std {std_gsd:.3f})"),
+        ("", "", ""),
+
         ("Average viewing time (s)", round(avg_viewing_time, 2),
          f"(min {min_viewing_time:.2f}, max {max_viewing_time:.2f}, std {std_viewing_time:.2f})"),
         ("Average latency, observation (s)", round(avg_latency_obs_s, 1),
@@ -1177,6 +1187,7 @@ if logging:
 
     if os.path.exists("sim_output.xlsx"):
         plot_offnadir_distribution("sim_output.xlsx", bin_size_deg=2.5)
+        plot_offnadir_distribution("sim_output.xlsx", bin_size_deg=2.5)
         plot_latency_distribution("sim_output.xlsx", 'latency_observation', bin_size_sec=15)
         plot_latency_distribution("sim_output.xlsx", 'latency_confirmation', bin_size_sec=15)
         plot_viewing_time_distribution("sim_output.xlsx", 'viewing_time', bin_size_sec=15)
@@ -1207,4 +1218,8 @@ if plot_footprints:
 
 if show_orbits:
     plot_orbits(trajectories)
+
+at_exit(save_name=sim_name, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
+
+
 
