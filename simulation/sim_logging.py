@@ -353,9 +353,6 @@ def at_exit(save_name, pl=None, sun_light=None, verbose_def=False, verbose_error
     print(f"Saved results in {results_dir.replace(os.sep, '/')}")
 
 
-
-
-
 def compute_stats(series: pd.Series):
     """Return mean, min, max, std for a pandas Series (ignoring NaN)."""
     s = series.dropna()

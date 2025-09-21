@@ -347,13 +347,13 @@ def plot_gsd_distribution(excel_file, bin_size_m=0.05):
         if "gsd_m" not in df.columns:
             print("gsd column not found in Cue")
             return
-        angles = df["gsd"].dropna()
+        angles = df["gsd_m"].dropna()
         if angles.empty:
             print("No gsd data to plot")
             return
 
-        max_angle = int(np.ceil(angles.max() / bin_size_m) * bin_size_m)
-        bins = np.arange(0, max_angle + bin_size_m, bin_size_m)
+        max_m = np.ceil(angles.max() / bin_size_m) * bin_size_m
+        bins = np.arange(0, max_m + bin_size_m, bin_size_m)
 
         plt.figure(figsize=(8, 5))
         counts, _, _ = plt.hist(angles, bins=bins, edgecolor="black", color="tab:blue")

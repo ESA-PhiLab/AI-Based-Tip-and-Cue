@@ -26,7 +26,7 @@ from paseos.custom_paseos.utils.point_transformation import Point_ECI2Geodetic, 
 from simulation.targets.whales import update_whales, init_whales
 from simulation.targets.water_target_utils import load_land_mask, generate_random_water_targets, build_land_mask
 from simulation.sim_utils import init_eo_tools, init_attitude_models, link_eo_attitude, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, count_orbits_completed, compute_coverage_fraction, _clear_actor_task
-from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution, plot_viewing_time_distribution
+from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution, plot_viewing_time_distribution, plot_gsd_distribution
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate, camera_position_xy, close_plotter_safely
 from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
 from simulation.sim_logging import init_excel_log, log_tip, log_cue, log_combined, log_img, gsd_offnadir, at_exit, Logger, compute_stats, format_hms, merge_tip_cue_combined
@@ -1187,7 +1187,7 @@ if logging:
 
     if os.path.exists("sim_output.xlsx"):
         plot_offnadir_distribution("sim_output.xlsx", bin_size_deg=2.5)
-        plot_offnadir_distribution("sim_output.xlsx", bin_size_deg=2.5)
+        plot_gsd_distribution("sim_output.xlsx", bin_size_m=0.05)
         plot_latency_distribution("sim_output.xlsx", 'latency_observation', bin_size_sec=15)
         plot_latency_distribution("sim_output.xlsx", 'latency_confirmation', bin_size_sec=15)
         plot_viewing_time_distribution("sim_output.xlsx", 'viewing_time', bin_size_sec=15)
