@@ -245,20 +245,6 @@ def should_log_event(writer, whale_idx, t_datetime, min_gap_sec=600):
     return False
 
 
-def safe_move(src, dst, retries=5, delay=1.0):
-    for i in range(retries):
-        try:
-            shutil.move(src, dst)
-            print(f"Moved {src} to {dst.replace(os.sep, '/')}")
-            return True
-        except PermissionError:
-            print(f"Retry {i+1}/{retries}: could not move {src}, still locked.")
-            time.sleep(delay)
-        except Exception as e:
-            print(f"Error moving {src} to {dst}: {e}")
-            return False
-    print(f"Warning: could not move {src} after {retries} retries.")
-    return False
 
 
 def merge_tip_cue_combined(file_path: str) -> None:
@@ -295,13 +281,25 @@ def merge_tip_cue_combined(file_path: str) -> None:
 
 
 
+def safe_move(src, dst, retries=5, delay=1.0):
+    for i in range(retries):
+        try:
+            shutil.move(src, dst)
+            print(f"Moved {src} to {dst.replace(os.sep, '/')}")
+            return True
+        except PermissionError:
+            print(f"Retry {i+1}/{retries}: could not move {src}, still locked.")
+            time.sleep(delay)
+        except Exception as e:
+            print(f"Error moving {src} to {dst}: {e}")
+            return False
+    print(f"Warning: could not move {src} after {retries} retries.")
+    return False
 
 
-def at_exit(save_name, pl=None, sun_light=None, verbose_def=False, verbose_error=False):
+def at_exit(save_name, main_path, pl=None, sun_light=None, verbose_def=False, verbose_error=False):
 
-    default_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    results_dir = os.path.join(default_path, "0_results", save_name)
-
+    results_dir = os.path.join(main_path, "0_results", save_name)
     os.makedirs(results_dir, exist_ok=True)
 
     if pl is not None:
@@ -328,6 +326,7 @@ def at_exit(save_name, pl=None, sun_light=None, verbose_def=False, verbose_error
     }
 
     for src, new_name in rename_map.items():
+        src_path = os.path.join(main_path, src)
         if src == "output.log" and isinstance(sys.stdout, Logger):
             try:
                 sys.stdout.close()
@@ -338,10 +337,11 @@ def at_exit(save_name, pl=None, sun_light=None, verbose_def=False, verbose_error
                 if verbose_error:
                     print(f"Could not close print logs: {e}")
 
-        if os.path.exists(src):
-            dst = os.path.join(os.path.join(default_path, results_dir), new_name)
+        if os.path.exists(src_path):
+            dst_path = os.path.join(os.path.join(main_path, results_dir), new_name)
+            print(src_path, dst_path)
             try:
-                safe_move(src, dst)
+                safe_move(src_path, dst_path)
             except:
                 pass
 

@@ -83,6 +83,9 @@ conf.auto_max_age = None  # allow predictive values older than 30 days
 pv.global_theme.allow_empty_mesh = True
 paseos.set_log_level("WARNING")
 
+main_path = os.path.dirname(os.path.abspath(sys.argv[0]))
+os.chdir(main_path)
+
 old_files = ["sim_output.xlsx", "simulation.mp4", "output.log"]
 for old_file in old_files:
     if os.path.exists(old_file):
@@ -265,7 +268,7 @@ if logging:
         if verbose:
             print(f"Warning: {copy_file} not found, skipping.")
 
-    atexit.register(at_exit, save_name=sim_name, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
+    atexit.register(at_exit, save_name=sim_name, main_path=main_path, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
     print("Initiated logging files")
 
 observed_idx_tip = None
@@ -954,7 +957,7 @@ if logging:
 
     print(f"Average off-nadir angle:                    {avg_offnadir_deg:.2f}° "
           f"(min {min_offnadir_deg:.2f}°, max {max_offnadir_deg:.2f}°, std {std_offnadir_deg:.2f}°)")
-    print(f"Average GSD:                    {avg_gsd:.3f} m "
+    print(f"Average GSD:                                {avg_gsd:.3f} m "
           f"(min {min_gsd:.3f}, max {max_gsd:.3f}, std {std_gsd:.3f} m)\n")
 
     print(f"Average viewing time:                       {avg_viewing_time:.1f} s "
@@ -1195,7 +1198,7 @@ if logging:
             print("Created offnadir and latency distribution plots")
 
 print("\n")
-at_exit(save_name=sim_name, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
+at_exit(save_name=sim_name, main_path=main_path, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
 
 
 if plot_footprints:
@@ -1219,7 +1222,7 @@ if plot_footprints:
 if show_orbits:
     plot_orbits(trajectories)
 
-at_exit(save_name=sim_name, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
+at_exit(save_name=sim_name, main_path=main_path, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
 
 
 

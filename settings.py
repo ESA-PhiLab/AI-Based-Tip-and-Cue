@@ -12,7 +12,6 @@ import os
 # ================================================================================
 # SIMULATION
 
-
 images_folder = "dataset/whales_from_space/"
 img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
 
@@ -28,13 +27,13 @@ generate_radiation = True
 flat_dem = False
 exclude_dark = True
 
-real_run = False
+real_run = True
 
-nSats_tip = 0
-nSats_cue = 2
+nSats_tip = 1
+nSats_cue = 1
 
-nPlanes_tip = 0
-nPlanes_cue = 8
+nPlanes_tip = 1
+nPlanes_cue = 1
 
 offnadir_limit = 50.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
@@ -42,14 +41,14 @@ delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
 whale_seed = 42
 
 if not real_run:
-    sim_duration_hours = 0.3
-    sim_time = 'slow'
+    sim_duration_hours = 0.20
+    sim_time = 'fast'
 else:
     sim_duration_hours = 24
     sim_time = 'slow'
 
 if not real_run:
-    sim_name = "test2"
+    sim_name = "test1"
 else:
     nm_ext = ""
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
@@ -58,7 +57,6 @@ else:
     extension = f"_offnadir{int(offnadir_limit)}_cuedelta{int(delta_t_tipcue/60)}" if nSats_tip * nPlanes_tip > 0 else ""
     sim_name = f"{nm_ext}_nPlanes{nPlanes_cue}_nSats{nSats_cue}" + extension + f"_seed{whale_seed}"
 
-print(sim_name)
 if sim_time == 'slow':
     sim_step_seconds = 1
     plot_fov_interval =  1
@@ -160,7 +158,7 @@ try:
     satellite = get_satellite(img_path, csv_path)
 
 except:
-    print("Got default settings")
+    # print("Got default settings")
     satellite = 'WV3'
 
 # ================================================================================
