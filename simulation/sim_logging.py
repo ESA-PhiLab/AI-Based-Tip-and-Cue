@@ -26,9 +26,12 @@ matplotlib.use("TkAgg")
 from .plotting.plot_pyvista import close_plotter_safely
 
 import uuid
+import time
+
+import os, shutil, sys, time
+from pathlib import Path
 
 
-from simulation.plotting.plot_functions import plot_offnadir_distribution, plot_latency_distribution
 
 def init_excel_log(path, header, sheet_name="Log"):
     if os.path.exists(path):
@@ -279,38 +282,56 @@ def merge_tip_cue_combined(file_path: str) -> None:
             # Overwrite original sheet
             merged_df.to_excel(writer, sheet_name=sheet, index=False)
 
-
+def win_long(path: str) -> str:
+    """Return Windows long-path form (\\?\ prefix)."""
+    path = str(Path(path))
+    if os.name != "nt":
+        return path
+    path = os.path.abspath(path)
+    if path.startswith("\\\\"):   # UNC
+        return "\\\\?\\UNC\\" + path[2:]
+    return "\\\\?\\" + path
 
 def safe_move(src, dst, retries=5, delay=1.0):
+    """Move src → dst with retries if locked. Skips if already moved."""
+    src, dst = win_long(src), win_long(dst)
+    if not os.path.exists(src):
+        return False
     for i in range(retries):
         try:
             shutil.move(src, dst)
-            print(f"Moved {src} to {dst.replace(os.sep, '/')}")
+            print(f"Moved {src} -> {dst}")
             return True
         except PermissionError:
-            print(f"Retry {i+1}/{retries}: could not move {src}, still locked.")
+            print(f"Retry {i+1}/{retries}: {src} locked")
             time.sleep(delay)
+        except FileNotFoundError:
+            return False
         except Exception as e:
-            print(f"Error moving {src} to {dst}: {e}")
+            print(f"Error moving {src} -> {dst}: {e}")
             return False
     print(f"Warning: could not move {src} after {retries} retries.")
     return False
 
-
-def at_exit(save_name, main_path, pl=None, sun_light=None, verbose_def=False, verbose_error=False):
+def at_exit(save_name, main_path=os.getcwd(), pl=None, sun_light=None,
+            verbose_def=False, verbose_error=False):
+    os.chdir(main_path)
 
     results_dir = os.path.join(main_path, "0_results", save_name)
     os.makedirs(results_dir, exist_ok=True)
 
-    if pl is not None:
+    # close logger if active
+    if isinstance(sys.stdout, Logger):
         try:
-            close_plotter_safely(pl, sun_light=sun_light)
-            time.sleep(0.1)
+            sys.stdout.close()          # close file handle
+            sys.stdout = sys.__stdout__ # restore console
+            sys.stderr = sys.__stderr__
+            time.sleep(0.2)             # give OS time to release
             if verbose_def:
-                print("Closed pyvista plotter")
+                print("Logger closed")
         except Exception as e:
             if verbose_error:
-                print(f"Could not close pyvista plotter: {e}")
+                print(f"Could not close Logger: {e}")
 
     rename_map = {
         "sim_output.xlsx": f"results_{save_name}.xlsx",
@@ -327,30 +348,23 @@ def at_exit(save_name, main_path, pl=None, sun_light=None, verbose_def=False, ve
 
     for src, new_name in rename_map.items():
         src_path = os.path.join(main_path, src)
-        if src == "output.log" and isinstance(sys.stdout, Logger):
-            try:
-                sys.stdout.close()
-                sys.stdout = sys.__stdout__
-                sys.stderr = sys.__stderr__
-                time.sleep(0.1)
-            except Exception as e:
-                if verbose_error:
-                    print(f"Could not close print logs: {e}")
-
-        if os.path.exists(src_path):
-            dst_path = os.path.join(os.path.join(main_path, results_dir), new_name)
-            print(src_path, dst_path)
-            try:
-                safe_move(src_path, dst_path)
-            except:
-                pass
-
-        else:
+        if not os.path.exists(src_path):
             if verbose_error:
-                print(f"Warning: {src} not found, skipping.")
+                print(f"Warning: {src} not found")
+            continue
 
-    time.sleep(0.1)
-    print(f"Saved results in {results_dir.replace(os.sep, '/')}")
+        dst_path = os.path.join(results_dir, new_name)
+        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+
+        if os.path.exists(dst_path):
+            if verbose_def:
+                print(f"Already moved: {dst_path}")
+            continue
+
+        safe_move(src_path, dst_path)
+
+    print(f"Saved results in {results_dir}")
+
 
 
 def compute_stats(series: pd.Series):
@@ -380,3 +394,14 @@ class Logger:
             self.log.close()
         except:
             pass
+
+
+if __name__ == '__main__':
+    from pathlib import Path
+
+    main_path = Path(__file__).resolve().parent.parent
+    print(main_path)
+
+    at_exit('test1', main_path=main_path , pl=None, sun_light=None, verbose_def=False, verbose_error=False)
+
+

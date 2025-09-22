@@ -206,7 +206,6 @@ def convert_M_to_lv(orbital_elements, epoch):
     )
     return [a, e, i, argp, raan, math.degrees(temp_orbit.getTrueAnomaly())]
 
-
 # -----------------------------------------------------------------------------
 # Tasking cost / coverage
 # -----------------------------------------------------------------------------

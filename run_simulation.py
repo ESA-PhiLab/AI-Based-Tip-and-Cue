@@ -36,6 +36,8 @@ from onboard_ai.onboard_ai_cue import cue_ai_decision
 
 from offnadir_imaging.rendering import generate_image
 
+from pathlib import Path
+
 show_constellation = False
 show_orbits = False
 plot_propagation, uhd = True, True
@@ -83,7 +85,8 @@ conf.auto_max_age = None  # allow predictive values older than 30 days
 pv.global_theme.allow_empty_mesh = True
 paseos.set_log_level("WARNING")
 
-main_path = os.path.dirname(os.path.abspath(sys.argv[0]))
+main_path = Path(__file__).resolve().parent
+print(main_path)
 os.chdir(main_path)
 
 old_files = ["sim_output.xlsx", "simulation.mp4", "output.log"]
@@ -221,7 +224,6 @@ if plot_propagation:
      whales_poly, tasked_poly, cloud_tip_sats, cloud_cue_sats,
      tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
      step_text) = reset_plotter(pl, all_targets, n_targets, tip_actors, cue_actors, last_theta=None, uhd=uhd)
-
 
     pl.show(cpos="yz", interactive_update=True, auto_close=False)
 
@@ -1199,7 +1201,6 @@ if logging:
 
 print("\n")
 at_exit(save_name=sim_name, main_path=main_path, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
-
 
 if plot_footprints:
     print(f"\n\n\tGenerate footprint plots with len {len(fov_polygons_cue)}")

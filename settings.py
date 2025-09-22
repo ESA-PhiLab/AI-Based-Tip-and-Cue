@@ -35,14 +35,15 @@ nSats_cue = 1
 nPlanes_tip = 1
 nPlanes_cue = 1
 
-offnadir_limit = 50.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
+offnadir_limit = 30.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
 
 if not real_run:
     sim_duration_hours = 0.20
-    sim_time = 'fast'
+    sim_time = 'slow'
+
 else:
     sim_duration_hours = 24
     sim_time = 'slow'
@@ -50,26 +51,28 @@ else:
 if not real_run:
     sim_name = "test1"
 else:
-    nm_ext = ""
+    nm_ext = str()
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
     nm_ext += "C" if nSats_cue * nPlanes_cue > 0 else ""
 
     extension = f"_offnadir{int(offnadir_limit)}_cuedelta{int(delta_t_tipcue/60)}" if nSats_tip * nPlanes_tip > 0 else ""
     sim_name = f"{nm_ext}_nPlanes{nPlanes_cue}_nSats{nSats_cue}" + extension + f"_seed{whale_seed}"
 
+sim_name = "".join(c if c not in '\\/:*?"<>|' else "_" for c in sim_name).rstrip(". ")
+
 if sim_time == 'slow':
     sim_step_seconds = 1
     plot_fov_interval =  1
     plot_pyvista_interval = 20
     print_interval = 10
-    movie_orbit_sec = 8.0
+    movie_orbit_sec = 10.0
 
 elif sim_time == 'fast':
     sim_step_seconds = 6
     plot_fov_interval = 1
     plot_pyvista_interval = 5
     print_interval = 5
-    movie_orbit_sec = 60.0  # 8.0
+    movie_orbit_sec = 60.0
 
 else:
     sim_step_seconds = 1
@@ -175,7 +178,13 @@ alpha_stab_res = alpha_max_rad/10
 # ================================================================================
 # WHALES
 
-n_targets = 500
+if real_run:
+    n_targets = 500
+    
+if not real_run:
+    n_targets = 500
+    whale_seed = 42
+
 pos_fraction = 1.0
 
 worldmap_dir = "dataset/worldmaps"      # Folder with GSHHS shapefiles; mask .tif/.npy will be stored here

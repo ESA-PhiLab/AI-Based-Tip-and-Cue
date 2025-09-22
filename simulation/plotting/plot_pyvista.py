@@ -484,7 +484,7 @@ def reset_plotter(pl, all_targets, n_whales, tip_actors, cue_actors, last_theta=
     whales_poly = pv.PolyData(whale_points)
     whales_poly["state"] = np.zeros(n_whales, dtype=int)
 
-    state_colors = ["red", "orange", "yellow", "cyan", "green", "navy"]
+    state_colors = ["navy", "orange", "yellow", "cyan", "green", "red"]
     cmap = mcolors.ListedColormap(state_colors)
 
     pl.add_points(
