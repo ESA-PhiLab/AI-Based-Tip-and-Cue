@@ -29,13 +29,13 @@ exclude_dark = True
 
 real_run = True
 
-nSats_tip = 1
-nSats_cue = 1
+nSats_tip = 0
+nSats_cue = 2
 
-nPlanes_tip = 1
-nPlanes_cue = 1
+nPlanes_tip = 0
+nPlanes_cue = 8
 
-offnadir_limit = 30.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
+offnadir_limit = 40.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
@@ -55,8 +55,8 @@ else:
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
     nm_ext += "C" if nSats_cue * nPlanes_cue > 0 else ""
 
-    extension = f"_offnadir{int(offnadir_limit)}_cuedelta{int(delta_t_tipcue/60)}" if nSats_tip * nPlanes_tip > 0 else ""
-    sim_name = f"{nm_ext}_nPlanes{nPlanes_cue}_nSats{nSats_cue}" + extension + f"_seed{whale_seed}"
+    extension = f"_{int(offnadir_limit)}deg_{int(delta_t_tipcue/60)}min" if nSats_tip * nPlanes_tip > 0 else ""
+    sim_name = f"{nm_ext}_{nPlanes_cue}x{nSats_cue}sat" + extension + f"_{whale_seed}sd"
 
 sim_name = "".join(c if c not in '\\/:*?"<>|' else "_" for c in sim_name).rstrip(". ")
 
@@ -180,7 +180,7 @@ alpha_stab_res = alpha_max_rad/10
 
 if real_run:
     n_targets = 500
-    
+
 if not real_run:
     n_targets = 500
     whale_seed = 42

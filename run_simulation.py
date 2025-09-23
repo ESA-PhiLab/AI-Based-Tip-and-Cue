@@ -735,7 +735,7 @@ while elapsed_seconds <= sim_duration_seconds:
                         latency_observation = 0.0
 
                     viewing_time_left = eo_tools_dict[actor.name].compute_viewing_time(
-                        r_vec, v_vec, task_coord, t_datetime, offnadir_limit, offnadir_margin=offnadir_margin, dt_max=observation_time_limit )
+                        r_vec, v_vec, whale.coord_observed, t_datetime, offnadir_limit, offnadir_margin=offnadir_margin, dt_max=observation_time_limit )
 
                     if logging:
                         log_cue(writer_cue,
@@ -768,7 +768,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
                         log_img(writer_img_gen, whale.detection_id, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1],target_coord[2], t_datetime, dem_seed)
 
-                    _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict)
+                    _clear_actor_task(actor.name, whale_idx, eo_tools_dict, att_models_dict)
 
                 # CUE CONFIRMATION
                 if whale.t_observed_cue != None and whale.state_confirming < 2 and t_datetime > (whale.t_observed_cue + timedelta(seconds=delay_confirmation_cue)):
