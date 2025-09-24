@@ -270,7 +270,7 @@ if logging:
         if verbose:
             print(f"Warning: {copy_file} not found, skipping.")
 
-    atexit.register(at_exit, save_name=sim_name, main_path=main_path, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
+    atexit.register(at_exit, save_name=sim_name, main_path=main_path, pl=pl, verbose_def=False, verbose_error=False)
     print("Initiated logging files")
 
 observed_idx_tip = None
@@ -1200,7 +1200,7 @@ if logging:
             print("Created offnadir and latency distribution plots")
 
 print("\n")
-at_exit(save_name=sim_name, main_path=main_path, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
+at_exit(save_name=sim_name, main_path=main_path, pl=pl, verbose_def=False, verbose_error=False)
 
 if plot_footprints:
     print(f"\n\n\tGenerate footprint plots with len {len(fov_polygons_cue)}")
@@ -1223,7 +1223,7 @@ if plot_footprints:
 if show_orbits:
     plot_orbits(trajectories)
 
-at_exit(save_name=sim_name, main_path=main_path, pl=pl, sun_light=sun_light, verbose_def=False, verbose_error=False)
+at_exit(save_name=sim_name, main_path=main_path, pl=pl, verbose_def=False, verbose_error=False)
 
 
 

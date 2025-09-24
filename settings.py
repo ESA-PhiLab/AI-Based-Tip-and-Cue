@@ -41,7 +41,7 @@ delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
 whale_seed = 42
 
 if not real_run:
-    sim_duration_hours = 0.20
+    sim_duration_hours = 0.2
     sim_time = 'slow'
 
 else:
@@ -65,7 +65,7 @@ if sim_time == 'slow':
     plot_fov_interval =  1
     plot_pyvista_interval = 20
     print_interval = 10
-    movie_orbit_sec = 10.0
+    movie_orbit_sec = 12.0
 
 elif sim_time == 'fast':
     sim_step_seconds = 6
@@ -185,6 +185,7 @@ if not real_run:
     n_targets = 500
     whale_seed = 42
 
+sim_name += f"_{n_targets}tar"
 pos_fraction = 1.0
 
 worldmap_dir = "dataset/worldmaps"      # Folder with GSHHS shapefiles; mask .tif/.npy will be stored here

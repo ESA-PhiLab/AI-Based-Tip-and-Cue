@@ -313,12 +313,22 @@ def safe_move(src, dst, retries=5, delay=1.0):
     print(f"Warning: could not move {src} after {retries} retries.")
     return False
 
-def at_exit(save_name, main_path=os.getcwd(), pl=None, sun_light=None,
+def at_exit(save_name, main_path=os.getcwd(), pl=None,
             verbose_def=False, verbose_error=False):
     os.chdir(main_path)
 
     results_dir = os.path.join(main_path, "0_results", save_name)
     os.makedirs(results_dir, exist_ok=True)
+
+    if pl is not None:
+        try:
+            pl.close()
+            time.sleep(0.1)
+            if verbose_def:
+                print("Closed pyvista plotter")
+        except Exception as e:
+            if verbose_error:
+                print(f"Could not close pyvista plotter: {e}")
 
     # close logger if active
     if isinstance(sys.stdout, Logger):
