@@ -21,6 +21,7 @@ test*
 
 0_results/*
 !0_results/.gitkeep
+!0_results/final
 
 installation_notes.txt
 
@@ -28,6 +29,8 @@ to_do.txt
 offnadir_imaging/spd_files/wv3_spd_output
 
 output.log
+sim_output.xlsx
+simulation.mp4
 
 
 
