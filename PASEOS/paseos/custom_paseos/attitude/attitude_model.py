@@ -559,6 +559,7 @@ class AttitudeModel:
         Updates Euler angles [deg], angular velocity [rad/s],
         and angular acceleration [rad/s²].
         """
+
         if not self.slew_active or not self._planned_traj:
             return
 

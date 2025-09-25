@@ -617,7 +617,7 @@ while elapsed_seconds <= sim_duration_seconds:
                 # --- Handle new target attitude ---
                 if not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=0.1):
 
-                    if not att_models_dict[actor.name].slew_active or not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=10.0):
+                    if not att_models_dict[actor.name].slew_active or not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=5.0):
 
                             att_models_dict[actor.name]._planned_start_eul = att_models_dict[actor.name]._actor_attitude_deg.copy()
                             att_models_dict[actor.name]._planned_start_time = elapsed_seconds
@@ -628,10 +628,8 @@ while elapsed_seconds <= sim_duration_seconds:
                         task_update_mode = "taken"
 
                     att_models_dict[actor.name].plan_slew( start_eul_deg=att_models_dict[actor.name]._planned_start_eul, target_eul_deg=att_models_dict[actor.name]._new_target_attitude_deg,
-                        omega_max_rad=omega_max_rad, alpha_max_rad=alpha_max_rad, zeta=zeta, wn_rad=wn_rad, dt=sim_step_seconds / 10, mode="per_axis",
+                        omega_max_rad=omega_max_rad, alpha_max_rad=alpha_max_rad, zeta=zeta, wn_rad=wn_rad, dt=sim_step_seconds/10, mode="per_axis",
                         t_start=att_models_dict[actor.name]._planned_start_time, w_stab_res=omega_stab_res, a_stab_res=alpha_stab_res )
-
-
 
                     if task_update_mode == 'new' and eo_tools_dict[actor.name].offnadir_unbound_target != None:
                         offnadir_unbound = eo_tools_dict[actor.name].offnadir_unbound_target
@@ -1203,6 +1201,7 @@ print("\n")
 at_exit(save_name=sim_name, main_path=main_path, pl=pl, verbose_def=False, verbose_error=False)
 
 if plot_footprints:
+
     print(f"\n\n\tGenerate footprint plots with len {len(fov_polygons_cue)}")
     t1 = time.time()
 
@@ -1211,12 +1210,14 @@ if plot_footprints:
 
     t2 = time.time()
 
-    if len(fov_polygons_tip) > 0:
+    if len(fov_polygons_tip) > 0 and len(fov_polygons_tip) <= 1e6:
         plot_all_fov_footprints_plotly(fov_polygons_tip, all_targets, observed_targets_tip, nPlanes_tip, nSats_tip, extension="tip", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories)
 
-    if len(fov_polygons_cue) > 0:
+    if len(fov_polygons_cue) > 0 and len(fov_polygons_cue) <= 1e6:
         plot_all_fov_footprints_plotly(fov_polygons_cue, all_targets, observed_targets_cue, nPlanes_cue, nSats_cue, extension="cue", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories)
 
+    else:
+        print("Footprints too long, skip plotting")
     t3 = time.time()
     print(f"\tFOV: footprints plotting time: {format_hms(t3 - t2)}\n ")
 

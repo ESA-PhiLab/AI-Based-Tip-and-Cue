@@ -293,10 +293,19 @@ def win_long(path: str) -> str:
     return "\\\\?\\" + path
 
 def safe_move(src, dst, retries=5, delay=1.0):
-    """Move src → dst with retries if locked. Skips if already moved."""
+    """Move src→dst with retries if locked. Overwrites if dst exists. Returns True/False."""
     src, dst = win_long(src), win_long(dst)
     if not os.path.exists(src):
         return False
+
+    if os.path.exists(dst):
+        if os.path.isdir(dst) and not os.path.islink(dst):
+            shutil.rmtree(dst)
+        else:
+            os.remove(dst)
+        print(f"Removed history {dst}")
+        time.sleep(0.1)
+
     for i in range(retries):
         try:
             shutil.move(src, dst)
@@ -306,12 +315,17 @@ def safe_move(src, dst, retries=5, delay=1.0):
             print(f"Retry {i+1}/{retries}: {src} locked")
             time.sleep(delay)
         except FileNotFoundError:
+            print(f"File not found {src}")
             return False
         except Exception as e:
             print(f"Error moving {src} -> {dst}: {e}")
             return False
+        except:
+            print(f"Other error, did not move {src}")
+
     print(f"Warning: could not move {src} after {retries} retries.")
     return False
+
 
 def at_exit(save_name, main_path=os.getcwd(), pl=None,
             verbose_def=False, verbose_error=False):
@@ -366,10 +380,10 @@ def at_exit(save_name, main_path=os.getcwd(), pl=None,
         dst_path = os.path.join(results_dir, new_name)
         os.makedirs(os.path.dirname(dst_path), exist_ok=True)
 
-        if os.path.exists(dst_path):
-            if verbose_def:
-                print(f"Already moved: {dst_path}")
-            continue
+        # if os.path.exists(dst_path):
+        #     if verbose_def:
+        #         print(f"Already moved: {dst_path}")
+        #     continue
 
         safe_move(src_path, dst_path)
 
