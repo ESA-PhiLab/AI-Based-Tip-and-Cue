@@ -314,7 +314,7 @@ def plot_offnadir_distribution(excel_file, bin_size_deg=5):
         bins = np.arange(0, max_angle + bin_size_deg, bin_size_deg)
 
         plt.figure(figsize=(8, 5))
-        counts, _, _ = plt.hist(angles, bins=bins, edgecolor="black", color="tab:blue")
+        counts, _, _ = plt.hist(angles, bins=bins, edgecolor="black", color="tab:orange")
         plt.xlabel("Off-nadir angle (degrees)")
         plt.ylabel("Count")
         # plt.title(f"Off-nadir Angle Distribution ({bin_size_deg}° bins)")
@@ -453,7 +453,7 @@ def plot_viewing_time_distribution(excel_file, viewing_time_col, bin_size_sec=30
         bins = np.arange(0, max_viewing_time + bin_size_sec, bin_size_sec)
 
         plt.figure(figsize=(8, 5))
-        counts, _, _ = plt.hist(viewing_time_sec, bins=bins, edgecolor="black", color="tab:orange")
+        counts, _, _ = plt.hist(viewing_time_sec, bins=bins, edgecolor="black", color="tab:blue")
 
         # Axis labels
         plt.xlabel("Viewing time (minutes:seconds)")

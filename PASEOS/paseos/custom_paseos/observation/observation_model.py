@@ -190,6 +190,7 @@ class EOTools:
 
     def point_to_target_bounded(self, r_eci, v_eci, target_geodetic, t_datetime,
                                 offnadir_max=None, mode='max', dt_step_coarse=1.0):
+
         pointing_vec_brf_target, offnadir_unbound = self.point_to_target_unbounded(
             r_eci, v_eci, target_geodetic, t_datetime
         )
@@ -520,15 +521,14 @@ class EOTools:
                     r_future, v_future, target_geodetic, t_future
                 )
                 if offnadir_future <= offnadir_max:
-
                     return pointing_vec_brf_future, offnadir_future, dt
-                if offnadir_future > offnadir_max + 1.0:
+                if offnadir_future > offnadir_max + 2.0:
                     step = dt_step_coarse
-                elif offnadir_future > offnadir_max + 0.3:
+                elif offnadir_future > offnadir_max + 0.5:
                     step = dt_step_fine
                 else:
                     step = dt_step_ultrafine
                 dt += step
 
-            return pointing_vec_brf_future, offnadir_future, dt
+            return None, None, None
 

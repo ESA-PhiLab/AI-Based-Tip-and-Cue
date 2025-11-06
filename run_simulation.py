@@ -11,7 +11,7 @@ import gc
 import os, sys
 import pandas as pd
 import openpyxl
-import shutil
+import shutil       
 import random
 import uuid
 
@@ -40,7 +40,7 @@ from pathlib import Path
 
 show_constellation = False
 show_orbits = False
-plot_propagation, uhd = True, True
+plot_propagation, uhd = False, False
 plot_footprints = True
 plot_whale_trajectories = False
 
@@ -62,7 +62,11 @@ if real_run:
     create_image = False
     onboard_ai_tip = True
     onboard_ai_cue = True
-    model_attitude_control = True
+
+    if nSats_tip > 0:
+        model_attitude_control = True
+    else:
+        model_attitude_control = False
 
     logging = True
     verbose = False
@@ -270,7 +274,7 @@ if logging:
         if verbose:
             print(f"Warning: {copy_file} not found, skipping.")
 
-    atexit.register(at_exit, save_name=sim_name, main_path=main_path, pl=pl, verbose_def=False, verbose_error=False)
+    atexit.register(at_exit, save_name=sim_name, main_path=main_path, pl=(pl if plot_propagation else None), verbose_def=False, verbose_error=False)
     print("Initiated logging files")
 
 observed_idx_tip = None
@@ -581,15 +585,22 @@ while elapsed_seconds <= sim_duration_seconds:
                         will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_tipcue, el_min_deg=elevation_min,  step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
                         moving_towards, _ = eo_tools_dict[actor.name].is_moving_towards_target(r_vec, v_vec, task_coord, t_datetime, dt_check=sim_step_seconds )
 
+
                         if (will_be_in_view_soon or in_view) and not (eo_tools_dict[actor.name].move_set and moving_towards):
-                            pointing_vec_brf_target, _, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max', dt_step_coarse=sim_step_seconds)
+                            pointing_vec_brf_target, offnadir_bound, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max', dt_step_coarse=sim_step_seconds)
 
-                            eo_tools_dict[actor.name].move_set = True
-                            eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
+                            if time_to_sight != None:
+                                eo_tools_dict[actor.name].move_set = True
+                                eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
 
-                        if (in_view or will_be_in_view_soon) and not (offnadir_unbound >= (offnadir_limit + offnadir_margin) and not moving_towards):
-                            att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_brf_target)
+                            else:
+                                print(f"!! {actor.name}: Target {task_id} won't be in sight, delete task")
+                                will_be_in_view_later = False
+                                in_view = False
 
+                        if (in_view or will_be_in_view_soon) and eo_tools_dict[actor.name].offnadir_unbound_target != None and not (eo_tools_dict[actor.name].offnadir_unbound_target >= (offnadir_limit + offnadir_margin) and not moving_towards):
+                            if np.all(pointing_vec_brf_target) != None:
+                                att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_brf_target)
 
                         if not (in_view or will_be_in_view_later):
                             # Task finished → reset and pick next later
@@ -1198,7 +1209,7 @@ if logging:
             print("Created offnadir and latency distribution plots")
 
 print("\n")
-at_exit(save_name=sim_name, main_path=main_path, pl=pl, verbose_def=False, verbose_error=False)
+at_exit(save_name=sim_name, main_path=main_path, pl=(pl if plot_propagation else None), verbose_def=False, verbose_error=False)
 
 if plot_footprints:
 
@@ -1224,7 +1235,7 @@ if plot_footprints:
 if show_orbits:
     plot_orbits(trajectories)
 
-at_exit(save_name=sim_name, main_path=main_path, pl=pl, verbose_def=False, verbose_error=False)
+at_exit(save_name=sim_name, main_path=main_path, pl=(pl if plot_propagation else None), verbose_def=False, verbose_error=False)
 
 
 

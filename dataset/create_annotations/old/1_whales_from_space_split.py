@@ -4,17 +4,17 @@ import json
 import pandas as pd
 from pathlib import Path
 
-os.chdir("Whales from Satellite")
 
 extension = 'train'         # test, train, valid
 
 # === CONFIG ===
-BASE_DIR = os.getcwd()
-TRAIN_FOLDER = os.path.join(BASE_DIR, extension)
+CURRENT_DIR = os.getcwd()
+BASE_DIR = os.path.join(CURRENT_DIR, "../whales_from_space")
+TRAIN_FOLDER = os.path.join(CURRENT_DIR, extension)
 EXCEL_PATH = os.path.join(BASE_DIR, "WhaleFromSpaceDB_Whales.csv")
 
-OUT_WHALES = os.path.join(BASE_DIR, "0_whales_from_space_" + extension)
-OUT_NOT_WHALES = os.path.join(BASE_DIR, "0_not_whales_from_space_" + extension)
+OUT_WHALES = os.path.join(CURRENT_DIR, "0_whales_from_space_" + extension)
+OUT_NOT_WHALES = os.path.join(CURRENT_DIR, "0_not_whales_from_space_" + extension)
 OUT_WHALES_JSON = os.path.join(OUT_WHALES, "annotations.json")
 OUT_NOT_WHALES_JSON = os.path.join(OUT_NOT_WHALES, "annotations.json")
 

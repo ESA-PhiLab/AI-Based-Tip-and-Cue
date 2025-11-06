@@ -1,4 +1,4 @@
-from offnadir_imaging.functions.get_satellite_data import get_satellite, get_spatial_res
+# from offnadir_imaging.functions.get_satellite_data import get_satellite, get_spatial_res
 
 
 from paseos.custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath, estimate_box_inertia, pass_time_from_nadir
@@ -27,21 +27,21 @@ generate_radiation = True
 flat_dem = False
 exclude_dark = True
 
-real_run = True
+real_run = False
 
-nSats_tip = 0
-nSats_cue = 2
+nSats_tip = 1
+nSats_cue = 1
 
-nPlanes_tip = 0
-nPlanes_cue = 8
+nPlanes_tip = 1
+nPlanes_cue = 1
 
 offnadir_limit = 40.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
-delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
+delta_t_tipcue = 1*60           # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
 
 if not real_run:
-    sim_duration_hours = 0.2
+    sim_duration_hours = 0.20
     sim_time = 'slow'
 
 else:
@@ -65,7 +65,7 @@ if sim_time == 'slow':
     plot_fov_interval =  1
     plot_pyvista_interval = 20
     print_interval = 10
-    movie_orbit_sec = 12.0
+    movie_orbit_sec = 10.0
 
 elif sim_time == 'fast':
     sim_step_seconds = 6
@@ -185,7 +185,6 @@ if not real_run:
     n_targets = 500
     whale_seed = 42
 
-sim_name += f"_{n_targets}tar"
 pos_fraction = 1.0
 
 worldmap_dir = "dataset/worldmaps"      # Folder with GSHHS shapefiles; mask .tif/.npy will be stored here

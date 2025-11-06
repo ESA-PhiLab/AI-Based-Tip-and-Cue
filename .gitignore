@@ -21,7 +21,7 @@ test*
 
 0_results/*
 !0_results/.gitkeep
-!0_results/final
+
 
 installation_notes.txt
 
