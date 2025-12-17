@@ -12,14 +12,14 @@ import os
 # ================================================================================
 # SIMULATION
 
-images_folder = "dataset/whales_from_space/"
-img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
+# images_folder = "dataset/whales_from_space/"
+# img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
 
-csv_path = os.path.join(images_folder, "WhaleFromSpaceDB_Whales.csv")
-img_path = os.path.join(images_folder, img_file)
+# csv_path = os.path.join(images_folder, "WhaleFromSpaceDB_Whales.csv")
+# img_path = os.path.join(images_folder, img_file)
 
 print_values = True
-plot_3d = True
+plot_3d = False
 plot_result = True
 max_glint = False
 crop_black_border = True
@@ -27,16 +27,16 @@ generate_radiation = True
 flat_dem = False
 exclude_dark = True
 
-real_run = False
+real_run = True
 
-nSats_tip = 1
-nSats_cue = 1
+nSats_tip = 2
+nSats_cue = 2
 
-nPlanes_tip = 1
-nPlanes_cue = 1
+nPlanes_tip = 4
+nPlanes_cue = 4
 
 offnadir_limit = 40.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
-delta_t_tipcue = 1*60           # Time delay between Tip and Cue satellite (s)
+delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
 

@@ -358,9 +358,6 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
             fig.add_subplot(1, 3, 3).imshow(np.abs(img_rgb - DN255_offnadir));plt.axis('off');plt.title('difference');
             plt.show()
 
-
-
-
     return DN255_offnadir, DN255_sunglint, radiance_sunglint, DN255_combined
 
 
@@ -376,7 +373,8 @@ if __name__ == "__main__":
     plot_3d = False
     plot_result = True
     max_glint = False
-    crop_black_border = True
+    # crop_black_border = True
+    crop_black_border = False
 
     satellite = get_satellite(img_path, csv_path)
 
@@ -390,7 +388,7 @@ if __name__ == "__main__":
     resolution = 124    # pixels of render
     sample_count = 512  # 8192 min, 2048 * 2**7 max
 
-    dem_seed = 42
+    seed_dem = 42
 
     wind_speed = 10.0  # m/s
     num_waves = 50
@@ -426,7 +424,7 @@ if __name__ == "__main__":
 
             save_name =  'images/' + str(hour) + '-' + str(minute) + 'h.png'
             datetime_utc = datetime(2025, 6, 11, hour, minute, 0, tzinfo=timezone.utc)
-            DN255_rgb_offnadir, DN255_rgb_sunglint, radiance_sunglint, DN255_combined = generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc, sensor_characteristics, wave_properties, bools, dem_seed)
+            DN255_rgb_offnadir, DN255_rgb_sunglint, radiance_sunglint, DN255_combined = generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc, sensor_characteristics, wave_properties, bools, seed_dem)
 
             image_uint8 = np.clip(DN255_combined, 0, 255).astype(np.uint8)
             img = Image.fromarray(image_uint8)

@@ -9,8 +9,8 @@ from PIL import Image, ImageDraw, ImageTk
 # =========================
 # Config
 # =========================
-ANNOTATIONS_PATH = "new_annotations.json"           # input COCO
-CORRECTED_PATH   = "corrected_annotations.json"     # output COCO
+ANNOTATIONS_PATH = "corrected_annotations.json"           # input COCO
+CORRECTED_PATH   = "final_annotations.json"     # output COCO
 BASE_DIR = Path("..") / "whales_from_space"         # ../whales_from_space/<LocationYear>/<ImageFile>
 DISPLAY_MS = 500                                    # auto-advance delay (ms) when not paused
 UPSCALE_FACTOR = 6                                  # enlarge small images by this factor

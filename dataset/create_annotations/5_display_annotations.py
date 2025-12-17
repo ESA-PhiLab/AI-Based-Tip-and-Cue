@@ -7,7 +7,7 @@ import tkinter as tk
 # =========================
 # Config
 # =========================
-ANNOTATIONS_PATH = "new_annotations.json"           # COCO file
+ANNOTATIONS_PATH = "final_annotations.json"           # COCO file
 BASE_DIR = Path("..") / "whales_from_space"         # ../whales_from_space/<LocationYear>/<ImageFile>
 DISPLAY_MS = 500                                    # auto-advance delay (ms) when not paused
 UPSCALE_FACTOR = 6                                  # enlarge small images by this factor
