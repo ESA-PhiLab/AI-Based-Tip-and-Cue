@@ -1,0 +1,2 @@
+1. For bounding box: map each location with color ID. Translate off nadir, then back trace color code. 
+2. For segmentation mask: fill mask, translate, and draw outer boundary again.

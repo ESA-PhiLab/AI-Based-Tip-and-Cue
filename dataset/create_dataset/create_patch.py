@@ -438,6 +438,20 @@ def generate_patch(mode_single: str,
         "img_info": img_info,
         "anns": anns,
         "offset_xy": offset_xy,
+        "fracs": fracs_out,
+        "settings": {
+            "mode_single": mode_single,
+            "mode_multiple_allow_partial": bool(mode_multiple_allow_partial),
+            "window_size": window_size,
+            "nowhale_max_fraction": float(nowhale_max_fraction),
+            "whale_min_fraction": float(whale_min_fraction),
+            "half_fraction_range": tuple(map(float, half_fraction_range)),
+            "crop_black_border": bool(crop_black_border),
+            "crop_threshold": int(crop_threshold),
+            "max_tries": int(max_tries),
+            "mask_alpha": int(mask_alpha),
+            "plot_patch": bool(plot_patch),
+        },
     }
 
     return patch_bundle
