@@ -53,7 +53,6 @@ def crop_black_border_image(img_rgb: np.ndarray, threshold: int) -> tuple[np.nda
 
     thr = int(threshold)
     mask = np.any(a[:, :, :3] > thr, axis=2)
-
     if not np.any(mask):
         return a, (0, 0)
 
@@ -228,19 +227,72 @@ def draw_annotations_with_transparent_mask(img_rgb: np.ndarray,
 
 
 # =========================
-# Patch generation
-# Semantics for multiple whales:
-# - NO_WHALE: applies to all => max(fracs) <= nowhale_max_fraction
-# - WHALE (with_whale=True): only one needs to be "full" => max(fracs) >= whale_min_fraction
-# - HALF is controlled by allow_half:
-#   * if allow_half=False: only accept WHALE via whale_min_fraction
-#   * if allow_half=True: accept either FULL (>= whale_min_fraction) OR HALF (exists frac in [half_low, half_high])
-# Patch-view drawing:
-# - only draw whales whose frac > nowhale_max_fraction
-# Prints fractions for ALL whales.
+# Mode logic
 # =========================
-def generate_patch(with_whale: bool,
-                   allow_half: bool,
+def classify_fracs(fracs: list[float],
+                   nowhale_max_fraction: float,
+                   whale_min_fraction: float,
+                   half_fraction_range: tuple[float, float]) -> tuple[list[int], list[int], list[int]]:
+    """classify_fracs(fracs,nowhale_max_fraction,whale_min_fraction,half_fraction_range) -> (full_idxs,half_idxs,partial_idxs)."""
+    hlo, hhi = float(half_fraction_range[0]), float(half_fraction_range[1])
+    full_idxs = [i for i, f in enumerate(fracs) if f >= whale_min_fraction]
+    half_idxs = [i for i, f in enumerate(fracs) if hlo <= f <= hhi]
+    partial_idxs = [i for i, f in enumerate(fracs) if (nowhale_max_fraction < f < whale_min_fraction)]
+    return full_idxs, half_idxs, partial_idxs
+
+
+def accept_patch(mode_single: str,
+                 mode_multiple_allow_partial: bool,
+                 fracs: list[float],
+                 nowhale_max_fraction: float,
+                 whale_min_fraction: float,
+                 half_fraction_range: tuple[float, float]) -> tuple[bool, str]:
+    """accept_patch(mode_single,mode_multiple_allow_partial,fracs,nowhale_max_fraction,whale_min_fraction,half_fraction_range) -> (ok,label)."""
+    mode_single = str(mode_single).lower().strip()
+    valid_modes = {"full", "half", "ocean", "full_half", "all"}
+    if mode_single not in valid_modes:
+        raise ValueError(f"mode_single must be one of {sorted(valid_modes)}")
+
+    if not fracs:
+        if mode_single in {"ocean", "all"}:
+            return True, "OCEAN"
+        return False, "REJECT_NO_ANN"
+
+    full_idxs, half_idxs, partial_idxs = classify_fracs(fracs, nowhale_max_fraction, whale_min_fraction, half_fraction_range)
+    max_frac = float(max(fracs))
+    any_whale = max_frac > nowhale_max_fraction
+
+    if mode_single == "ocean":
+        ok = (not any_whale)
+        return ok, "OCEAN" if ok else "REJECT_NOT_OCEAN"
+
+    if mode_single == "all":
+        return True, "ANY"
+
+    if mode_single == "full":
+        ok = len(full_idxs) > 0
+        if ok and (not mode_multiple_allow_partial) and len(partial_idxs) > 0:
+            return False, "REJECT_PARTIAL_PRESENT"
+        return ok, "WHALE_FULL" if ok else "REJECT_NO_FULL"
+
+    if mode_single == "half":
+        ok = len(half_idxs) > 0
+        if ok and (not mode_multiple_allow_partial) and len(partial_idxs) > 0:
+            return False, "REJECT_PARTIAL_PRESENT"
+        return ok, "WHALE_HALF" if ok else "REJECT_NO_HALF"
+
+    # full_half
+    ok = (len(full_idxs) > 0) or (len(half_idxs) > 0)
+    if ok and (not mode_multiple_allow_partial) and len(partial_idxs) > 0:
+        return False, "REJECT_PARTIAL_PRESENT"
+    return ok, "WHALE_FULL_OR_HALF" if ok else "REJECT_NO_FULL_OR_HALF"
+
+
+# =========================
+# Patch generator
+# =========================
+def generate_patch(mode_single: str,
+                   mode_multiple_allow_partial: bool,
                    window_size: int | tuple[int, int],
                    img_file: str,
                    rng: np.random.Generator,
@@ -253,7 +305,7 @@ def generate_patch(with_whale: bool,
                    crop_threshold: int = 1,
                    max_tries: int = 5000,
                    mask_alpha: int = 80) -> tuple[np.ndarray, tuple[int, int], list[float], str]:
-    """generate_patch(...) -> (patch,(x,y),fracs,label): Sample patch with multi-whale rules; plot full+patch."""
+    """generate_patch(...) -> (patch,(x,y),fracs,label): Sample patch using mode_single + multiple-whale policy; print all whale fractions; plot full+patch."""
     if not (0.0 <= float(nowhale_max_fraction) < float(whale_min_fraction) <= 1.0):
         raise ValueError("Require 0 <= nowhale_max_fraction < whale_min_fraction <= 1")
 
@@ -297,7 +349,7 @@ def generate_patch(with_whale: bool,
     patch = None
     top_left = None
     fracs_out: list[float] = []
-    label = "UNKNOWN"
+    label_out = "UNKNOWN"
     draw_idxs: list[int] = []
 
     for _ in range(int(max_tries)):
@@ -309,37 +361,20 @@ def generate_patch(with_whale: bool,
             inside = int(m[y:y + ph, x:x + pw].sum())
             fracs.append(inside / float(area))
 
-        if not fracs:
-            max_frac = 0.0
-            any_half = False
-        else:
-            max_frac = float(max(fracs))
-            any_half = any(hlo <= f <= hhi for f in fracs)
-
-        if with_whale:
-            if not fracs:
-                ok, label = False, "REJECT_NO_ANN"
-            else:
-                full_exists = any(f >= whale_min_fraction for f in fracs)
-                any_partial = any((nowhale_max_fraction < f < whale_min_fraction) for f in fracs)
-                any_half_in_range = any(hlo <= f <= hhi for f in fracs)
-
-                if allow_half:
-                    # accept if: at least one full OR at least one half
-                    ok = full_exists or any_half_in_range
-                    label = "WHALE_FULL" if full_exists else ("WHALE_HALF" if ok else "REJECT")
-                else:
-                    # strict: at least one full, and no whale in the partial interval
-                    ok = full_exists and (not any_partial)
-                    label = "WHALE_FULL_STRICT" if ok else "REJECT_PARTIAL_PRESENT"
-        else:
-            ok = (max(fracs) <= nowhale_max_fraction) if fracs else True
-            label = "NO_WHALE"
+        ok, label = accept_patch(
+            mode_single=mode_single,
+            mode_multiple_allow_partial=mode_multiple_allow_partial,
+            fracs=fracs,
+            nowhale_max_fraction=nowhale_max_fraction,
+            whale_min_fraction=whale_min_fraction,
+            half_fraction_range=half_fraction_range,
+        )
 
         if ok:
             patch = img_rgb[y:y + ph, x:x + pw].copy()
             top_left = (x, y)
             fracs_out = fracs
+            label_out = label
             draw_idxs = [i for i, f in enumerate(fracs) if f > nowhale_max_fraction]
             break
 
@@ -347,16 +382,16 @@ def generate_patch(with_whale: bool,
         raise RuntimeError(f"Failed to sample a valid patch after {max_tries} tries")
 
     x, y = top_left
-    rect_xyxy = (float(x), float(y), float(x + pw), float(y + ph))
     marker_pixel_id = y * w + x
-
-    print(f"{label} patch marker at (x={x}, y={y}), pixel_id={marker_pixel_id}, window={pw}x{ph}")
+    print(f"{label_out} patch marker at (x={x}, y={y}), pixel_id={marker_pixel_id}, window={pw}x{ph}")
     if fracs_out:
         for i, f in enumerate(fracs_out):
             print(f"  whale[{i}] fraction_inside = {100.0*f:.2f}%")
         print(f"  max = {100.0*max(fracs_out):.2f}% | min = {100.0*min(fracs_out):.2f}%")
     else:
         print("  No whales in this image (no annotations).")
+
+    rect_xyxy = (float(x), float(y), float(x + pw), float(y + ph))
 
     full_overlay = draw_annotations_with_transparent_mask(
         img_rgb, anns, offset_xy=offset_xy, clip_rect_xyxy=None, only_ann_indices=None, line_width=1, mask_alpha=mask_alpha
@@ -386,13 +421,13 @@ def generate_patch(with_whale: bool,
     axes[0].axis("off")
 
     axes[1].imshow(patch_overlay)
-    axes[1].set_title(f"Patch ({label}) (only whales > no-whale threshold)")
+    axes[1].set_title(f"Patch ({label_out}) (only whales > no-whale threshold drawn)")
     axes[1].axis("off")
 
     plt.tight_layout()
     plt.show()
 
-    return patch, (x, y), fracs_out, label
+    return patch, (x, y), fracs_out, label_out
 
 
 # =========================
@@ -403,15 +438,26 @@ if __name__ == "__main__":
     img_file = "Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG"
     img_file = "Ignacio2017/Ignacio_GW_WV3_PS_20170220_B58.PNG"
 
-    for _ in range(10):
+    # mode_single options:
+    #   "full"      -> only full whales
+    #   "half"      -> only half whales
+    #   "ocean"     -> only ocean (no whales)
+    #   "full_half" -> full OR half whales
+    #   "all"       -> anything
+    #
+    # mode_multiple_allow_partial:
+    #   True  -> if multiple whales, allow other partial whales in the patch
+    #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
+
+    for _ in range(5):
         generate_patch(
-            with_whale=True,                    # 'True', 'False', or 'half'
-            allow_half=False,
+            mode_single="full",
+            mode_multiple_allow_partial=False,
             window_size=64,
             img_file=img_file,
             rng=rng,
             nowhale_max_fraction=0.10,
-            whale_min_fraction=0.81,
+            whale_min_fraction=0.99,
             half_fraction_range=(0.20, 0.80),
             mask_alpha=80,
         )
