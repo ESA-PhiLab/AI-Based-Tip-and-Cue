@@ -58,7 +58,7 @@ SAMPLE_COUNT = 512
 DEM_SEED = 42
 
 # Segmentation translation:
-MASK_SUPERSAMPLE = 4
+MASK_SUPERSAMPLE = 2
 MASK_SPP = 1
 MASK_FILTER = "bilinear"
 MASK_CLOSE_RADIUS = 2
@@ -98,10 +98,10 @@ def draw_overlay(img: Image.Image, anns: list) -> Image.Image:
                 continue
             pts = [(seg[i], seg[i + 1]) for i in range(0, len(seg), 2)]
             if len(pts) >= 3:
-                draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
+                draw.line(pts + [pts[0]], fill=(0, 255, 0), width=1)
         if "bbox" in a and len(a["bbox"]) == 4:
             x, y, w, h = a["bbox"]
-            draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=2)
+            draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=1)
     return img
 
 def draw_overlay_from_polys(img: Image.Image, polys_xy: list, boxes_xywh: list) -> Image.Image:
@@ -109,9 +109,9 @@ def draw_overlay_from_polys(img: Image.Image, polys_xy: list, boxes_xywh: list) 
     draw = ImageDraw.Draw(img)
     for pts in polys_xy:
         if len(pts) >= 3:
-            draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
+            draw.line(pts + [pts[0]], fill=(0, 255, 0), width=1)
     for (x, y, w, h) in boxes_xywh:
-        draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=2)
+        draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=1)
     return img
 
 def to_uint8_rgb(arr) -> np.ndarray:
