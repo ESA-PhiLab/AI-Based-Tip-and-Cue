@@ -32,6 +32,10 @@ output.log
 sim_output.xlsx
 simulation.mp4
 
+dataset/create_dataset/nadir/*
+dataset/create_dataset/offnadir/*
+dataset/create_dataset/sunglint/*
+
 
 
 
