@@ -11,7 +11,8 @@ Find out more at: [ESA Φ-lab Collaborative Innovation Network - AI-Based Tip an
 
 - [Mitsuba-3](https://mitsuba.readthedocs.io/en/stable/index.html): physics-based rendering engine to model radiance and geometric effects at off-nadir viewing angles.
 - [pySMARTS](https://github.com/NREL/pySMARTS/tree/main/pySMARTS)   (Simple Model of the Atmospheric Radiative Transfer of Sunshine): to simulate incident solar spectral irradiance based on solar geometry, atmosphere, and surface characteristics.
-- [PASEOS](https://github.com/aidotse/PASEOS): to simulate satellite orbits and propagate satellite positions using orbital elements (custom version to be released).
+- [PASEOS](https://github.com/aidotse/PASEOS): to simulate spacecraft subsystem states, including field of view windows, attitude pointing, and stabilization (through custom modules).
+- [Orekit](https://www.orekit.org): to propagate satellite trajectories and state vectors.
 
 ### Dataset
 [Whales from Space Dataset](https://data.bas.ac.uk/full-record.php?id=GB/NERC/BAS/PDC/01592) : 633 patches of Very High Resolution (VHR) whale imagery from WorldView-2, -3, QuickBird-2, and GeoEye-1 satellites.
@@ -132,5 +133,17 @@ to be completed.
 
 ## Contact
 Nadine Duursma, N.A.Duursma at outlook.com 
+
+## Reference
+```bash
+@software{AI-Based-Tip-and-Cue,
+  title        = {AI-Based-Tip-and-Cue Simulation Framework},
+  author       = {Duursma, Nadine Anje},
+  organization = {{European Space Agency (ESA) Phi-Lab}},
+  version      = {0.1.1},
+  year         = {2025},
+  url          = {https://github.com/ESA-PhiLab/AI-Based-Tip-and-Cue}
+}
+```
 
 
