@@ -82,9 +82,11 @@ From Command prompt, verify the the installation.
 java --version
 ```
 
-From Anaconda prompt, install Orekit and download Orekit data.
+From Anaconda prompt, install Orekit and download the Orekit data.
 ```bash
 conda install -c conda-forge orekit
+```
+```bash
 pip install git+https://gitlab.orekit.org/orekit/orekit-data.git
 ```
 
