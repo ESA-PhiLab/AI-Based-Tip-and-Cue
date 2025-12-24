@@ -5,7 +5,7 @@ dataset/whales_from_space/*
 !dataset/whales_from_space/.gitkeep
 
 dataset/worldmaps/*
-!dataset/worldmaps/.gitkeep
+!dataset/worldmaps/land_mask.npy
 
 offnadir_imaging/images/*
 !offnadir_imaging/images/.gitkeep
