@@ -4,7 +4,7 @@ import sys
 from datetime import datetime, timezone
 
 import mitsuba as mi
-mi.set_variant("llvm_ad_rgb")
+mi.set_variant("cuda_ad_rgb")
 
 import numpy as np
 import matplotlib.pyplot as plt

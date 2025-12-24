@@ -4,7 +4,7 @@ import sys
 
 import mitsuba as mi
 
-MI_VARIANT = "llvm_ad_rgb"
+MI_VARIANT = "cuda_ad_rgb"
 mi.set_variant(MI_VARIANT)
 
 from create_patch import generate_patch

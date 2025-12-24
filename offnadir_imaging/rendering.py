@@ -20,7 +20,7 @@ from .functions.intermediate_functions import rmse, normalize, get_scene_charact
 from .functions import image_utils as iu
 
 def get_radiance_sunglint(input_img, dem_path, spd_path, solar_spd, satellite_local, target_local, sun_direction, sensor_characteristics, alpha):
-    mi.set_variant('llvm_ad_spectral')
+    mi.set_variant('cuda_ad_spectral')
 
     scene_rotation = mi.ScalarTransform4f().rotate(
         axis=mi.ScalarVector3f(0, 0, 1),
@@ -119,7 +119,7 @@ def get_radiance_sunglint(input_img, dem_path, spd_path, solar_spd, satellite_lo
 
 def get_image_offnadir(input_img, dem_path, satellite_local, target_local, sensor_characteristics):
 
-    mi.set_variant('llvm_ad_rgb')
+    mi.set_variant('cuda_ad_rgb')
 
     scene_rotation = mi.ScalarTransform4f().rotate(
         axis=mi.ScalarVector3f(0, 0, 1),

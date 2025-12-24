@@ -3,6 +3,8 @@ import subprocess
 import sys
 import time
 
+from pathlib import Path
+import shutil
 
 def run_one(i: int,
             img_file: str,
@@ -13,7 +15,28 @@ def run_one(i: int,
             sat_lat: float, sat_lon: float, sat_alt: float,
             tgt_lat: float, tgt_lon: float, tgt_alt: float,
             datetime_utc: str) -> None:
-    """run_one(...) -> None: Spawn one worker."""
+    """run_one(...) -> None: Spawn one worker with isolated TEMP (drjit cache isolation)."""
+    import os
+    import shutil
+    from pathlib import Path
+    import faulthandler, sys
+    faulthandler.enable(all_threads=True)
+
+    shutil.rmtree(Path.home() / "AppData/Local/Temp/drjit", ignore_errors=True)
+
+    env = os.environ.copy()
+
+    base = Path(r"C:\drjit_temp") / f"worker_{i}"
+    tmp = base / "tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+
+    # drjit uses Windows temp -> put each worker in its own temp dir
+    env["TEMP"] = str(tmp)
+    env["TMP"] = str(tmp)
+
+    # optional: ensure no leftovers if worker reruns with same i
+    shutil.rmtree(tmp / "drjit", ignore_errors=True)
+
     cmd = [
         sys.executable, "worker_run.py",
         "--img_file", img_file,
@@ -29,12 +52,13 @@ def run_one(i: int,
         "--tgt_alt", str(tgt_alt),
         "--datetime_utc", datetime_utc,
     ]
-    subprocess.run(
-        cmd,
-        check=True,
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    )
+
+    try:
+        subprocess.run(cmd, check=True, stdout=sys.stdout, stderr=sys.stderr, env=env)
+    finally:
+        # deletes drjit cache for that run (and everything else in that worker temp)
+        shutil.rmtree(base, ignore_errors=True)
+
 
 
 def main() -> None:

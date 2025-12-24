@@ -21,7 +21,7 @@ from offnadir_imaging.functions.intermediate_functions import get_scene_characte
 # Mitsuba variant (SET ONCE!)
 # =========================
 # If llvm_ad_rgb still crashes on your system, switch to "llvm_rgb" (often more stable).
-MI_VARIANT = "llvm_ad_rgb"
+MI_VARIANT = "cuda_ad_rgb"
 mi.set_variant(MI_VARIANT)
 
 
@@ -131,7 +131,7 @@ def render_emission_texture(dem_obj_path: str, tex_rgb01: np.ndarray, to_world_s
     """render_emission_texture(dem_obj_path,tex_rgb01,to_world_scene,to_world_sensor,fov_deg,res,spp,filter_type) -> np.ndarray."""
     tex = {
         "type": "bitmap",
-        "data": tex_rgb01,
+        "data": mi.TensorXf(np.asarray(tex_rgb01, dtype=np.float32)),
         "raw": True,
         "wrap_mode": "clamp",
         "filter_type": str(filter_type),
