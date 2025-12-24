@@ -37,6 +37,12 @@ conda env create -f environment.yml
 conda activate tipandcue
 ```
 
+Fix rasterio installation manually.
+
+```bash
+conda install -c conda-forge --yes gdal rasterio pyproj proj proj-data 
+```
+
 Launch PyCharm.
 ```bash
 pycharm64
@@ -112,6 +118,8 @@ Name: SMARTSPATH\
 Value: C:\Program Files\SMARTS_295_PC
 
 ### Installation Troubleshooting
+
+#### Mitsuba
 On some PCs, 'import mitsuba' crashes with a silent error after run, error code (0xC0000005). If this happens, try the following.
 - !! First check your LLVM version. It should be lower than LLVM 18.1, otherwise it is imcompatible with DrJit. To install, obtain the LLVM-18.1.6-win64.exe file from https://github.com/llvm/llvm-project/releases?page=4 and execute.
 - Re-install Microsoft VS Code redistributables (both x64 and x86): https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
