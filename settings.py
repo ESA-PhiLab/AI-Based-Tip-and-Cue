@@ -27,13 +27,13 @@ generate_radiation = True
 flat_dem = False
 exclude_dark = True
 
-real_run = True
+real_run = False
 
-nSats_tip = 2
-nSats_cue = 2
+nSats_tip = 1
+nSats_cue = 1
 
-nPlanes_tip = 4
-nPlanes_cue = 4
+nPlanes_tip = 1
+nPlanes_cue = 1
 
 offnadir_limit = 40.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)

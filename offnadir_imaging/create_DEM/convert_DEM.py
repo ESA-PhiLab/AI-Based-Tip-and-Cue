@@ -2,7 +2,10 @@ import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 import trimesh
-from mitsuba import Bitmap
+
+import mitsuba as mi
+mi.set_variant('scalar_rgb')
+
 import matplotlib.pyplot as plt
 # import meshio
 
@@ -23,7 +26,7 @@ def get_obj_bounds(filepath):
 
 def convert_DEM(img_path, dem_path, obj_output_path, GSD, scale_km = True, print_output=False, plot_DEM = False):
     # === Load Satellite Image to Get Dimensions ===
-    bmp = Bitmap(img_path)
+    bmp = mi.Bitmap(img_path)
     img_np = np.array(bmp)
     img_height, img_width = img_np.shape[:2]
 

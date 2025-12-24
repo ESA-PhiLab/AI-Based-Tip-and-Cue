@@ -108,7 +108,7 @@ def render_emission_texture(dem_obj_path: str,
     """render_emission_texture(dem_obj_path,tex_rgb01,to_world_scene,to_world_sensor,fov_deg,res,spp,filter_type) -> np.ndarray."""
     tex = {
         "type": "bitmap",
-        "data": tex_rgb01,
+        "data": mi.TensorXf(np.asarray(tex_rgb01, dtype=np.float32)),
         "raw": True,
         "wrap_mode": "clamp",
         "filter_type": str(filter_type),
@@ -142,6 +142,8 @@ def render_emission_texture(dem_obj_path: str,
     })
 
     img = np.array(mi.render(scene), copy=False)
+    _ = mi.util.convert_to_bitmap(img)
+
     return np.clip(img * 255.0 + 0.5, 0, 255).astype(np.uint8)
 
 

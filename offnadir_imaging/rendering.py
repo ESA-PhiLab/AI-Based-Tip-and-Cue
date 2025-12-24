@@ -1,11 +1,13 @@
 import math
 import os, sys
 import numpy as np
+
 import mitsuba as mi
 import drjit as dr
 from datetime import datetime, timezone
 from matplotlib import pyplot as plt
 from PIL import Image
+import gc
 
 from .RTM import generate_solar_spd_from_target
 from .create_DEM.create_dummy_DEM import get_DEM
@@ -32,7 +34,7 @@ def get_radiance_sunglint(input_img, dem_path, spd_path, solar_spd, satellite_lo
 
     texture = {
         "type": "bitmap",
-        "data": input_img,
+        "data": mi.TensorXf(input_img.astype(np.float32)),
         "wrap_mode": "clamp",  # or "clamp"
         "filter_type": "nearest",
         "raw": True  # Treat image as raw (no gamma)
@@ -110,6 +112,8 @@ def get_radiance_sunglint(input_img, dem_path, spd_path, solar_spd, satellite_lo
     scene = mi.load_dict(scene_dict)
     radiance_sunglint = mi.render(scene)
 
+    _ = mi.util.convert_to_bitmap(radiance_sunglint)
+
     return radiance_sunglint
 
 
@@ -127,7 +131,8 @@ def get_image_offnadir(input_img, dem_path, satellite_local, target_local, senso
 
     texture = {
         "type": "bitmap",
-        "data": input_img,
+        "data": mi.TensorXf(np.asarray(input_img, dtype=np.float32)),
+
         "filter_type": "nearest",
         "wrap_mode": "clamp",
         "raw": True
@@ -183,11 +188,13 @@ def get_image_offnadir(input_img, dem_path, satellite_local, target_local, senso
     scene = mi.load_dict(scene_dict)
     image_offnadir = mi.render(scene)
 
+    _ = mi.util.convert_to_bitmap(image_offnadir)
+
     return image_offnadir
 
 def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc, sensor_characteristics, wave_properties, bools, dem_seed):
 
-    dr.set_flag(dr.JitFlag.Debug, True)
+    # dr.set_flag(dr.JitFlag.Debug, True)
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Temp file paths
@@ -357,6 +364,11 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
             fig.add_subplot(1, 3, 2).imshow(DN255_offnadir);plt.axis('off');plt.title('off-nadir');
             fig.add_subplot(1, 3, 3).imshow(np.abs(img_rgb - DN255_offnadir));plt.axis('off');plt.title('difference');
             plt.show()
+
+    gc.collect()
+    dr.sync_thread()
+    dr.flush_malloc_cache()
+    dr.flush_kernel_cache()
 
     return DN255_offnadir, DN255_sunglint, radiance_sunglint, DN255_combined
 
