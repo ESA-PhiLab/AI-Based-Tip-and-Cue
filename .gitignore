@@ -2,7 +2,11 @@ __pycache__/
 .idea/
 
 dataset/whales_from_space/*
-!dataset/whales_from_space/.gitkeep
+!dataset/whales_from_space/.
+
+dataset/create_dataset/nadir/*
+dataset/create_dataset/offnadir/*
+dataset/create_dataset/sunglint/*
 
 dataset/worldmaps/*
 !dataset/worldmaps/land_mask.npy
