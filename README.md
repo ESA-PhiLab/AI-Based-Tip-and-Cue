@@ -3,7 +3,7 @@
 ![Alt Text](0_resources/images/simulation.gif)
 
 **Under development.**\
-Expected release: Early 2026
+Expected release: March 2026
 
 Find out more at: [ESA Φ-lab Collaborative Innovation Network - AI-Based Tip and Cue](https://cin.philab.esa.int/databases/projects/laying-the-foundation-for-ai-based-tip-and-cue)
 
