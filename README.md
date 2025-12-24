@@ -123,8 +123,8 @@ On some PCs, 'import mitsuba' crashes with a silent error after run, error code 
 
 Run the file: run_simulation.py 
 
-** Please note that the simulation framework is still under development. The code and the results have not yet been verified. **\
-** Full release is expected around March 2026. **
+**Please note that the simulation framework is still under development. The code and the results have not yet been verified.**\
+**Full release is expected around March 2026.**
 
 ## Usage
 
