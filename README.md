@@ -46,7 +46,7 @@ Add your new environment:
 
 Add new interpreter -> Add local interpreter -> Select existing -> Conda -> Path to Conda: C:\Users\\\*username*\miniconda3\Scripts\conda.exe ,  Environment: C:\Users\\\*username*\miniconda3\envs\tipandcue
 
-### Install Paseos
+### Install PASEOS
 From Git Bash, inside the AI-Based-Tip-and-Cue directory, clone the PASEOS repository and merge with the custom PASEOS packages.
 ```bash
 cd AI-Based-Tip-and-Cue
