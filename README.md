@@ -20,6 +20,10 @@ Find out more at: [ESA Φ-lab Collaborative Innovation Network - AI-Based Tip an
 ## Installation
 
 ### Requirements
+Hardware:
+- Nvidia GPU for Mitsuba rendering.
+
+Software:
 - Anaconda / Miniconda: https://www.anaconda.com/download/success
 - Git: https://git-scm.com/install/windows
 - PyCharm (or another Python IDE): https://www.jetbrains.com/pycharm/download/?section=windows
