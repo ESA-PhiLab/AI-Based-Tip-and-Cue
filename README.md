@@ -21,17 +21,18 @@ Find out more at: [ESA Φ-lab Collaborative Innovation Network - AI-Based Tip an
 
 ### Requirements
 - Anaconda / Miniconda: https://www.anaconda.com/download/success
+- Git: https://git-scm.com/install/windows
 - PyCharm (or another Python IDE): https://www.jetbrains.com/pycharm/download/?section=windows
 
 ### Create Environment
-Clone the AI-Based Tip and Cue repository in your local folder and navigate to the folder.
+From Git Bash, clone the AI-Based Tip and Cue repository.
 ```bash
 git clone https://github.com/ESA-PhiLab/AI-Based-Tip-and-Cue.git
-cd AI-Based-Tip-and-Cue
 ```
 
 From Anaconda prompt, create your Conda environment.
 ```bash
+cd AI-Based-Tip-and-Cue
 conda env create -f environment.yml
 conda activate tipandcue
 ```
@@ -46,15 +47,16 @@ Add your new environment:
 Add new interpreter -> Add local interpreter -> Select existing -> Conda -> Path to Conda: C:\Users\\\*username*\miniconda3\Scripts\conda.exe ,  Environment: C:\Users\\\*username*\miniconda3\envs\tipandcue
 
 ### Install Paseos
-Clone the PASEOS repository, merging with the AI-Based Tip and Cue PASEOS custom packages.
+From Git Bash, still inside the AI-Based-Tip-and-Cue directory, clone the PASEOS repository and merge with the custom PASEOS packages.
 ```bash
+cd AI-Based-Tip-and-Cue
 git clone https://github.com/aidotse/PASEOS.git PASEOS_tmp
 cp -r PASEOS_tmp/* PASEOS/
 cp -r PASEOS_tmp/.* PASEOS/ 2>/dev/null
 rm -rf PASEOS_tmp
 ```
 
-Install additional dependencies.
+From Anaconda prompt, install additional dependencies.
 ```bash
 cd PASEOS
 pip install -e . --no-deps
