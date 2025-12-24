@@ -119,6 +119,26 @@ On some PCs, 'import mitsuba' crashes with a silent error after run, error code 
 - (Re-)install Visual Studio 2022: https://www.junian.net/dev/visual-studio-community-download-links/ownloads/ . Enable 'Desktop Development with C++' and thick all optional feature boxes.
 - (Re-)install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64
 
+### Dataset
+Request the Whales from Space dataset at: https://data.bas.ac.uk/full-record.php?id=GB/NERC/BAS/PDC/01592
+
+Place the obtained data in dataset/whales_from_space with the following structure: 
+
+```bash
+dataset/
+└── whales_from_space/
+    ├── Auckland2006/
+    ├── Auckland2011/
+    ├── Ignacio2017/
+    ├── Maui2015/
+    ├── Pelagos2016/
+    ├── Valdes2012/
+    ├── Valdes2014/
+    ├── Valdes2016/
+    ├── Witsand2009/
+    └── WhaleFromSpaceDB_Whales.csv
+```
+
 ### Verification 
 
 Run the file: run_simulation.py 
