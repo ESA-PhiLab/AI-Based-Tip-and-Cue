@@ -68,8 +68,8 @@ pip install -e . --no-deps
 2. Extract the zip file to: C:\Program Files\Java\jdk-25.
 3. Edit Windows Environment variables: (search -> Environment variables -> Edit the system environment variables)
 
-System variables:
-Name: JAVA_HOME  
+System variables:\
+Name: JAVA_HOME  \
 Value: C:\Program Files\Java\jdk-25*
 
 User variables:
@@ -95,9 +95,9 @@ pip install git+https://gitlab.orekit.org/orekit/orekit-data.git
 Install LLVM 18.1 (no newer version, otherwise it crashes with DrJit) from: https://github.com/llvm/llvm-project/releases?page=4.
 Expand Assets, then download + execute LLVM-18.1.6-win64.exe file.
 
-Add Environment variable:
-System variables:
-Name: DRJIT_LIBLLVM_PATH
+Add Environment variable: \
+System variables: \
+Name: DRJIT_LIBLLVM_PATH \
 Value: C:\Program Files\LLVM\bin\LLVM-C.dll
 
 ### Install pySMARTS
@@ -106,9 +106,9 @@ Download SMARTS software from: https://www.nrel.gov/grid/solar-resource/smarts
 
 Extract the .zip and place it in: C:\Program Files\SMARTS_295_PC
 
-Add Environment variable:
-System variables:
-Name: SMARTSPATH
+Add Environment variable:\
+System variables:\
+Name: SMARTSPATH\
 Value: C:\Program Files\SMARTS_295_PC
 
 ### Installation Troubleshooting
@@ -119,12 +119,20 @@ On some PCs, 'import mitsuba' crashes with a silent error after run, error code 
 - (Re-)install Visual Studio 2022: https://www.junian.net/dev/visual-studio-community-download-links/ownloads/ . Enable 'Desktop Development with C++' and thick all optional feature boxes.
 - (Re-)install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64
 
+### Verification 
+
+Run the file: run_simulation.py 
+
+** Please note that the simulation framework is still under development. The code and the results have not yet been verified. **\
+** Full release is expected around March 2026. **
 
 ## Usage
 
 ```bash
 to be completed.
 ```
+
+
 
 ## Contact
 Nadine Duursma, N.A.Duursma at outlook.com 
