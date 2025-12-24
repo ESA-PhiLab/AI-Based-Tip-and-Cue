@@ -47,7 +47,7 @@ Add your new environment:
 Add new interpreter -> Add local interpreter -> Select existing -> Conda -> Path to Conda: C:\Users\\\*username*\miniconda3\Scripts\conda.exe ,  Environment: C:\Users\\\*username*\miniconda3\envs\tipandcue
 
 ### Install Paseos
-From Git Bash, still inside the AI-Based-Tip-and-Cue directory, clone the PASEOS repository and merge with the custom PASEOS packages.
+From Git Bash, inside the AI-Based-Tip-and-Cue directory, clone the PASEOS repository and merge with the custom PASEOS packages.
 ```bash
 cd AI-Based-Tip-and-Cue
 git clone https://github.com/aidotse/PASEOS.git PASEOS_tmp
@@ -75,18 +75,16 @@ Value: C:\Program Files\Java\jdk-25*
 User variables:
 Edit Path -> New -> %JAVA_HOME%\bin
 
-Click Ok to complete and verify the the installation via Command prompt.
+Click Ok to complete.
+
+From Command prompt, verify the the installation.
 ```bash
 java --version
 ```
 
-From Anaconda prompt, install Orekit.
+From Anaconda prompt, install Orekit and download Orekit data.
 ```bash
 conda install -c conda-forge orekit
-```
-
-Download Orekit data
-```bash
 pip install git+https://gitlab.orekit.org/orekit/orekit-data.git
 ```
 
@@ -118,13 +116,6 @@ On some PCs, 'import mitsuba' crashes with a silent error after run, error code 
 - (Re-)install Visual Studio Code: https://visualstudio.microsoft.com/downloads/
 - (Re-)install Visual Studio 2022: https://www.junian.net/dev/visual-studio-community-download-links/ownloads/ . Enable 'Desktop Development with C++' and thick all optional feature boxes.
 - (Re-)install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64
-
-
-
-
-
-
-
 
 
 ## Usage
