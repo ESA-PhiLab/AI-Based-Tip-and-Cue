@@ -26,7 +26,7 @@ Hardware:
 Software:
 - Anaconda / Miniconda: https://www.anaconda.com/download/success
 - PyCharm (or another Python IDE): https://www.jetbrains.com/pycharm/download/?section=windows
-- Visual Studio 2022 including optional feature 'Desktop Development with C++' (not 2026, due to incompatibility with CUDA): https://www.junian.net/dev/visual-studio-community-download-links/   
+- Visual Studio 2022, including optional feature 'Desktop Development with C++' (not 2026, due to incompatibility with CUDA): https://www.junian.net/dev/visual-studio-community-download-links/   
 - CUDA Toolkit: https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64
 - Git: https://git-scm.com/install/windows
 
