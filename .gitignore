@@ -42,8 +42,9 @@ dataset/create_dataset/sunglint/*
 
 
 
-
 offnadir_imaging/create_DEM/input_img_WV.PNG
 offnadir_imaging/create_DEM/input_dem_WV.tiff
 offnadir_imaging/create_DEM/dem_mesh_WV.obj
-offnadir_imaging/create_DEM/dem_mesh_WV.obj
+offnadir_imaging/create_DEM/input_dem_PATCH.tiff
+offnadir_imaging/create_DEM/dem_mesh_PATCH.obj
+dataset/create_dataset/dataset_overview.xlsx
