@@ -396,6 +396,7 @@ def generate_patch(mode_single: str,
     full_overlay = draw_annotations_with_transparent_mask(
         img_rgb, anns, offset_xy=offset_xy, clip_rect_xyxy=None, only_ann_indices=None, line_width=1, mask_alpha=mask_alpha
     )
+
     full_img = Image.fromarray(full_overlay, mode="RGB").convert("RGBA")
     dfull = ImageDraw.Draw(full_img, "RGBA")
     _draw_bbox_closed(dfull, (x, y, pw, ph), outline=(0, 0, 0, 255), width=1)

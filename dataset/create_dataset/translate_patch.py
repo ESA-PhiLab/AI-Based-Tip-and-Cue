@@ -40,7 +40,6 @@ BOOLS_BASE = {
 
 WAVE_PROPERTIES = {"wind_speed": 10.0, "num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
 SAMPLE_COUNT = 512
-DEM_SEED = 42
 
 # Segmentation translation:
 MASK_SUPERSAMPLE = 2
@@ -518,7 +517,7 @@ def translate_offnadir(patch_bundle: dict,
         sensor_characteristics,
         WAVE_PROPERTIES,
         bools,
-        DEM_SEED,
+        dem_seed,
     )
     if DN255_offnadir is None:
         raise RuntimeError("Renderer returned None (dark hours).")

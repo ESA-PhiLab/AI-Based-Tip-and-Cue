@@ -92,6 +92,7 @@ def get_DEM(input_path, output_path, GSD, wave_properties, random_seed, waves, c
         dst.write(Z, 1)
 
 
+
     if plot_DEM:
         # === Preview ===
         plt.imshow(Z, cmap="viridis")
@@ -105,15 +106,13 @@ if __name__ == "__main__":
 
     GSD = 0.37  # m/pixel
 
-    num_waves = 50
-    wave_min = 0.05  # m
-    wave_max = 0.5  # m
+    from settings import wave_properties
 
     waves = True
     curvature = True
 
-    img_path = "../input_img_WV.PNG"
-    dem_path = "../input_dem_WV.tiff"
+    img_path = "input_img_WV.PNG"
+    dem_path = "input_dem_WV.tiff"
 
-    get_DEM(img_path, dem_path, GSD, num_waves, wave_min, wave_max, random_seed=42, waves=True, curvature=True, plot_DEM=True)
+    get_DEM(img_path, dem_path, GSD, wave_properties, random_seed=random_seed, waves=True, curvature=True, plot_DEM=True)
     print(f"Saved synthetic DEM to {dem_path}\n")
