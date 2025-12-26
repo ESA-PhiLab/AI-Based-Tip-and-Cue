@@ -25,8 +25,10 @@ Hardware:
 
 Software:
 - Anaconda / Miniconda: https://www.anaconda.com/download/success
-- Git: https://git-scm.com/install/windows
 - PyCharm (or another Python IDE): https://www.jetbrains.com/pycharm/download/?section=windows
+- Visual Studio 2022 (not 2026, due to incompatibility with CUDA): https://www.junian.net/dev/visual-studio-community-download-links/
+- CUDA Toolkit: https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64
+- Git: https://git-scm.com/install/windows
 
 ### Create Environment
 From Git Bash, clone the AI-Based Tip and Cue repository.
@@ -128,7 +130,7 @@ On some PCs, 'import mitsuba' crashes with a silent error after run, error code 
 - !! First check your LLVM version. It should be lower than LLVM 18.1, otherwise it is imcompatible with DrJit. To install, obtain the LLVM-18.1.6-win64.exe file from https://github.com/llvm/llvm-project/releases?page=4 and execute.
 - Re-install Microsoft VS Code redistributables (both x64 and x86): https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
 - (Re-)install Visual Studio Code: https://visualstudio.microsoft.com/downloads/
-- (Re-)install Visual Studio 2022: https://www.junian.net/dev/visual-studio-community-download-links/ownloads/ . Enable 'Desktop Development with C++' and thick all optional feature boxes.
+- (Re-)install Visual Studio 2022: https://www.junian.net/dev/visual-studio-community-download-links/ . Enable 'Desktop Development with C++' and thick all optional feature boxes.
 - (Re-)install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64
 
 ### Dataset
