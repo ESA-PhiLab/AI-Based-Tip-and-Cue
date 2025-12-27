@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 import shutil
+from typing import Iterator, List, Sequence, Tuple
 
 from read_and_write_data import (
     cleanup_previous_outputs,
@@ -23,6 +24,54 @@ os.chdir(main_path)
 
 # Script directory: dataset/create_dataset
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def iter_images_round_robin(dataset_root: Path,
+                            allowed_ext: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")) -> Iterator[Path]:
+    """iter_images_round_robin(dataset_root, allowed_ext) -> Iterator[Path]: Yield images round-robin over subfolders."""
+    if not dataset_root.is_dir():
+        raise FileNotFoundError(f"Dataset root not found: {dataset_root}")
+
+    folders = sorted([p for p in dataset_root.iterdir() if p.is_dir()], key=lambda p: p.name.lower())
+
+    per_folder: List[List[Path]] = []
+    for folder in folders:
+        files = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in set(e.lower() for e in allowed_ext)]
+        files = sorted(files, key=lambda p: p.name.lower())
+        per_folder.append(files)
+
+    total_images = sum(len(x) for x in per_folder)
+    if total_images == 0:
+        return
+
+    k = 0
+    yielded = 0
+    while yielded < total_images:
+        progressed = False
+        for files in per_folder:
+            if k < len(files):
+                yield files[k]
+                yielded += 1
+                progressed = True
+        if not progressed:
+            break
+        k += 1
+
+
+def load_image(n: int,
+               dataset_root: Path,
+               allowed_ext: tuple = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")) -> str:
+    """load_image(n, dataset_root, allowed_ext) -> str: Cyclic round-robin image loader."""
+    if n < 0:
+        raise ValueError("n must be >= 0")
+
+    images = list(iter_images_round_robin(dataset_root, allowed_ext=allowed_ext))
+    if not images:
+        raise FileNotFoundError(f"No images found in {dataset_root}")
+
+    idx = n % len(images)
+    return images[idx].relative_to(dataset_root).as_posix()
+
 
 
 def run_one(i: int,
@@ -131,6 +180,7 @@ def run_dataset(n_runs: int,
 
         print(f"\n ====================== Start new process {i} ====================== \n")
         print(f"Pose: sat=({sat_lat},{sat_lon},{sat_alt}) tgt=({tgt_lat},{tgt_lon},{tgt_alt}) dt={datetime_utc}")
+        print(f"Image: {img_file}")
 
         run_one(
             i=i,
@@ -181,7 +231,13 @@ def main() -> None:
     base = Path("dataset") / "create_dataset"
     cleanup_previous_outputs(base)
 
-    img_file = "Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG"
+    # Root that contains the LocationYear folders
+    whales_root = Path("dataset") / "whales_from_space"
+
+    # Choose which image to load from the dataset (round-robin over folders)
+    image_n = 2
+    img_file = load_image(image_n, whales_root)
+
     render_resolution = 124
 
     pick_img_seed = 12
@@ -204,7 +260,7 @@ def main() -> None:
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
-        "mode_single": "ocean",
+        "mode_single": "full",
         "mode_multiple_allow_partial": False,
         "window_size": 64,
         "nowhale_max_fraction": 0.10,
@@ -232,7 +288,6 @@ def main() -> None:
     )
 
     cleanup_meta_only(base)
-
 
 if __name__ == "__main__":
     main()
