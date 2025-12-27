@@ -36,6 +36,7 @@ BOOLS_BASE = {
     "print_values": True,
     "crop_black_border": False,  # ignore cropping
     "generate_radiation": True,
+    "generate_nadir": True
 }
 
 WAVE_PROPERTIES = {"wind_speed": 10.0, "num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}

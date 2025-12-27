@@ -214,11 +214,16 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
 
     get_DEM(img_path, dem_tiff_path, GSD, wave_properties, random_seed=dem_seed, waves=True, curvature=True, plot_DEM=False)
     convert_DEM(img_path, dem_tiff_path, dem_path, GSD, scale_km=False, print_output=False, plot_DEM=False)
+
     if bools['print_values']:
         print(f"Saved synthetic DEM to {dem_path}\n")
 
     if bools['print_values']:
         print("Convert lat lon to ecef coordinates")
+
+    if bools['generate_nadir']:
+        satellite_lat = target_lat
+        satellite_lon = target_lon
 
     satellite_ecef, target_ecef, sun_ecef = get_ecef_from_lat_lon(satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc)
 
@@ -271,6 +276,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
 
     if bools['print_values']:
         print(f"Generate off nadir image\n")
+
     off_nadir_image = get_image_offnadir(img_lin, dem_path, satellite_local, target_local, sensor_characteristics)
     # off_nadir_image = np.flip(off_nadir_image, axis=0)
 
@@ -387,10 +393,12 @@ if __name__ == "__main__":
     max_glint = False
     # crop_black_border = True
     crop_black_border = False
+    generate_radiation = True
+    generate_nadir = True
 
     satellite = get_satellite(img_path, csv_path)
 
-    hour_lst = np.arange(6,22, 1)
+    hour_lst = np.arange(7,22, 1)
     minute_lst = [0, 15, 30, 45]
 
     satellite_lat, satellite_lon, satellite_alt = 58, -5, 617000.0  # lat, lon, m
@@ -419,6 +427,8 @@ if __name__ == "__main__":
     bools['max_glint'] = max_glint
     bools['print_values'] = print_values
     bools['crop_black_border'] = crop_black_border
+    bools['generate_radiation'] = generate_radiation
+    bools['generate_nadir'] = generate_nadir
 
     sensor_characteristics = {}
     sensor_characteristics['resolution'] = resolution

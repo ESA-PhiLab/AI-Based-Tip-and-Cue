@@ -24,6 +24,7 @@ plot_result = True
 max_glint = False
 crop_black_border = True
 generate_radiation = True
+generate_nadir = False
 flat_dem = False
 exclude_dark = True
 
@@ -256,6 +257,7 @@ bools['max_glint'] = max_glint
 bools['print_values'] = print_values
 bools['crop_black_border'] = crop_black_border
 bools['generate_radiation'] = generate_radiation
+bools['generate_nadir'] = generate_nadir
 
 sensor_characteristics = {}
 sensor_characteristics['resolution'] = resolution
