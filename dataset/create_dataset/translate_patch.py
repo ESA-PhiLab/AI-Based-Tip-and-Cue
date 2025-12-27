@@ -24,7 +24,7 @@ os.chdir(main_path)
 
 DATASET_PATH = Path("dataset")
 CREATE_DATASET_DIR = DATASET_PATH / "create_dataset"
-NADIR_DIR = CREATE_DATASET_DIR / "nadir"
+PATCH_DIR = CREATE_DATASET_DIR / "patch_raw"
 CSV_PATH = DATASET_PATH / "whales_from_space" / "WhaleFromSpaceDB_Whales.csv"
 
 DEFAULT_DATETIME_UTC = datetime(2025, 6, 11, 8, 0, 0, tzinfo=timezone.utc)
@@ -352,42 +352,43 @@ def rebuild_bboxes_from_id_by_ann(meta: dict, pos: dict) -> dict:
 # =========================
 # Patch resolver (bundle stores no paths)
 # =========================
-def _resolve_nadir_patch_path(patch_bundle: dict) -> Path:
-    """_resolve_nadir_patch_path(patch_bundle) -> Path: dataset/create_dataset/nadir/<subdir>/<patch_name><ext>."""
+def _resolve_raw_patch_path(patch_bundle: dict) -> Path:
+    """_resolve_raw_patch_path(patch_bundle) -> Path: dataset/create_dataset/patch_raw/<subdir>/<patch_name><ext>."""
     img_file = patch_bundle.get("img_file", None)
     patch_name = patch_bundle.get("patch_name", None)
     if not isinstance(img_file, str):
         raise ValueError("patch_bundle['img_file'] must be the original image file_name string")
     if not isinstance(patch_name, str) or not patch_name:
-        raise ValueError("patch_bundle['patch_name'] must exist (set by save_patch('nadir', ...))")
+        raise ValueError("patch_bundle['patch_name'] must exist (set by save_patch('patch_raw', ...))")
 
     subdir = Path(img_file).parent
     ext = Path(img_file).suffix
-    return NADIR_DIR / subdir / f"{patch_name}{ext}"
+    return PATCH_DIR / subdir / f"{patch_name}{ext}"
 
 
 # =========================
 # Public API
 # =========================
-def translate_offnadir(patch_bundle: dict,
+def translate_image(patch_bundle: dict,
                        render_resolution: int,
                        sat_lat: float, sat_lon: float, sat_alt: float,
                        tgt_lat: float, tgt_lon: float, tgt_alt: float,
                        dem_seed: int,
                        show_plot: bool = False,
-                       datetime_utc: datetime | None = None) -> dict:
+                       datetime_utc: datetime | None = None,
+                       generate_nadir: bool = False) -> dict:
 
-    """translate_offnadir(patch_bundle,render_resolution,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,show_plot,datetime_utc) -> dict: Render offnadir + translate anns."""
+    """translate_image(patch_bundle,render_resolution,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,show_plot,datetime_utc) -> dict: Render offnadir + translate anns."""
     if not isinstance(patch_bundle, dict):
-        raise TypeError("translate_offnadir expects patch_bundle as dict")
+        raise TypeError("translate_image expects patch_bundle as dict")
 
-    img_path = _resolve_nadir_patch_path(patch_bundle)
+    img_path = _resolve_raw_patch_path(patch_bundle)
     if not img_path.is_file():
-        raise FileNotFoundError(f"Missing nadir patch file: {img_path}")
+        raise FileNotFoundError(f"Missing patch file: {img_path}")
 
     anns = patch_bundle.get("anns_patch", None)
     if not isinstance(anns, list):
-        raise ValueError("patch_bundle['anns_patch'] missing. Call save_patch('nadir', patch_bundle) before translate_offnadir.")
+        raise ValueError("patch_bundle['anns_patch'] missing. Call save_patch('nadir', patch_bundle) before translate_image.")
 
     orig_rgb = np.asarray(Image.open(img_path).convert("RGB"), dtype=np.uint8)
     tex_h, tex_w = orig_rgb.shape[:2]
@@ -405,6 +406,10 @@ def translate_offnadir(patch_bundle: dict,
     _ = get_band_data(satellite, str(main_path / "offnadir_imaging" / "spd_files"))
 
     dt = datetime_utc if datetime_utc is not None else DEFAULT_DATETIME_UTC
+
+    if generate_nadir:
+        sat_lat = tgt_lat
+        sat_lon = tgt_lon
 
     satellite_ecef, target_ecef, sun_ecef = get_ecef_from_lat_lon(
         float(sat_lat), float(sat_lon), float(sat_alt),
@@ -509,7 +514,12 @@ def translate_offnadir(patch_bundle: dict,
     bools = dict(BOOLS_BASE)
     bools["plot_result"] = False
 
-    DN255_offnadir, DN255_sunglint, _rad_sunglint, DN255_combined = generate_image(
+    if generate_nadir:
+        bools['generate_nadir'] = True
+    else:
+        bools['generate_nadir'] = False
+
+    DN255_translated, DN255_sunglint, _rad_sunglint, DN255_combined = generate_image(
         str(img_path),
         satellite,
         float(sat_lat), float(sat_lon), float(sat_alt),
@@ -520,14 +530,14 @@ def translate_offnadir(patch_bundle: dict,
         bools,
         dem_seed,
     )
-    if DN255_offnadir is None:
+    if DN255_translated is None:
         raise RuntimeError("Renderer returned None (dark hours).")
 
-    offnadir_u8 = to_uint8_rgb(DN255_offnadir)
+    translated_u8 = to_uint8_rgb(DN255_translated)
     sunglint_u8 = to_uint8_rgb(DN255_sunglint)
     combined_u8 = to_uint8_rgb(DN255_combined)
 
-    off_overlay = draw_overlay_from_polys(Image.fromarray(offnadir_u8, mode="RGB").copy(), all_polys, boxes_off)
+    off_overlay = draw_overlay_from_polys(Image.fromarray(translated_u8, mode="RGB").copy(), all_polys, boxes_off)
     comb_overlay = None
     if combined_u8 is not None:
         comb_overlay = draw_overlay_from_polys(Image.fromarray(combined_u8, mode="RGB").copy(), all_polys, boxes_off)
@@ -535,11 +545,12 @@ def translate_offnadir(patch_bundle: dict,
     if show_plot:
         fig2 = plt.figure(figsize=(18, 10))
         fig2.add_subplot(1, 4, 1).imshow(orig_overlay); plt.axis("off"); plt.title("original + annotation")
-        fig2.add_subplot(1, 4, 2).imshow(off_overlay);  plt.axis("off"); plt.title("off-nadir + translated (per-instance)")
-        fig2.add_subplot(1, 4, 3).imshow(sunglint_u8 if sunglint_u8 is not None else np.zeros_like(offnadir_u8)); plt.axis("off"); plt.title("sun glint")
-        fig2.add_subplot(1, 4, 4).imshow(comb_overlay if comb_overlay is not None else np.zeros_like(offnadir_u8)); plt.axis("off"); plt.title("combined + translated")
+        fig2.add_subplot(1, 4, 2).imshow(off_overlay);  plt.axis("off"); plt.title("translated + annotation (per-instance)")
+        fig2.add_subplot(1, 4, 3).imshow(sunglint_u8 if sunglint_u8 is not None else np.zeros_like(translated_u8)); plt.axis("off"); plt.title("sun glint")
+        fig2.add_subplot(1, 4, 4).imshow(comb_overlay if comb_overlay is not None else np.zeros_like(translated_u8)); plt.axis("off"); plt.title("combined + translated")
         plt.tight_layout()
         plt.show()
+
 
     # ==========================================================
     # (D) Translate annotations, preserving keys exactly
@@ -557,7 +568,7 @@ def translate_offnadir(patch_bundle: dict,
         translated_anns.append(a2)
 
     out = dict(patch_bundle)
-    out["patch"] = offnadir_u8                # image to save (raw, no overlay)
+    out["patch"] = translated_u8              # image to save (raw, no overlay)
     out["anns_patch"] = translated_anns       # anns to save in json
     out["combined_u8"] = combined_u8          # used for sunglint (combined)
     out["render_resolution"] = int(render_resolution)

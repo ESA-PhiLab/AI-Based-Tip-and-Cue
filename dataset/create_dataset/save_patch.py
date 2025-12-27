@@ -1,30 +1,25 @@
+# save_patch.py
 import json
 import os
 import re
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from PIL import Image
 
 
-# =========================
-# Path handling (same style)
-# =========================
 main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
 DATASET_PATH = Path("dataset")
 CREATE_DATASET_DIR = DATASET_PATH / "create_dataset"
+
 TEMPLATE_JSON_CANDIDATES = [
-    CREATE_DATASET_DIR / "nadir" / "final_annotations.json",
+    CREATE_DATASET_DIR / "patch_raw" / "final_annotations.json",
     CREATE_DATASET_DIR / "final_annotations.json",
 ]
 
 
-# =========================
-# COCO helpers
-# =========================
 def _load_json(path: Path) -> dict:
     """_load_json(path) -> dict: Read JSON utf-8."""
     with path.open("r", encoding="utf-8") as f:
@@ -47,7 +42,7 @@ def _load_template_coco() -> dict:
 
 
 def _ensure_coco(split: str) -> tuple[Path, dict]:
-    """_ensure_coco(split) -> (Path,dict): Load or create split COCO JSON."""
+    """_ensure_coco(split) -> tuple[Path,dict]: Load or create split COCO JSON."""
     out_path = CREATE_DATASET_DIR / split / "final_annotations.json"
     if out_path.is_file():
         return out_path, _load_json(out_path)
@@ -59,9 +54,6 @@ def _ensure_coco(split: str) -> tuple[Path, dict]:
     return out_path, coco
 
 
-# =========================
-# Geometry helpers (clip + shift)
-# =========================
 def _clip_poly_edge(poly: np.ndarray, inside_fn, intersect_fn) -> np.ndarray:
     """_clip_poly_edge(poly,inside_fn,intersect_fn) -> np.ndarray: Clip polygon against one half-plane."""
     if poly.size == 0:
@@ -112,7 +104,7 @@ def _clip_polygon_to_rect(poly: np.ndarray, rect_xyxy: tuple[float, float, float
 
 def _intersect_bbox_with_rect(bbox_xywh: tuple[float, float, float, float],
                               rect_xyxy: tuple[float, float, float, float]) -> tuple[float, float, float, float] | None:
-    """_intersect_bbox_with_rect(bbox_xywh,rect_xyxy) -> (x,y,w,h)|None: Intersect bbox with rect."""
+    """_intersect_bbox_with_rect(bbox_xywh,rect_xyxy) -> tuple[float,float,float,float] | None: Intersect bbox with rect."""
     x, y, w, h = map(float, bbox_xywh)
     x0, y0, x1, y1 = map(float, rect_xyxy)
     bx0, by0, bx1, by1 = x, y, x + w, y + h
@@ -132,9 +124,9 @@ def _flatten_poly(poly_xy: np.ndarray) -> list[float]:
 
 
 def _translate_and_clip_anns_to_patch(anns: list,
-                                     top_left_xy: tuple[int, int],
-                                     patch_wh: tuple[int, int],
-                                     offset_xy: tuple[int, int]) -> list[dict]:
+                                      top_left_xy: tuple[int, int],
+                                      patch_wh: tuple[int, int],
+                                      offset_xy: tuple[int, int]) -> list[dict]:
     """_translate_and_clip_anns_to_patch(anns,top_left_xy,patch_wh,offset_xy) -> list[dict]: Clip to patch and shift to patch-local coords."""
     x0, y0 = int(top_left_xy[0]), int(top_left_xy[1])
     pw, ph = int(patch_wh[0]), int(patch_wh[1])
@@ -153,15 +145,11 @@ def _translate_and_clip_anns_to_patch(anns: list,
             if not seg or len(seg) < 6:
                 continue
 
-            # bring to cropped-image coords (subtract crop offset)
             poly = np.array([(seg[i] - ox, seg[i + 1] - oy) for i in range(0, len(seg), 2)], dtype=float)
-
-            # clip in that coord system
             poly = _clip_polygon_to_rect(poly, rect_xyxy)
             if poly.shape[0] < 3:
                 continue
 
-            # shift to patch-local
             poly[:, 0] -= float(x0)
             poly[:, 1] -= float(y0)
 
@@ -182,11 +170,8 @@ def _translate_and_clip_anns_to_patch(anns: list,
         if (not any_seg) and (new_bbox is None):
             continue
 
-        a2 = dict(ann)  # preserve ALL keys
-        if any_seg:
-            a2["segmentation"] = new_segs
-        else:
-            a2["segmentation"] = []
+        a2 = dict(ann)
+        a2["segmentation"] = new_segs if any_seg else []
         if new_bbox is not None:
             a2["bbox"] = new_bbox
         out.append(a2)
@@ -194,11 +179,8 @@ def _translate_and_clip_anns_to_patch(anns: list,
     return out
 
 
-# =========================
-# Naming
-# =========================
 def _split_patch_name(stem: str) -> tuple[str, int | None]:
-    """_split_patch_name(stem) -> (base,idx|None): Parse ..._<int> suffix."""
+    """_split_patch_name(stem) -> tuple[str,int|None]: Parse ..._<int> suffix."""
     m = re.match(r"^(.*)_([0-9]+)$", stem)
     if not m:
         return stem, None
@@ -222,26 +204,23 @@ def _next_index_for_base(split_dir: Path, subdir: Path, base: str, ext: str) -> 
     return k
 
 
-# =========================
-# Public API
-# =========================
 def save_patch(split: str, patch_bundle: dict) -> dict:
-    """save_patch(split,patch_bundle) -> dict: Save patch image + append COCO entry; mutates patch_bundle with patch_name (no path)."""
+    """save_patch(split,patch_bundle) -> dict: Save patch image + append COCO entry; mutates patch_bundle with patch_name."""
     split = str(split).lower().strip()
-    if split not in {"nadir", "offnadir", "sunglint"}:
-        raise ValueError("split must be one of: nadir, offnadir, sunglint")
+    allowed = {"patch_raw", "nadir_raw", "nadir_sunglint", "offnadir_raw", "offnadir_sunglint"}
+    if split not in allowed:
+        raise ValueError(f"split must be one of: {sorted(allowed)}")
 
     split_dir = CREATE_DATASET_DIR / split
     split_dir.mkdir(parents=True, exist_ok=True)
 
     img_file = patch_bundle.get("img_file", None)
     if not isinstance(img_file, str):
-        raise ValueError("patch_bundle['img_file'] must be the original image file_name string (e.g. Pelagos2016/...B2.PNG)")
+        raise ValueError("patch_bundle['img_file'] must be the original image file_name string")
 
-    subdir = Path(img_file).parent  # keep Pelagos2016/...
-    ext = Path(img_file).suffix  # keep .PNG / .png exactly as original
+    subdir = Path(img_file).parent
+    ext = Path(img_file).suffix
 
-    # patch array must be uint8 RGB
     patch = patch_bundle.get("patch", None)
     if patch is None:
         raise ValueError("patch_bundle['patch'] missing")
@@ -251,33 +230,27 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
     if patch_u8.ndim != 3 or patch_u8.shape[2] < 3:
         raise ValueError(f"Expected patch RGB array (H,W,3), got {patch_u8.shape}")
 
-    # Decide patch_name
-    if split == "nadir":
-        # create new unique patch_name for nadir
-        base = Path(img_file).stem  # base stem of original image
+    # Naming: patch_raw creates a new patch_name; others reuse it
+    if split == "patch_raw":
+        base = Path(img_file).stem
         k = _next_index_for_base(split_dir, subdir, base=base, ext=ext)
         patch_name = f"{base}_{k}"
         patch_bundle["patch_name"] = patch_name
     else:
-        # reuse same patch_name for offnadir/sunglint
         patch_name = patch_bundle.get("patch_name", None)
         if not isinstance(patch_name, str) or not patch_name:
-            raise ValueError("For offnadir/sunglint, patch_bundle must already contain patch_name (set by save_patch('nadir', ...))")
+            raise ValueError(f"For {split}, patch_bundle must contain patch_name (set by save_patch('patch_raw', ...))")
 
-    # Save image (NO overlays)
     out_rel = subdir / f"{patch_name}{ext}"
     out_abs = split_dir / out_rel
     out_abs.parent.mkdir(parents=True, exist_ok=True)
 
-    img_pil = Image.fromarray(patch_u8[:, :, :3], mode="RGB")
-    img_pil.save(out_abs)  # PNG encoding; pixel values preserved as uint8
+    Image.fromarray(patch_u8[:, :, :3], mode="RGB").save(out_abs)
 
-    # Update COCO
     coco_path, coco = _ensure_coco(split)
     images = list(coco.get("images", []))
     anns = list(coco.get("annotations", []))
 
-    # remove any existing entry with same file_name to avoid duplicates
     file_name = out_rel.as_posix()
     existing_img_ids = {im["id"] for im in images if im.get("file_name") == file_name}
     if existing_img_ids:
@@ -293,20 +266,19 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
     img_rec["file_name"] = file_name
     img_rec["width"] = w
     img_rec["height"] = h
-
     images.append(img_rec)
 
-    # Build annotations for this saved image:
-    if split == "nadir":
+    # Annotations:
+    if split == "patch_raw":
         top_left = patch_bundle.get("top_left", None)
         patch_wh = patch_bundle.get("patch_wh", None)
         offset_xy = patch_bundle.get("offset_xy", (0, 0))
         anns_in = patch_bundle.get("anns", [])
 
         if not (isinstance(top_left, (tuple, list)) and len(top_left) == 2):
-            raise ValueError("patch_bundle['top_left'] must exist for nadir saving")
+            raise ValueError("patch_bundle['top_left'] must exist for patch_raw saving")
         if not (isinstance(patch_wh, (tuple, list)) and len(patch_wh) == 2):
-            raise ValueError("patch_bundle['patch_wh'] must exist for nadir saving")
+            raise ValueError("patch_bundle['patch_wh'] must exist for patch_raw saving")
         if not isinstance(anns_in, list):
             raise ValueError("patch_bundle['anns'] must be a list")
 
@@ -316,17 +288,16 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
             patch_wh=(int(patch_wh[0]), int(patch_wh[1])),
             offset_xy=(int(offset_xy[0]), int(offset_xy[1])),
         )
-        patch_bundle["anns_patch"] = anns_kept  # in-memory only, not a path
+        patch_bundle["anns_patch"] = anns_kept
     else:
-        # offnadir/sunglint: annotations already translated by translate_offnadir()
         anns_kept = patch_bundle.get("anns_patch", patch_bundle.get("anns", []))
         if not isinstance(anns_kept, list):
-            raise ValueError("Expected translated annotations list in patch_bundle['anns_patch'] or ['anns']")
+            raise ValueError("Expected annotations list in patch_bundle['anns_patch'] or ['anns']")
 
     next_ann_id = int(max([int(a.get("id", 0)) for a in anns] + [0]) + 1)
     out_anns = []
     for a in anns_kept:
-        a2 = dict(a)  # preserve keys
+        a2 = dict(a)
         a2["id"] = next_ann_id
         a2["image_id"] = new_image_id
         out_anns.append(a2)

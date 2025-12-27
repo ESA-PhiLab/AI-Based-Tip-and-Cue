@@ -1,4 +1,3 @@
-# main_create.py
 import json
 import os
 import subprocess
@@ -6,7 +5,7 @@ import sys
 import time
 from pathlib import Path
 import shutil
-from typing import Iterator, List, Sequence, Tuple
+from typing import Iterator, List, Sequence
 
 from read_and_write_data import (
     cleanup_previous_outputs,
@@ -16,27 +15,24 @@ from read_and_write_data import (
     pick_random_pose,
 )
 
-# =========================
-# Path handling (match create_patch.py style)
-# =========================
 main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
-# Script directory: dataset/create_dataset
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def iter_images_round_robin(dataset_root: Path,
                             allowed_ext: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")) -> Iterator[Path]:
-    """iter_images_round_robin(dataset_root, allowed_ext) -> Iterator[Path]: Yield images round-robin over subfolders."""
+    """iter_images_round_robin(dataset_root,allowed_ext) -> Iterator[Path]: Yield images round-robin over subfolders."""
     if not dataset_root.is_dir():
         raise FileNotFoundError(f"Dataset root not found: {dataset_root}")
 
     folders = sorted([p for p in dataset_root.iterdir() if p.is_dir()], key=lambda p: p.name.lower())
 
     per_folder: List[List[Path]] = []
+    allowed = set(e.lower() for e in allowed_ext)
     for folder in folders:
-        files = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in set(e.lower() for e in allowed_ext)]
+        files = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in allowed]
         files = sorted(files, key=lambda p: p.name.lower())
         per_folder.append(files)
 
@@ -61,7 +57,7 @@ def iter_images_round_robin(dataset_root: Path,
 def load_image(n: int,
                dataset_root: Path,
                allowed_ext: tuple = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")) -> str:
-    """load_image(n, dataset_root, allowed_ext) -> str: Cyclic round-robin image loader."""
+    """load_image(n,dataset_root,allowed_ext) -> str: Cyclic round-robin image loader."""
     if n < 0:
         raise ValueError("n must be >= 0")
 
@@ -73,40 +69,36 @@ def load_image(n: int,
     return images[idx].relative_to(dataset_root).as_posix()
 
 
-
-def run_one(i: int,
-            img_file: str,
-            crop_patch_seed_i: int,
-            dem_seed_i: int,
-            show_plot: bool,
-            render_resolution: int,
-            sat_lat: float, sat_lon: float, sat_alt: float,
-            tgt_lat: float, tgt_lon: float, tgt_alt: float,
-            datetime_utc: str,
-            patch_parameters: dict,
-            meta_out: Path) -> None:
-    """run_one(...) -> None: Spawn one worker; it writes meta_out JSON."""
-    import faulthandler
-    faulthandler.enable(all_threads=True)
-
+def _run_worker(stage: str,
+                i: int,
+                img_file: str,
+                crop_patch_seed_i: int,
+                dem_seed_i: int,
+                show_plot: bool,
+                render_resolution: int,
+                sat_lat: float, sat_lon: float, sat_alt: float,
+                tgt_lat: float, tgt_lon: float, tgt_alt: float,
+                datetime_utc: str,
+                patch_parameters: dict,
+                meta_out: Path,
+                patch_name: str = "") -> None:
+    """_run_worker(stage,...) -> None: Spawn worker_run.py with a stage."""
     shutil.rmtree(Path.home() / "AppData/Local/Temp/drjit", ignore_errors=True)
 
     env = os.environ.copy()
-
-    base = Path(r"C:\drjit_temp") / f"worker_{i}"
+    base = Path(r"C:\drjit_temp") / f"worker_{stage}_{i}"
     tmp = base / "tmp"
     tmp.mkdir(parents=True, exist_ok=True)
 
     env["TEMP"] = str(tmp)
     env["TMP"] = str(tmp)
 
-    shutil.rmtree(tmp / "drjit", ignore_errors=True)
-
     meta_out_abs = meta_out.resolve()
     meta_out_abs.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
         sys.executable, str(SCRIPT_DIR / "worker_run.py"),
+        "--stage", stage,
         "--img_file", img_file,
         "--patch_seed", str(crop_patch_seed_i),
         "--dem_seed", str(dem_seed_i),
@@ -135,10 +127,68 @@ def run_one(i: int,
         "--meta_out", str(meta_out_abs),
     ]
 
+    if patch_name:
+        cmd += ["--patch_name", patch_name]
+
     try:
         subprocess.run(cmd, check=True, stdout=sys.stdout, stderr=sys.stderr, env=env)
     finally:
         shutil.rmtree(base, ignore_errors=True)
+
+
+def run_one(i: int,
+            img_file: str,
+            crop_patch_seed_i: int,
+            dem_seed_i: int,
+            show_plot: bool,
+            render_resolution: int,
+            sat_lat: float, sat_lon: float, sat_alt: float,
+            tgt_lat: float, tgt_lon: float, tgt_alt: float,
+            datetime_utc: str,
+            patch_parameters: dict,
+            meta_out: Path) -> None:
+    """run_one(...) -> None: Run nadir worker then offnadir worker."""
+    if meta_out.exists():
+        meta_out.unlink()
+
+    _run_worker(
+        stage="nadir",
+        i=i,
+        img_file=img_file,
+        crop_patch_seed_i=crop_patch_seed_i,
+        dem_seed_i=dem_seed_i,
+        show_plot=show_plot,
+        render_resolution=render_resolution,
+        sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
+        tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
+        datetime_utc=datetime_utc,
+        patch_parameters=patch_parameters,
+        meta_out=meta_out,
+    )
+
+    if not meta_out.exists():
+        raise FileNotFoundError(f"Nadir worker did not write meta_out: {meta_out}")
+
+    meta = json.loads(meta_out.read_text(encoding="utf-8"))
+    patch_name = meta.get("patch_name", "")
+    if not isinstance(patch_name, str) or not patch_name:
+        raise RuntimeError("meta_out missing patch_name after nadir stage")
+
+    _run_worker(
+        stage="offnadir",
+        i=i,
+        img_file=img_file,
+        crop_patch_seed_i=crop_patch_seed_i,
+        dem_seed_i=dem_seed_i,
+        show_plot=show_plot,
+        render_resolution=render_resolution,
+        sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
+        tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
+        datetime_utc=datetime_utc,
+        patch_parameters=patch_parameters,
+        meta_out=meta_out,
+        patch_name=patch_name,
+    )
 
 
 def run_dataset(n_runs: int,
@@ -175,8 +225,6 @@ def run_dataset(n_runs: int,
         )
 
         meta_out = meta_dir / f"run_{i:04d}.json"
-        if meta_out.exists():
-            meta_out.unlink()
 
         print(f"\n ====================== Start new process {i} ====================== \n")
         print(f"Pose: sat=({sat_lat},{sat_lon},{sat_alt}) tgt=({tgt_lat},{tgt_lon},{tgt_alt}) dt={datetime_utc}")
@@ -195,9 +243,6 @@ def run_dataset(n_runs: int,
             patch_parameters=patch_parameters,
             meta_out=meta_out,
         )
-
-        if not meta_out.exists():
-            raise FileNotFoundError(f"Worker did not write meta_out: {meta_out}")
 
         meta = json.loads(meta_out.read_text(encoding="utf-8"))
 
@@ -231,14 +276,11 @@ def main() -> None:
     base = Path("dataset") / "create_dataset"
     cleanup_previous_outputs(base)
 
-    # Root that contains the LocationYear folders
     whales_root = Path("dataset") / "whales_from_space"
-
-    # Choose which image to load from the dataset (round-robin over folders)
     image_n = 2
     img_file = load_image(image_n, whales_root)
 
-    render_resolution = 124
+    render_resolution = 124 # 64 * 2
 
     pick_img_seed = 12
     crop_patch_seed = 42
@@ -247,17 +289,6 @@ def main() -> None:
 
     show_plot = False
     n_runs = 5
-
-    # mode_single options:
-    #   "full"      -> only full whales
-    #   "half"      -> only half whales
-    #   "ocean"     -> only ocean (no whales)
-    #   "full_half" -> full OR half whales
-    #   "all"       -> anything
-    #
-    # mode_multiple_allow_partial:
-    #   True  -> if multiple whales, allow other partial whales in the patch
-    #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
         "mode_single": "full",
@@ -288,6 +319,7 @@ def main() -> None:
     )
 
     cleanup_meta_only(base)
+
 
 if __name__ == "__main__":
     main()
