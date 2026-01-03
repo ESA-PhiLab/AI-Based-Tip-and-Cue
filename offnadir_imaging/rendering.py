@@ -236,7 +236,6 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         formatted = " ".join(f"{x:.2e}" for x in sun_ecef / 1000)
         print(f"Sun ECEF       : [{formatted}]  km\n")
 
-
     if bools['plot_3d']:
         plot_earth_with_pyvista(satellite_ecef, target_ecef, sun_ecef, R_earth=6378137.0)
 
@@ -309,6 +308,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         gains_arr = []
         offset_arr = []
         eff_bw_arr = []
+
 
         if bools['print_values']:
             print("Generate radiance image for channels: (W m-2 µm-1 sr-1)")

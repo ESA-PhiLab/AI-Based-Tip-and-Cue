@@ -26,6 +26,7 @@ test*
 0_results/*
 !0_results/.gitkeep
 
+0_resources/*
 
 installation_notes.txt
 
@@ -41,12 +42,12 @@ dataset/create_dataset/nadir_raw/*
 dataset/create_dataset/offnadir_raw/*
 dataset/create_dataset/nadir_sunglint/*
 dataset/create_dataset/offnadir_sunglint/*
+dataset/create_dataset/_meta/*
 dataset/create_dataset/dataset_overview.xlsx
+
 
 offnadir_imaging/create_DEM/input_img_WV.PNG
 offnadir_imaging/create_DEM/input_dem_WV.tiff
 offnadir_imaging/create_DEM/dem_mesh_WV.obj
 offnadir_imaging/create_DEM/input_dem_PATCH.tiff
 offnadir_imaging/create_DEM/dem_mesh_PATCH.obj
-
-offnadir_imaging/spd_files/solar_spectral_irradiance.spd
