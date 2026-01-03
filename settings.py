@@ -22,7 +22,6 @@ print_values = True
 plot_3d = False
 plot_result = True
 max_glint = False
-crop_black_border = True
 generate_radiation = True
 generate_nadir = False
 flat_dem = False
@@ -249,13 +248,14 @@ wave_properties['wind_speed'] = wind_speed
 wave_properties['num_waves'] = num_waves
 wave_properties['wave_min'] = wave_min
 wave_properties['wave_max'] = wave_max
+wave_properties['specular_weight'] = 0.2
+
 
 bools = {}
 bools['plot_3d'] = plot_3d
 bools['plot_result'] = plot_result
 bools['max_glint'] = max_glint
 bools['print_values'] = print_values
-bools['crop_black_border'] = crop_black_border
 bools['generate_radiation'] = generate_radiation
 bools['generate_nadir'] = generate_nadir
 
