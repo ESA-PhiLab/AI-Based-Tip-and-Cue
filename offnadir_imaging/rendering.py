@@ -563,11 +563,18 @@ if __name__ == "__main__":
                 print("Saved image under ", save_name + '\n')
                 print('Max glint:', np.max(radiance_glint))
 
-    plt.plot(datetime_lst, max_rad_lst_R, 'r')
-    plt.plot(datetime_lst, max_rad_lst_G, 'g')
-    plt.plot(datetime_lst, max_rad_lst_B, 'b')
-    plt.grid(True)
-    plt.savefig('radiance_timeline.png')
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    ax.plot(datetime_lst, max_rad_lst_R, 'r')
+    ax.plot(datetime_lst, max_rad_lst_G, 'g')
+    ax.plot(datetime_lst, max_rad_lst_B, 'b')
+    ax.grid(True)
+
+    images_dir = PROJECT_ROOT / "offnadir_imaging" / "images"
+    plot_path = images_dir / "radiance_timeline.png"
+    fig.savefig(plot_path, dpi=200, bbox_inches="tight")
+    print("Saved radiance plot")
     plt.show()
 
 
