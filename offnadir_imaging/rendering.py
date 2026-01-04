@@ -9,16 +9,16 @@ from matplotlib import pyplot as plt
 from PIL import Image
 import gc
 
-from RTM import generate_sun_and_sky_spds
-from create_DEM.create_dummy_DEM import get_DEM
-from create_DEM.convert_DEM import convert_DEM
+from .RTM import generate_sun_and_sky_spds
+from .create_DEM.create_dummy_DEM import get_DEM
+from .create_DEM.convert_DEM import convert_DEM
 
-from functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb
-from functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
-from functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
-from functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation
-from functions.mask_water import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy
-from functions import image_utils as iu
+from .functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb
+from .functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
+from .functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
+from .functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation
+from .functions.mask_water import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy
+from .functions import image_utils as iu
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -521,11 +521,11 @@ if __name__ == "__main__":
     sat_lat, sat_lon, sat_alt = 58.0, -5.0, 617000.0  # lat, lon, m
     tgt_lat, tgt_lon, tgt_alt = 53.0, 0.0, 0.0  # lat, lon, me
 
-    max_rad_lst_R = []
-    max_rad_lst_G = []
-    max_rad_lst_B = []
+    p95_rad_lst_R = []
+    p95_rad_lst_G = []
+    p95_rad_lst_B = []
 
-    max_rad_lst = []
+    p95_abs_rad_lst = []
     datetime_lst = []
     for hour in hour_lst:
         for minute in minute_lst:
@@ -539,26 +539,26 @@ if __name__ == "__main__":
                 continue
 
             if DN255_glint is not None:
-                print(DN255_glint)
 
                 print(f"Save image for {hour}:{minute}h" )
-                print(save_name)
                 image_uint8 = np.clip(DN255_glint, 0, 255).astype(np.uint8)
                 img = Image.fromarray(image_uint8)
 
                 img.save(save_name)
 
-                max_rad = np.max(radiance_glint)
-                max_rad_lst.append(max_rad)
+                abs_rad = np.sqrt(np.sum(np.square(radiance_glint.astype(np.float64)), axis=2))
+
+                p95_abs_rad = np.percentile(abs_rad, 95)
+                p95_abs_rad_lst.append(p95_abs_rad)
                 datetime_lst.append(dt)
 
-                max_rad_R = np.max(radiance_glint[:, :, 0])
-                max_rad_G = np.max(radiance_glint[:, :, 1])
-                max_rad_B = np.max(radiance_glint[:, :, 2])
+                p95_R = np.percentile(radiance_glint[:, :, 0], 95)
+                p95_G = np.percentile(radiance_glint[:, :, 1], 95)
+                p95_B = np.percentile(radiance_glint[:, :, 2], 95)
 
-                max_rad_lst_R.append(max_rad_R)
-                max_rad_lst_G.append(max_rad_G)
-                max_rad_lst_B.append(max_rad_B)
+                p95_rad_lst_R.append(p95_R)
+                p95_rad_lst_G.append(p95_G)
+                p95_rad_lst_B.append(p95_B)
 
                 print("Saved image under ", save_name + '\n')
                 print('Max glint:', np.max(radiance_glint))
@@ -566,15 +566,28 @@ if __name__ == "__main__":
     fig = plt.figure()
     ax = fig.add_subplot(111)
 
-    ax.plot(datetime_lst, max_rad_lst_R, 'r')
-    ax.plot(datetime_lst, max_rad_lst_G, 'g')
-    ax.plot(datetime_lst, max_rad_lst_B, 'b')
+    ax.plot(datetime_lst, p95_rad_lst_R, 'r')
+    ax.plot(datetime_lst, p95_rad_lst_G, 'g')
+    ax.plot(datetime_lst, p95_rad_lst_B, 'b')
     ax.grid(True)
 
     images_dir = PROJECT_ROOT / "offnadir_imaging" / "images"
-    plot_path = images_dir / "radiance_timeline.png"
+    plot_path = images_dir / "radiance_timeline_rgb.png"
     fig.savefig(plot_path, dpi=200, bbox_inches="tight")
-    print("Saved radiance plot")
+    print("Saved radiance plot rgb")
+    print("** DON'T stop the script, but close the plot **")
+    plt.show()
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    ax.plot(datetime_lst, p95_abs_rad_lst, 'black')
+    ax.grid(True)
+
+    images_dir = PROJECT_ROOT / "offnadir_imaging" / "images"
+    plot_path = images_dir / "radiance_timeline_abs.png"
+    fig.savefig(plot_path, dpi=200, bbox_inches="tight")
+    print("Saved radiance plot absolute")
     plt.show()
 
 
