@@ -76,18 +76,24 @@ def rgb_png_to_reflectance_proxy(img_rgb_uint8: np.ndarray, anchor_mask: np.ndar
         out[:, :, c] = np.clip(img_lin[:, :, c] * s, 0.0, 1.0)
 
     return out
+
 import numpy as np
 
 
 def _black_mask_raw(dn255_rgb, tol=0):
-    """Return HxW bool: True where each channel <= tol (per-channel)."""
-    img = dn255_rgb.astype(np.int16)  # avoid uint8 issues
+    """Return HxW bool: True where all channels <= tol."""
+    img = np.asarray(dn255_rgb)
+    if img.ndim == 2:
+        img = img[..., None]
+    if img.shape[-1] == 1:
+        img = np.repeat(img, 3, axis=-1)
+    img16 = img.astype(np.int16)  # avoid uint8 comparisons surprises
     t = np.array([tol, tol, tol], dtype=np.int16).reshape(1, 1, 3)
-    return np.all(img <= t, axis=2)
+    return np.all(img16 <= t, axis=-1)
 
 
 def _first_last_true_row(mask_bool):
-    """Return (y0, y1) first/last row with any True; (None, None) if empty."""
+    """Return (y0,y1) for first/last row that has any True; (None,None) if empty."""
     rows = np.any(mask_bool, axis=1)
     idx = np.flatnonzero(rows)
     if idx.size == 0:
@@ -95,90 +101,106 @@ def _first_last_true_row(mask_bool):
     return int(idx[0]), int(idx[-1])
 
 
-def compute_hit_mask_full(dn255_blackproj, tol=60, min_row_frac=0.01, width_keep_frac=0.4, row_black_frac_keep=0.6):
-    """Return (mask_full, mask_raw, kept_y0, kept_y1, xL, xR, row_black_frac, row_width) from black-projection DN255."""
+def _row_interval(mask_row):
+    """Return (xL,xR) of True pixels in a row; (None,None) if empty."""
+    idx = np.flatnonzero(mask_row)
+    if idx.size == 0:
+        return None, None
+    return int(idx[0]), int(idx[-1])
+
+
+def compute_hit_mask_full(dn255_blackproj, tol=0, row_black_frac_keep=0.80, min_row_black_frac_abs=0.02, width_keep_frac=0.40, interval_mode="median"):
+    """Build footprint mask from black-projection DN255; keeps only full rows (top/bottom trims), fills rows as one rectangle."""
     mask_raw = _black_mask_raw(dn255_blackproj, tol=tol)
     H, W = mask_raw.shape
 
     y0, y1 = _first_last_true_row(mask_raw)
     if y0 is None:
-        row_black_frac = np.zeros(H, dtype=np.float32)
-        row_width = np.zeros(H, dtype=np.int32)
-        return np.zeros((H, W), dtype=bool), mask_raw, None, None, None, None, row_black_frac, row_width
+        empty = np.zeros((H, W), dtype=bool)
+        return empty, mask_raw, None, None, None, None, {"row_black_frac": np.zeros(H), "max_row_black_frac": 0.0, "widths": []}
 
-    # Per-row black fraction and horizontal width (span) of black pixels
-    row_black_frac = np.zeros(H, dtype=np.float32)
-    row_width = np.zeros(H, dtype=np.int32)
-    intervals = {}  # y -> (xL, xR)
+    # Row black fractions across the initial span
+    row_black_frac = mask_raw[y0:y1 + 1].mean(axis=1).astype(np.float32)  # fraction of row that is black
+    max_row_black_frac = float(np.max(row_black_frac)) if row_black_frac.size else 0.0
 
-    for y in range(y0, y1 + 1):
-        idx = np.flatnonzero(mask_raw[y, :])
-        if idx.size == 0:
+    # Candidate rows must be "black enough" relative to the best row, and also not trivially tiny
+    rel_thr = float(row_black_frac_keep) * max_row_black_frac
+    abs_thr = float(min_row_black_frac_abs)
+    row_is_candidate = (row_black_frac >= rel_thr) & (row_black_frac >= abs_thr)
+
+    # Build intervals/widths from candidate rows
+    intervals = {}
+    widths = []
+    for i, y in enumerate(range(y0, y1 + 1)):
+        if not row_is_candidate[i]:
             continue
-        row_black_frac[y] = float(idx.size) / float(W)
-        xL, xR = int(idx[0]), int(idx[-1])
+        xL, xR = _row_interval(mask_raw[y, :])
+        if xL is None:
+            continue
+        w = xR - xL + 1
         intervals[y] = (xL, xR)
-        row_width[y] = (xR - xL + 1)
+        widths.append(w)
 
-    # Rows must have at least this fraction of black pixels to be considered "valid"
-    min_row_px = max(1, int(np.ceil(float(min_row_frac) * float(W))))
-    valid_rows = [y for y in range(y0, y1 + 1) if (row_width[y] > 0 and np.flatnonzero(mask_raw[y, :]).size >= min_row_px)]
-
-    if len(valid_rows) == 0:
-        return np.zeros((H, W), dtype=bool), mask_raw, None, None, None, None, row_black_frac, row_width
-
-    # Robust global x-interval from valid rows
-    xLs = [intervals[y][0] for y in valid_rows if y in intervals]
-    xRs = [intervals[y][1] for y in valid_rows if y in intervals]
-    widths = [row_width[y] for y in valid_rows if row_width[y] > 0]
+    if len(widths) == 0:
+        empty = np.zeros((H, W), dtype=bool)
+        return empty, mask_raw, None, None, None, None, {"row_black_frac": row_black_frac, "max_row_black_frac": max_row_black_frac, "widths": []}
 
     med_width = float(np.median(widths))
-    med_xL = int(np.median(xLs))
-    med_xR = int(np.median(xRs))
-    med_xL = max(med_xL, 0)
-    med_xR = min(med_xR, W - 1)
-    if med_xL > med_xR:
-        med_xL, med_xR = 0, W - 1
 
-    # Trim ONLY from top based on row width being too small (boundary/partial rows)
+    # Choose a stable rectangle x-interval from candidate rows
+    xLs = np.array([v[0] for v in intervals.values()], dtype=np.float32)
+    xRs = np.array([v[1] for v in intervals.values()], dtype=np.float32)
+    if interval_mode == "max":
+        xL_rect = int(np.min(xLs))
+        xR_rect = int(np.max(xRs))
+    else:  # "median" (default)
+        xL_rect = int(np.median(xLs))
+        xR_rect = int(np.median(xRs))
+
+    xL_rect = max(xL_rect, 0)
+    xR_rect = min(xR_rect, W - 1)
+    if xL_rect > xR_rect:
+        xL_rect, xR_rect = 0, W - 1
+
+    # Top trim: drop rows until width is large enough (relative to median width) and row is candidate
     kept_y0 = y0
     while kept_y0 <= y1:
-        if row_width[kept_y0] == 0:
-            kept_y0 += 1
-            continue
-        if np.flatnonzero(mask_raw[kept_y0, :]).size < min_row_px:
-            kept_y0 += 1
-            continue
-        if float(row_width[kept_y0]) < float(width_keep_frac) * med_width:
-            kept_y0 += 1
-            continue
-        break
+        if kept_y0 in intervals:
+            xL, xR = intervals[kept_y0]
+            w = (xR - xL + 1)
+            if w >= float(width_keep_frac) * med_width:
+                break
+        kept_y0 += 1
 
-    # Trim ONLY from bottom
+    # Bottom trim
     kept_y1 = y1
     while kept_y1 >= kept_y0:
-        if row_width[kept_y1] == 0:
-            kept_y1 -= 1
-            continue
-        if np.flatnonzero(mask_raw[kept_y1, :]).size < min_row_px:
-            kept_y1 -= 1
-            continue
-        if float(row_width[kept_y1]) < float(width_keep_frac) * med_width:
-            kept_y1 -= 1
-            continue
-        break
+        if kept_y1 in intervals:
+            xL, xR = intervals[kept_y1]
+            w = (xR - xL + 1)
+            if w >= float(width_keep_frac) * med_width:
+                break
+        kept_y1 -= 1
 
     if kept_y0 > kept_y1:
-        return np.zeros((H, W), dtype=bool), mask_raw, None, None, med_xL, med_xR, row_black_frac, row_width
+        empty = np.zeros((H, W), dtype=bool)
+        return empty, mask_raw, None, None, xL_rect, xR_rect, {"row_black_frac": row_black_frac, "max_row_black_frac": max_row_black_frac, "widths": widths}
 
-    # Build final mask: each row is either FULL global width or NOTHING
+    # Build final mask: ONLY full rows, filled with ONE rectangle interval (prevents partial rows)
     mask_full = np.zeros((H, W), dtype=bool)
-    xL = max(int(med_xL), 0)
-    xR = min(int(med_xR), W - 1)
+    for y in range(kept_y0, kept_y1 + 1):
+        mask_full[y, xL_rect:xR_rect + 1] = True
 
-    for y in range(int(kept_y0), int(kept_y1) + 1):
-        frac = float(row_black_frac[y])
-        if frac >= float(row_black_frac_keep):
-            mask_full[y, xL:xR + 1] = True
-
-    return mask_full, mask_raw, int(kept_y0), int(kept_y1), int(xL), int(xR), row_black_frac, row_width
+    dbg = {
+        "row_black_frac": row_black_frac,
+        "max_row_black_frac": max_row_black_frac,
+        "widths": widths,
+        "med_width": med_width,
+        "rel_thr": rel_thr,
+        "abs_thr": abs_thr,
+        "kept_y0": kept_y0,
+        "kept_y1": kept_y1,
+        "xL_rect": xL_rect,
+        "xR_rect": xR_rect,
+    }
+    return mask_full, mask_raw, kept_y0, kept_y1, xL_rect, xR_rect, dbg

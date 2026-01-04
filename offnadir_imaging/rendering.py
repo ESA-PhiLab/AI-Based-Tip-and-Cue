@@ -340,7 +340,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
 
     if is_dark:
         print("Dark hours, no image possible")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     img_rgb = np.asarray(Image.open(img_path).convert('RGB'))
 
@@ -415,7 +415,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         except Exception as e:
             if bools.get("print_values", False):
                 print(f"Failed to generate sun/sky SPD: {repr(e)}")
-            return None, None, None, None, None
+            return None, None, None, None, None, None
 
         if bools['print_values']:
             print(f"Saved solar SPD to {sun_spd}\n")
@@ -479,12 +479,13 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         rgb_lin_glint = np.clip(radiance_glint / (scale + 1e-12), 0.0, 1.0)
         DN255_glint2 = iu.linear_to_DN255(rgb_lin_glint)
 
-        black_mask_full, mask_raw, y0, y1, xL, xR, row_black_frac, row_width = compute_hit_mask_full(
+        black_mask_full, black_mask_raw, y0, y1, xL, xR, dbg = compute_hit_mask_full(
             dn255_blackproj=DN255_black,
-            tol=60,  # larger => "more black" accepted
-            min_row_frac=0.01,  # fraction of row width that must be black to consider the row
-            width_keep_frac=0.2,  # trims top/bottom boundary rows whose black span is too narrow
-            row_black_frac_keep=0.6  # per kept row: either keep FULL row interval or keep NOTHING
+            tol=50,  # black if each channel <= 100
+            row_black_frac_keep=0.8,  # relative to the best (max) row in THIS image
+            min_row_black_frac_abs=0.02,
+            width_keep_frac=0.4,
+            interval_mode="median"
         )
 
         radiance_glint[~black_mask_full] = 0.0
@@ -509,6 +510,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         DN255_no_glint = None
         DN255_glint2 = None
         radiance_glint = None
+        black_mask_full = None
         scale = None
 
         if bools['plot_result'] == True:
@@ -523,7 +525,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
     dr.flush_malloc_cache()
     dr.flush_kernel_cache()
 
-    return DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, scale
+    return DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, black_mask_full, scale
 
 
 if __name__ == "__main__":
@@ -562,7 +564,7 @@ if __name__ == "__main__":
 
             save_name =  'images/' + str(hour) + '-' + str(minute) + 'h.png'
             dt = datetime(2025, 6, 11, hour, minute, 0, tzinfo=timezone.utc)
-            DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, scale = generate_image(img_path, satellite, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, dt, sensor_characteristics, wave_properties, bools, seed_dem)
+            DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, black_mask_full, scale = generate_image(img_path, satellite, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, dt, sensor_characteristics, wave_properties, bools, seed_dem)
 
             if radiance_glint is None or DN255_glint is None:
                 continue
