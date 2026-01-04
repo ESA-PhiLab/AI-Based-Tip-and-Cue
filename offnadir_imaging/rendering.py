@@ -16,9 +16,9 @@ from create_DEM.convert_DEM import convert_DEM
 from functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb
 from functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
 from functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
-from functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation
+from functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation, masked_abs_radiance, masked_percentile, masked_channel_percentiles, masked_channel_means, masked_mean, plot_radiance_timeline
 from functions import image_utils as iu
-from functions.mask_water import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy, compute_hit_mask_full
+from functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy, compute_hit_mask_full
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -535,108 +535,99 @@ if __name__ == "__main__":
 
     bools["plot_result"] = False
 
-    THIS_DIR = Path(__file__).resolve().parent  # offnadir_imaging/
-    PROJECT_ROOT = THIS_DIR.parent  # AI-Based-Tip-and-Cue/
+    THIS_DIR = Path(__file__).resolve().parent
+    PROJECT_ROOT = THIS_DIR.parent
 
     images_folder = PROJECT_ROOT / "dataset" / "whales_from_space"
-    img_file = 'Pelagos2016/PelagosIm2_FW_WV3_PS_20160619_B2.PNG'
-
+    img_file = "Pelagos2016/PelagosIm2_FW_WV3_PS_20160619_B2.PNG"
     img_path = str(images_folder / img_file)
-    csv_path = str(images_folder / "WhaleFromSpaceDB_Whales.csv")
 
-    hour_lst = np.arange(8,22, 1)
-    minute_lst = [0, 30]
+    outdir = THIS_DIR / "images"
+    outdir.mkdir(parents=True, exist_ok=True)
 
-    sat_lat, sat_lon, sat_alt = 58.0, -5.0, 617000.0  # lat, lon, m
-    tgt_lat, tgt_lon, tgt_alt = 53.0, 0.0, 0.0  # lat, lon, me
+    hour_lst = np.arange(4, 22, 1)
+    minute_lst = [0, 15, 30, 45]
 
-    p95_rad_lst_R = []
-    p95_rad_lst_G = []
-    p95_rad_lst_B = []
+    sat_lat, sat_lon, sat_alt = 58.0, 0.0, 617000.0
+    tgt_lat, tgt_lon, tgt_alt = 53.0, 0.0, 0.0
 
-    p95_abs_rad_lst = []
+    p95_rad_lst_R, p95_rad_lst_G, p95_rad_lst_B = [], [], []
+    mean_rad_lst_R, mean_rad_lst_G, mean_rad_lst_B = [], [], []
+    p95_abs_rad_lst, mean_abs_rad_lst = [], []
     datetime_lst = []
+
     for hour in hour_lst:
         for minute in minute_lst:
 
-            bools['max_glint'] = True
-            DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, scale = None, None, None, None, None
+            bools["max_glint"] = True
 
-            save_name =  'images/' + str(hour) + '-' + str(minute) + 'h.png'
-            dt = datetime(2025, 6, 11, hour, minute, 0, tzinfo=timezone.utc)
-            DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, black_mask_full, scale = generate_image(img_path, satellite, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, dt, sensor_characteristics, wave_properties, bools, seed_dem)
+            dt = datetime(2025, 6, 11, int(hour), int(minute), 0, tzinfo=timezone.utc)
 
-            if radiance_glint is None or DN255_glint is None:
+            DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, black_mask_full, scale = generate_image(
+                img_path, satellite,
+                sat_lat, sat_lon, sat_alt,
+                tgt_lat, tgt_lon, tgt_alt,
+                dt, sensor_characteristics, wave_properties, bools, seed_dem
+            )
+
+            if radiance_glint is None or DN255_glint is None or black_mask_full is None:
                 continue
 
-            if DN255_glint is not None:
+            mask = black_mask_full.astype(bool)
+            if np.count_nonzero(mask) == 0:
+                continue
 
-                print(f"Save image for {hour}:{minute}h" )
-                image_uint8 = np.clip(DN255_glint, 0, 255).astype(np.uint8)
-                img = Image.fromarray(image_uint8)
+            abs_rad = np.sqrt(np.sum(np.square(radiance_glint.astype(np.float64)), axis=2))
+            vals = abs_rad[mask]
+            if vals.size == 0 or float(np.max(vals)) <= 1e-12:
+                continue
 
-                img.save(save_name)
+            save_path_img = outdir / f"{hour}-{minute}h.png"
+            Image.fromarray(np.clip(DN255_glint, 0, 255).astype(np.uint8)).save(save_path_img)
 
-                abs_rad = np.sqrt(np.sum(np.square(radiance_glint.astype(np.float64)), axis=2))
+            p95_abs_rad_lst.append(masked_percentile(abs_rad, mask, 95.0))
+            p95_R, p95_G, p95_B = masked_channel_percentiles(radiance_glint, mask, 95.0)
+            p95_rad_lst_R.append(p95_R)
+            p95_rad_lst_G.append(p95_G)
+            p95_rad_lst_B.append(p95_B)
 
-                p95_abs_rad = np.percentile(abs_rad, 95)
-                p95_abs_rad_lst.append(p95_abs_rad)
-                datetime_lst.append(dt)
+            mean_abs_rad_lst.append(masked_mean(abs_rad, mask))
+            mR, mG, mB = masked_channel_means(radiance_glint, mask)
+            mean_rad_lst_R.append(mR)
+            mean_rad_lst_G.append(mG)
+            mean_rad_lst_B.append(mB)
 
-                p95_R = np.percentile(radiance_glint[:, :, 0], 95)
-                p95_G = np.percentile(radiance_glint[:, :, 1], 95)
-                p95_B = np.percentile(radiance_glint[:, :, 2], 95)
+            datetime_lst.append(dt)
 
-                p95_rad_lst_R.append(p95_R)
-                p95_rad_lst_G.append(p95_G)
-                p95_rad_lst_B.append(p95_B)
+            print(f"Saved image for {hour}:{minute:02d}h -> {save_path_img}")
+            print("Max glint (masked abs):", float(np.max(vals)))
 
-                print("Saved image under ", save_name + '\n')
-                print('Max glint:', np.max(radiance_glint))
+    plot_radiance_timeline(
+        datetime_lst=datetime_lst,
+        series=[p95_rad_lst_R, p95_rad_lst_G, p95_rad_lst_B],
+        labels=["Red (p95)", "Green (p95)", "Blue (p95)"],
+        styles=["r", "g", "b"],
+        ylabel=r"Radiance [W m$^{-2}$ sr$^{-1}$]",
+        title="95th percentile band radiance (masked)",
+        save_path=outdir / "radiance_timeline_rgb_p95.png"
+    )
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
+    plot_radiance_timeline(
+        datetime_lst=datetime_lst,
+        series=[mean_rad_lst_R, mean_rad_lst_G, mean_rad_lst_B],
+        labels=["Red (mean)", "Green (mean)", "Blue (mean)"],
+        styles=["r--", "g--", "b--"],
+        ylabel=r"Radiance [W m$^{-2}$ sr$^{-1}$]",
+        title="Mean band radiance (masked)",
+        save_path=outdir / "radiance_timeline_rgb_mean.png"
+    )
 
-    ax.plot(datetime_lst, p95_rad_lst_R, 'r')
-    ax.plot(datetime_lst, p95_rad_lst_G, 'g')
-    ax.plot(datetime_lst, p95_rad_lst_B, 'b')
-    ax.grid(True)
-
-    images_dir = PROJECT_ROOT / "offnadir_imaging" / "images"
-    plot_path = images_dir / "radiance_timeline_rgb.png"
-    fig.savefig(plot_path, dpi=200, bbox_inches="tight")
-    print("Saved radiance plot rgb")
-    print("** DON'T stop the script, but close the plot **")
-    plt.show()
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-
-    ax.plot(datetime_lst, p95_abs_rad_lst, 'black')
-    ax.grid(True)
-
-    images_dir = PROJECT_ROOT / "offnadir_imaging" / "images"
-    plot_path = images_dir / "radiance_timeline_abs.png"
-    fig.savefig(plot_path, dpi=200, bbox_inches="tight")
-    print("Saved radiance plot absolute")
-    plt.show()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    plot_radiance_timeline(
+        datetime_lst=datetime_lst,
+        series=[p95_abs_rad_lst, mean_abs_rad_lst],
+        labels=["‖L‖ p95", "‖L‖ mean"],
+        styles=["k", "k--"],
+        ylabel=r"‖Radiance‖ [W m$^{-2}$ sr$^{-1}$]",
+        title="Absolute radiance over time (masked)",
+        save_path=outdir / "radiance_timeline_abs_p95_mean.png"
+    )

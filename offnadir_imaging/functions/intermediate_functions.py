@@ -3,6 +3,10 @@ import math
 import pyproj
 from .convert_reference_frames import get_lat_lon_alt_from_ecef
 
+from pathlib import Path
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+
 def rmse(img1, img2):
     return np.sqrt(np.mean((img1 - img2) ** 2))
 
@@ -96,3 +100,95 @@ def dbg_sun_elevation(target_ecef, sun_ecef):
     # large-sun-distance approx (if s really is ECEF)
     elev_approx = math.degrees(math.asin(np.clip(np.dot(s/np.linalg.norm(s), u), -1.0, 1.0)))
     print(f"elev(target→Sun) = {elev1:.2f}°  |  flipped = {elev2:.2f}°  |  approx(using ŝ) = {elev_approx:.2f}°")
+
+
+def masked_percentile(x, mask, q):
+    """Return percentile q of x over mask==True pixels."""
+    v = x[mask]
+    if v.size == 0:
+        return float("nan")
+    return float(np.percentile(v, q))
+
+
+def masked_channel_percentiles(radiance_rgb, mask, q):
+    """Return (pR,pG,pB) percentiles over masked pixels only."""
+    pR = masked_percentile(radiance_rgb[:, :, 0], mask, q)
+    pG = masked_percentile(radiance_rgb[:, :, 1], mask, q)
+    pB = masked_percentile(radiance_rgb[:, :, 2], mask, q)
+    return pR, pG, pB
+
+
+def masked_abs_radiance(radiance_rgb):
+    """Return per-pixel L2 magnitude of RGB radiance."""
+    return np.sqrt(np.sum(np.square(radiance_rgb.astype(np.float64)), axis=2))
+
+def masked_percentile(x, mask, q):
+    """masked_percentile(x: np.ndarray, mask: np.ndarray, q: float) -> float"""
+    vals = x[mask]
+    if vals.size == 0:
+        return float("nan")
+    return float(np.percentile(vals, float(q)))
+
+
+def masked_mean(x, mask):
+    """masked_mean(x: np.ndarray, mask: np.ndarray) -> float"""
+    vals = x[mask]
+    if vals.size == 0:
+        return float("nan")
+    return float(np.mean(vals))
+
+def is_frame_invalid(radiance_rgb, mask_full, eps=1e-12):
+    """is_frame_invalid(radiance_rgb: np.ndarray, mask_full: np.ndarray, eps: float = 1e-12) -> bool"""
+    if radiance_rgb is None or mask_full is None:
+        return True
+    if mask_full.dtype != bool:
+        mask_full = mask_full.astype(bool)
+    if np.count_nonzero(mask_full) == 0:
+        return True
+
+    abs_rad = np.sqrt(np.sum(np.square(radiance_rgb.astype(np.float64)), axis=2))
+    vals = abs_rad[mask_full]
+    if vals.size == 0:
+        return True
+
+    # If everything is ~0 inside the mask, treat as invalid (your “fully black” case)
+    if float(np.max(vals)) <= eps:
+        return True
+
+    return False
+
+
+def masked_channel_means(radiance_rgb, mask):
+    """Return (meanR, meanG, meanB) over masked pixels only."""
+    mR = masked_mean(radiance_rgb[:, :, 0], mask)
+    mG = masked_mean(radiance_rgb[:, :, 1], mask)
+    mB = masked_mean(radiance_rgb[:, :, 2], mask)
+    return mR, mG, mB
+
+import matplotlib.dates as mdates
+from matplotlib import pyplot as plt
+
+def plot_radiance_timeline(datetime_lst, series, labels, styles, ylabel, title, save_path=None):
+    """plot_radiance_timeline(datetime_lst: list, series: list, labels: list, styles: list, ylabel: str, title: str, save_path: str | Path | None = None) -> None"""
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    for y, lab, sty in zip(series, labels, styles):
+        ax.plot(datetime_lst, y, sty, label=lab)
+
+    ax.set_title(title)
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel("UTC time")
+    ax.grid(True)
+    ax.legend()
+
+    # Better time formatting
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    fig.autofmt_xdate()
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=200, bbox_inches="tight")
+
+    plt.show()
