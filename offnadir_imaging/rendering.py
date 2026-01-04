@@ -9,16 +9,16 @@ from matplotlib import pyplot as plt
 from PIL import Image
 import gc
 
-from .RTM import generate_sun_and_sky_spds
-from .create_DEM.create_dummy_DEM import get_DEM
-from .create_DEM.convert_DEM import convert_DEM
+from RTM import generate_sun_and_sky_spds
+from create_DEM.create_dummy_DEM import get_DEM
+from create_DEM.convert_DEM import convert_DEM
 
-from .functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb
-from .functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
-from .functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
-from .functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation
-from .functions import image_utils as iu
-from .functions.mask_water import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy, compute_hit_mask_full
+from functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb
+from functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
+from functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
+from functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation
+from functions import image_utils as iu
+from functions.mask_water import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy, compute_hit_mask_full
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -427,7 +427,10 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
 
         off_nadir_image = render_projected_texture(img_lin, dem_path, satellite_local, target_local, sensor_characteristics)
 
-        black_folder = "dataset/utils_images/"
+        THIS_DIR = Path(__file__).resolve().parent  # offnadir_imaging/
+        PROJECT_ROOT = THIS_DIR.parent  # AI-Based-Tip-and-Cue/
+
+        black_folder = PROJECT_ROOT / "dataset" / "utils_images"
         black_rgb = np.asarray(Image.open(os.path.join(black_folder, 'black.png')).convert('RGB'))
         black_lin = iu.DN255_to_linear(black_rgb)
 
@@ -476,7 +479,13 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         rgb_lin_glint = np.clip(radiance_glint / (scale + 1e-12), 0.0, 1.0)
         DN255_glint2 = iu.linear_to_DN255(rgb_lin_glint)
 
-        black_mask_full, mask_raw, *_ = compute_hit_mask_full(DN255_black, tol=80, min_row_px=30, row_black_frac_keep=0.6, width_keep_frac=0.5)
+        black_mask_full, mask_raw, y0, y1, xL, xR, row_black_frac, row_width = compute_hit_mask_full(
+            dn255_blackproj=DN255_black,
+            tol=60,  # larger => "more black" accepted
+            min_row_frac=0.01,  # fraction of row width that must be black to consider the row
+            width_keep_frac=0.2,  # trims top/bottom boundary rows whose black span is too narrow
+            row_black_frac_keep=0.6  # per kept row: either keep FULL row interval or keep NOTHING
+        )
 
         radiance_glint[~black_mask_full] = 0.0
         DN255_no_glint[~black_mask_full] = 0
@@ -485,12 +494,10 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         print("DN255_black min/max:", DN255_black.min(), DN255_black.max())
         print("fraction black (raw):", np.mean(np.linalg.norm(DN255_black.astype(np.float32), axis=2) <= 2.0))
 
-
-
         if bools['plot_result'] == True:
             fig = plt.figure(figsize=(18,8))
             fig.add_subplot(1, 4, 1).imshow(img_rgb); plt.axis('off'); plt.title('original PNG')
-            fig.add_subplot(1, 4, 2).imshow(DN255_black); plt.axis('off'); plt.title('reproject (constant light)')
+            fig.add_subplot(1, 4, 2).imshow(DN255_texture); plt.axis('off'); plt.title('reproject (constant light)')
             fig.add_subplot(1, 4, 3).imshow(DN255_no_glint); plt.axis('off'); plt.title('render (sun, no glint)')
             fig.add_subplot(1, 4, 4).imshow(DN255_glint2); plt.axis('off'); plt.title('render (sun + glint)')
             plt.show()
@@ -530,13 +537,13 @@ if __name__ == "__main__":
     PROJECT_ROOT = THIS_DIR.parent  # AI-Based-Tip-and-Cue/
 
     images_folder = PROJECT_ROOT / "dataset" / "whales_from_space"
-    img_file = "Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG"
+    img_file = 'Pelagos2016/PelagosIm2_FW_WV3_PS_20160619_B2.PNG'
 
     img_path = str(images_folder / img_file)
     csv_path = str(images_folder / "WhaleFromSpaceDB_Whales.csv")
 
-    hour_lst = np.arange(4,22, 1)
-    minute_lst = [0, 15, 30, 45]
+    hour_lst = np.arange(8,22, 1)
+    minute_lst = [0, 30]
 
     sat_lat, sat_lon, sat_alt = 58.0, -5.0, 617000.0  # lat, lon, m
     tgt_lat, tgt_lon, tgt_alt = 53.0, 0.0, 0.0  # lat, lon, me
@@ -549,6 +556,8 @@ if __name__ == "__main__":
     datetime_lst = []
     for hour in hour_lst:
         for minute in minute_lst:
+
+            bools['max_glint'] = True
             DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, scale = None, None, None, None, None
 
             save_name =  'images/' + str(hour) + '-' + str(minute) + 'h.png'

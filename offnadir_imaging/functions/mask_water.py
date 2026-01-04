@@ -80,14 +80,14 @@ import numpy as np
 
 
 def _black_mask_raw(dn255_rgb, tol=0):
-    """Return HxW bool where pixel is 'black' if all channels <= tol."""
-    img = dn255_rgb.astype(np.int16)
+    """Return HxW bool: True where each channel <= tol (per-channel)."""
+    img = dn255_rgb.astype(np.int16)  # avoid uint8 issues
     t = np.array([tol, tol, tol], dtype=np.int16).reshape(1, 1, 3)
     return np.all(img <= t, axis=2)
 
 
 def _first_last_true_row(mask_bool):
-    """Return (y0, y1) first/last row containing any True; (None, None) if empty."""
+    """Return (y0, y1) first/last row with any True; (None, None) if empty."""
     rows = np.any(mask_bool, axis=1)
     idx = np.flatnonzero(rows)
     if idx.size == 0:
@@ -95,76 +95,42 @@ def _first_last_true_row(mask_bool):
     return int(idx[0]), int(idx[-1])
 
 
-def _row_interval(mask_row):
-    """Return (xL, xR) of True pixels; (None, None) if empty."""
-    idx = np.flatnonzero(mask_row)
-    if idx.size == 0:
-        return None, None
-    return int(idx[0]), int(idx[-1])
-
-
-def compute_hit_mask_full(dn255_blackproj, tol=20, min_row_px=50, row_black_frac_keep=0.8, width_keep_frac=0.6):
-    """
-    Footprint mask from black-projection render (footprint=black).
-
-    Rules:
-      - pixel is black if ALL channels <= tol
-      - trim ONLY from top/bottom (never remove interior rows)
-      - keep a row if (black_fraction_in_row_span >= row_black_frac_keep)
-        AND (row_span_width >= width_keep_frac * median_span_width)
-      - final mask is filled per row as one contiguous horizontal interval
-
-    Returns:
-      mask_full : HxW bool  (filled per row, no holes)
-      mask_raw  : HxW bool  (raw black pixels)
-      kept_y0, kept_y1 : ints or (None, None)
-      med_xL, med_xR   : ints (median interval from strong rows)
-      row_black_frac   : H float (fraction black inside row span; nan if no span)
-      row_width        : H int (span width; 0 if none)
-    """
+def compute_hit_mask_full(dn255_blackproj, tol=60, min_row_frac=0.01, width_keep_frac=0.4, row_black_frac_keep=0.6):
+    """Return (mask_full, mask_raw, kept_y0, kept_y1, xL, xR, row_black_frac, row_width) from black-projection DN255."""
     mask_raw = _black_mask_raw(dn255_blackproj, tol=tol)
     H, W = mask_raw.shape
 
     y0, y1 = _first_last_true_row(mask_raw)
     if y0 is None:
-        row_black_frac = np.full((H,), np.nan, dtype=np.float32)
-        row_width = np.zeros((H,), dtype=np.int32)
-        return np.zeros((H, W), dtype=bool), mask_raw, None, None, 0, W - 1, row_black_frac, row_width
+        row_black_frac = np.zeros(H, dtype=np.float32)
+        row_width = np.zeros(H, dtype=np.int32)
+        return np.zeros((H, W), dtype=bool), mask_raw, None, None, None, None, row_black_frac, row_width
 
-    # Per-row spans + black fractions inside span
-    xL_row = np.full((H,), -1, dtype=np.int32)
-    xR_row = np.full((H,), -1, dtype=np.int32)
-    row_width = np.zeros((H,), dtype=np.int32)
-    row_black_frac = np.full((H,), np.nan, dtype=np.float32)
-
-    strong_rows = []
-    widths = []
-    xLs = []
-    xRs = []
+    # Per-row black fraction and horizontal width (span) of black pixels
+    row_black_frac = np.zeros(H, dtype=np.float32)
+    row_width = np.zeros(H, dtype=np.int32)
+    intervals = {}  # y -> (xL, xR)
 
     for y in range(y0, y1 + 1):
-        xL, xR = _row_interval(mask_raw[y, :])
-        if xL is None:
+        idx = np.flatnonzero(mask_raw[y, :])
+        if idx.size == 0:
             continue
+        row_black_frac[y] = float(idx.size) / float(W)
+        xL, xR = int(idx[0]), int(idx[-1])
+        intervals[y] = (xL, xR)
+        row_width[y] = (xR - xL + 1)
 
-        span_w = xR - xL + 1
-        black_in_span = int(mask_raw[y, xL:xR + 1].sum())
-        frac = black_in_span / float(span_w)
+    # Rows must have at least this fraction of black pixels to be considered "valid"
+    min_row_px = max(1, int(np.ceil(float(min_row_frac) * float(W))))
+    valid_rows = [y for y in range(y0, y1 + 1) if (row_width[y] > 0 and np.flatnonzero(mask_raw[y, :]).size >= min_row_px)]
 
-        xL_row[y] = xL
-        xR_row[y] = xR
-        row_width[y] = span_w
-        row_black_frac[y] = float(frac)
+    if len(valid_rows) == 0:
+        return np.zeros((H, W), dtype=bool), mask_raw, None, None, None, None, row_black_frac, row_width
 
-        # "strong" rows define the stable median width/interval
-        if black_in_span >= int(min_row_px):
-            strong_rows.append(y)
-            widths.append(span_w)
-            xLs.append(xL)
-            xRs.append(xR)
-
-    if len(widths) == 0:
-        return np.zeros((H, W), dtype=bool), mask_raw, None, None, 0, W - 1, row_black_frac, row_width
+    # Robust global x-interval from valid rows
+    xLs = [intervals[y][0] for y in valid_rows if y in intervals]
+    xRs = [intervals[y][1] for y in valid_rows if y in intervals]
+    widths = [row_width[y] for y in valid_rows if row_width[y] > 0]
 
     med_width = float(np.median(widths))
     med_xL = int(np.median(xLs))
@@ -174,49 +140,45 @@ def compute_hit_mask_full(dn255_blackproj, tol=20, min_row_px=50, row_black_frac
     if med_xL > med_xR:
         med_xL, med_xR = 0, W - 1
 
-    # --- Trim only top/bottom based on row quality ---
+    # Trim ONLY from top based on row width being too small (boundary/partial rows)
     kept_y0 = y0
     while kept_y0 <= y1:
-        if row_width[kept_y0] <= 0 or np.isnan(row_black_frac[kept_y0]):
+        if row_width[kept_y0] == 0:
             kept_y0 += 1
             continue
+        if np.flatnonzero(mask_raw[kept_y0, :]).size < min_row_px:
+            kept_y0 += 1
+            continue
+        if float(row_width[kept_y0]) < float(width_keep_frac) * med_width:
+            kept_y0 += 1
+            continue
+        break
 
-        ok_frac = row_black_frac[kept_y0] >= float(row_black_frac_keep)
-        ok_w = row_width[kept_y0] >= float(width_keep_frac) * med_width
-        if ok_frac and ok_w:
-            break
-        kept_y0 += 1
-
+    # Trim ONLY from bottom
     kept_y1 = y1
     while kept_y1 >= kept_y0:
-        if row_width[kept_y1] <= 0 or np.isnan(row_black_frac[kept_y1]):
+        if row_width[kept_y1] == 0:
             kept_y1 -= 1
             continue
-
-        ok_frac = row_black_frac[kept_y1] >= float(row_black_frac_keep)
-        ok_w = row_width[kept_y1] >= float(width_keep_frac) * med_width
-        if ok_frac and ok_w:
-            break
-        kept_y1 -= 1
+        if np.flatnonzero(mask_raw[kept_y1, :]).size < min_row_px:
+            kept_y1 -= 1
+            continue
+        if float(row_width[kept_y1]) < float(width_keep_frac) * med_width:
+            kept_y1 -= 1
+            continue
+        break
 
     if kept_y0 > kept_y1:
         return np.zeros((H, W), dtype=bool), mask_raw, None, None, med_xL, med_xR, row_black_frac, row_width
 
-    # --- Build final filled mask: one contiguous horizontal interval per kept row ---
+    # Build final mask: each row is either FULL global width or NOTHING
     mask_full = np.zeros((H, W), dtype=bool)
+    xL = max(int(med_xL), 0)
+    xR = min(int(med_xR), W - 1)
 
-    for y in range(kept_y0, kept_y1 + 1):
-        # Use the row’s own span if it exists; otherwise fallback to median span
-        if row_width[y] > 0:
-            xL = int(xL_row[y])
-            xR = int(xR_row[y])
-        else:
-            xL = med_xL
-            xR = med_xR
-
-        xL = max(xL, 0)
-        xR = min(xR, W - 1)
-        if xL <= xR:
+    for y in range(int(kept_y0), int(kept_y1) + 1):
+        frac = float(row_black_frac[y])
+        if frac >= float(row_black_frac_keep):
             mask_full[y, xL:xR + 1] = True
 
-    return mask_full, mask_raw, int(kept_y0), int(kept_y1), int(med_xL), int(med_xR), row_black_frac, row_width
+    return mask_full, mask_raw, int(kept_y0), int(kept_y1), int(xL), int(xR), row_black_frac, row_width
