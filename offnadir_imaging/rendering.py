@@ -17,8 +17,8 @@ from .functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_w
 from .functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
 from .functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
 from .functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation
-from .functions.mask_water import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy
 from .functions import image_utils as iu
+from .functions.mask_water import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy, compute_hit_mask_full
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -198,7 +198,7 @@ def render_projected_texture(input_img, dem_path, satellite_local, target_local,
                 "width": sensor_characteristics['resolution'],
                 "height": sensor_characteristics['resolution'],
                 "rfilter": {"type": "box"},
-                "sample_border": True,
+                "sample_border": False,
                 "compensate": True
             },
 
@@ -221,6 +221,7 @@ def render_projected_texture(input_img, dem_path, satellite_local, target_local,
 def render_rgb_with_optional_glint(img_refl, dem_path, band_data, sun_spd_path, sky_spd_path, satellite_local, target_local, sun_direction, sensor_characteristics, alpha, specular_weight, tonemap_percentile=99.5, return_linear=False):
 
     """Render physically consistent RGB under the same sun/camera, with glint controlled by specular_weight; returns (DN255_rgb, radiance_rgb_linear_or_None, scale)."""
+
 
     R_lin = img_refl[:, :, 0][:, :, None].astype(np.float32)
     G_lin = img_refl[:, :, 1][:, :, None].astype(np.float32)
@@ -274,7 +275,6 @@ def render_rgb_with_optional_glint(img_refl, dem_path, band_data, sun_spd_path, 
     # Tone map (robust)
     scale = float(np.percentile(radiance_rgb, float(tonemap_percentile)))
     rgb_lin = np.clip(radiance_rgb / (scale + 1e-12), 0.0, 1.0)
-
     DN255_rgb = iu.linear_to_DN255(rgb_lin)
 
     return (DN255_rgb, radiance_rgb if return_linear else None, scale)
@@ -423,7 +423,17 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         if bools['print_values']:
             print(f"Generate off nadir image\n")
 
+
+
         off_nadir_image = render_projected_texture(img_lin, dem_path, satellite_local, target_local, sensor_characteristics)
+
+        black_folder = "dataset/utils_images/"
+        black_rgb = np.asarray(Image.open(os.path.join(black_folder, 'black.png')).convert('RGB'))
+        black_lin = iu.DN255_to_linear(black_rgb)
+
+        black_offnadir = render_projected_texture(black_lin, dem_path, satellite_local, target_local, sensor_characteristics)
+        DN255_black = iu.linear_to_DN255(black_offnadir)
+
         # off_nadir_image = np.flip(off_nadir_image, axis=0)
 
         DN255_texture = iu.linear_to_DN255(off_nadir_image)
@@ -466,14 +476,24 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         rgb_lin_glint = np.clip(radiance_glint / (scale + 1e-12), 0.0, 1.0)
         DN255_glint2 = iu.linear_to_DN255(rgb_lin_glint)
 
+        black_mask_full, mask_raw, *_ = compute_hit_mask_full(DN255_black, tol=80, min_row_px=30, row_black_frac_keep=0.6, width_keep_frac=0.5)
+
+        radiance_glint[~black_mask_full] = 0.0
+        DN255_no_glint[~black_mask_full] = 0
+        DN255_glint2[~black_mask_full] = 0
+
+        print("DN255_black min/max:", DN255_black.min(), DN255_black.max())
+        print("fraction black (raw):", np.mean(np.linalg.norm(DN255_black.astype(np.float32), axis=2) <= 2.0))
+
+
+
         if bools['plot_result'] == True:
-            fig = plt.figure(figsize=(22,10))
+            fig = plt.figure(figsize=(18,8))
             fig.add_subplot(1, 4, 1).imshow(img_rgb); plt.axis('off'); plt.title('original PNG')
-            fig.add_subplot(1, 4, 2).imshow(DN255_texture); plt.axis('off'); plt.title('reproject (constant light)')
+            fig.add_subplot(1, 4, 2).imshow(DN255_black); plt.axis('off'); plt.title('reproject (constant light)')
             fig.add_subplot(1, 4, 3).imshow(DN255_no_glint); plt.axis('off'); plt.title('render (sun, no glint)')
             fig.add_subplot(1, 4, 4).imshow(DN255_glint2); plt.axis('off'); plt.title('render (sun + glint)')
             plt.show()
-
 
     else:
 

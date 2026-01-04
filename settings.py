@@ -264,6 +264,7 @@ sensor_characteristics['resolution'] = resolution
 sensor_characteristics['sample_count'] = sample_count
 sensor_characteristics['GSD'] = gsd0_cue
 
+
 whale_propagation = {}
 whale_propagation["speed_mean"] = speed_mean
 whale_propagation["speed_min"] = speed_min

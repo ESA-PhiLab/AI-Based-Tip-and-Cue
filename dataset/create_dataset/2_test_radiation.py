@@ -10,9 +10,11 @@ from offnadir_imaging.rendering import generate_image
 from settings import *
 
 images_folder = "dataset/whales_from_space/"
+black_folder = "dataset/utils_images/"
+
 # img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
 img_file = 'Pelagos2016/PelagosIm2_FW_WV3_PS_20160619_B2.PNG'
-img_file = 'Pelagos2016/PelagosIm5_FW_WV3_PS_20160626_B1.PNG'
+# img_file = 'Pelagos2016/PelagosIm5_FW_WV3_PS_20160626_B1.PNG'
 
 csv_path = os.path.join(images_folder, "WhaleFromSpaceDB_Whales.csv")
 img_path = os.path.join(images_folder, img_file)
