@@ -20,7 +20,7 @@ from offnadir_imaging.functions.intermediate_functions import get_scene_characte
 # =========================
 # Mitsuba variant (SET ONCE!)
 # =========================
-# If llvm_ad_rgb still crashes on your system, switch to "llvm_rgb" (often more stable).
+
 MI_VARIANT = "cuda_ad_rgb"
 mi.set_variant(MI_VARIANT)
 

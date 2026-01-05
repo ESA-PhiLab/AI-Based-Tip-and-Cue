@@ -41,6 +41,7 @@ BOOLS = {
     "print_values": True,
     "crop_black_border": False,   # IGNORE CROPPING (as requested)
     "generate_radiation": True,
+    'generate_nadir': False,
 }
 
 WAVE_PROPERTIES = {"wind_speed": 10.0, "num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
@@ -196,11 +197,11 @@ def build_point_id_texture(anns: list, tex_w: int, tex_h: int, radius_px: int) -
 # =========================
 def render_id_pass(dem_obj_path: str, id_texture_rgb01: np.ndarray, to_world_scene, to_world_sensor, fov_deg: float, res: int, spp: int) -> np.ndarray:
     """render_id_pass(dem_obj_path,id_texture_rgb01,to_world_scene,to_world_sensor,fov_deg,res,spp) -> np.ndarray."""
-    mi.set_variant("llvm_ad_rgb")
+    mi.set_variant("cuda_ad_rgb")
 
     tex = {
         "type": "bitmap",
-        "data": id_texture_rgb01,
+        "data": mi.TensorXf(id_texture_rgb01.astype(np.float32)),
         "raw": True,
         "wrap_mode": "clamp",
         "filter_type": "nearest",
@@ -358,6 +359,8 @@ def main() -> None:
     if BOOLS["max_glint"]:
         satellite_ecef = compute_max_glint_satellite_ecef(target_ecef, sun_ecef, glint_distance_m=700 * 10**3)
 
+
+
     is_dark, *_ = is_dark_from_sun_dir(
         target_ecef=target_ecef,
         sun_ecef=sun_ecef,
@@ -372,7 +375,7 @@ def main() -> None:
         satellite_ecef, target_ecef, sun_ecef, tex_h, tex_w, gsd
     )
 
-    mi.set_variant("llvm_ad_rgb")
+    mi.set_variant("cuda_ad_rgb")
 
     scene_rotation = mi.ScalarTransform4f().rotate(
         axis=mi.ScalarVector3f(0, 0, 1),
@@ -432,7 +435,7 @@ def main() -> None:
     print("[5/5] Running generate_image AFTER annotation translation...")
     sensor_characteristics = {"resolution": RENDER_RESOLUTION, "sample_count": SAMPLE_COUNT, "GSD": gsd}
 
-    DN255_offnadir, DN255_sunglint, _rad_sunglint, DN255_combined = generate_image(
+    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale = generate_image(
         str(img_path),
         satellite,
         SAT_LAT, SAT_LON, SAT_ALT,
@@ -443,23 +446,37 @@ def main() -> None:
         BOOLS,
         DEM_SEED,
     )
-    if DN255_offnadir is None:
+
+    if DN255_texture is None:
         raise RuntimeError("Renderer returned None (dark hours).")
 
-    offnadir_u8 = to_uint8_rgb(DN255_offnadir)
-    sunglint_u8 = to_uint8_rgb(DN255_sunglint)
-    combined_u8 = to_uint8_rgb(DN255_combined)
+    texture_u8 = to_uint8_rgb(DN255_texture)
+    no_glint_u8 = to_uint8_rgb(DN255_no_glint) if DN255_no_glint is not None else np.zeros_like(texture_u8)
+    glint_u8 = to_uint8_rgb(DN255_glint) if DN255_glint is not None else np.zeros_like(texture_u8)
 
-    off_overlay = draw_overlay_from_polys(Image.fromarray(offnadir_u8, mode="RGB").copy(), polys_off, boxes_off)
-    comb_overlay = None
-    if combined_u8 is not None:
-        comb_overlay = draw_overlay_from_polys(Image.fromarray(combined_u8, mode="RGB").copy(), polys_off, boxes_off)
+    # reflectance display image is already float in [0,1]
+    rho_u8 = (np.clip(rho_disp, 0.0, 1.0) * 255.0).astype(np.uint8) if rho_disp is not None else np.zeros_like(texture_u8)
+
+    tex_overlay = draw_overlay_from_polys(Image.fromarray(texture_u8, mode="RGB").copy(), polys_off, boxes_off)
+    glint_overlay = draw_overlay_from_polys(Image.fromarray(glint_u8, mode="RGB").copy(), polys_off, boxes_off) if DN255_glint is not None else None
+    rho_overlay = draw_overlay_from_polys(Image.fromarray(rho_u8, mode="RGB").copy(), polys_off, boxes_off) if rho_disp is not None else None
 
     fig2 = plt.figure(figsize=(18, 10))
-    fig2.add_subplot(1, 4, 1).imshow(orig_overlay); plt.axis("off"); plt.title("original + annotation")
-    fig2.add_subplot(1, 4, 2).imshow(off_overlay);  plt.axis("off"); plt.title("off-nadir + projected annotation")
-    fig2.add_subplot(1, 4, 3).imshow(sunglint_u8 if sunglint_u8 is not None else np.zeros_like(offnadir_u8)); plt.axis("off"); plt.title("sun glint")
-    fig2.add_subplot(1, 4, 4).imshow(comb_overlay if comb_overlay is not None else np.zeros_like(offnadir_u8)); plt.axis("off"); plt.title("combined + projected")
+    fig2.add_subplot(1, 5, 1).imshow(orig_overlay);
+    plt.axis("off");
+    plt.title("original + annotation")
+    fig2.add_subplot(1, 5, 2).imshow(tex_overlay);
+    plt.axis("off");
+    plt.title("off-nadir + projected annotation")
+    fig2.add_subplot(1, 5, 3).imshow(no_glint_u8);
+    plt.axis("off");
+    plt.title("render (sun, no glint)")
+    fig2.add_subplot(1, 5, 4).imshow(glint_overlay if glint_overlay is not None else glint_u8);
+    plt.axis("off");
+    plt.title("render (sun + glint)")
+    fig2.add_subplot(1, 5, 5).imshow(rho_overlay if rho_overlay is not None else rho_u8);
+    plt.axis("off");
+    plt.title("TOA reflectance (scaled)")
     plt.tight_layout()
     plt.show()
 

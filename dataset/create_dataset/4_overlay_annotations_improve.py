@@ -42,6 +42,7 @@ BOOLS = {
     "print_values": True,
     "crop_black_border": False,  # ignore cropping
     "generate_radiation": True,
+    "generate_nadir": False
 }
 
 WAVE_PROPERTIES = {"wind_speed": 10.0, "num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
@@ -91,10 +92,10 @@ def draw_overlay(img: Image.Image, anns: list) -> Image.Image:
                 continue
             pts = [(seg[i], seg[i + 1]) for i in range(0, len(seg), 2)]
             if len(pts) >= 3:
-                draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
+                draw.line(pts + [pts[0]], fill=(0, 255, 0), width=1)
         if "bbox" in a and len(a["bbox"]) == 4:
             x, y, w, h = a["bbox"]
-            draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=2)
+            draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=1)
     return img
 
 def draw_overlay_from_polys(img: Image.Image, polys_xy: list, boxes_xywh: list) -> Image.Image:
@@ -102,9 +103,9 @@ def draw_overlay_from_polys(img: Image.Image, polys_xy: list, boxes_xywh: list) 
     draw = ImageDraw.Draw(img)
     for pts in polys_xy:
         if len(pts) >= 3:
-            draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
+            draw.line(pts + [pts[0]], fill=(0, 255, 0), width=1)
     for (x, y, w, h) in boxes_xywh:
-        draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=2)
+        draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=1)
     return img
 
 def to_uint8_rgb(arr) -> np.ndarray:
@@ -122,11 +123,11 @@ def to_uint8_rgb(arr) -> np.ndarray:
 # =========================
 def render_emission_texture(dem_obj_path: str, tex_rgb01: np.ndarray, to_world_scene, to_world_sensor, fov_deg: float, res: int, spp: int, filter_type: str) -> np.ndarray:
     """render_emission_texture(dem_obj_path,tex_rgb01,to_world_scene,to_world_sensor,fov_deg,res,spp,filter_type) -> np.ndarray."""
-    mi.set_variant("llvm_ad_rgb")
+    mi.set_variant("cuda_ad_rgb")
 
     tex = {
         "type": "bitmap",
-        "data": tex_rgb01,
+        "data": mi.TensorXf(tex_rgb01.astype(np.float32)),
         "raw": True,
         "wrap_mode": "clamp",
         "filter_type": str(filter_type),
@@ -427,7 +428,7 @@ def main() -> None:
         satellite_ecef, target_ecef, sun_ecef, tex_h, tex_w, gsd
     )
 
-    mi.set_variant("llvm_ad_rgb")
+    mi.set_variant("cuda_ad_rgb")
     scene_rotation = mi.ScalarTransform4f().rotate(
         axis=mi.ScalarVector3f(0, 0, 1),
         angle=math.degrees(-azimuth_rad),
@@ -514,7 +515,7 @@ def main() -> None:
     print("[7/7] Running generate_image after translation...")
     sensor_characteristics = {"resolution": RENDER_RESOLUTION, "sample_count": SAMPLE_COUNT, "GSD": gsd}
 
-    DN255_offnadir, DN255_sunglint, _rad_sunglint, DN255_combined = generate_image(
+    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale = generate_image(
         str(img_path),
         satellite,
         SAT_LAT, SAT_LON, SAT_ALT,
@@ -525,23 +526,33 @@ def main() -> None:
         BOOLS,
         DEM_SEED,
     )
-    if DN255_offnadir is None:
+
+    if DN255_texture is None:
         raise RuntimeError("Renderer returned None (dark hours).")
 
-    offnadir_u8 = to_uint8_rgb(DN255_offnadir)
-    sunglint_u8 = to_uint8_rgb(DN255_sunglint)
-    combined_u8 = to_uint8_rgb(DN255_combined)
+    tex_u8 = to_uint8_rgb(DN255_texture)
+    no_glint_u8 = to_uint8_rgb(DN255_no_glint) if DN255_no_glint is not None else np.zeros_like(tex_u8)
+    glint_u8 = to_uint8_rgb(DN255_glint) if DN255_glint is not None else np.zeros_like(tex_u8)
 
-    off_overlay = draw_overlay_from_polys(Image.fromarray(offnadir_u8, mode="RGB").copy(), polys_off, boxes_off)
-    comb_overlay = None
-    if combined_u8 is not None:
-        comb_overlay = draw_overlay_from_polys(Image.fromarray(combined_u8, mode="RGB").copy(), polys_off, boxes_off)
+    rho_u8 = (np.clip(rho_disp, 0.0, 1.0) * 255.0).astype(np.uint8) if rho_disp is not None else np.zeros_like(tex_u8)
+
+    tex_overlay = draw_overlay_from_polys(Image.fromarray(tex_u8, mode="RGB").copy(), polys_off, boxes_off)
+    glint_overlay = draw_overlay_from_polys(Image.fromarray(glint_u8, mode="RGB").copy(), polys_off, boxes_off) if DN255_glint is not None else None
+    rho_overlay = draw_overlay_from_polys(Image.fromarray(rho_u8, mode="RGB").copy(), polys_off, boxes_off) if rho_disp is not None else None
 
     fig2 = plt.figure(figsize=(18, 10))
-    fig2.add_subplot(1, 4, 1).imshow(orig_overlay); plt.axis("off"); plt.title("original + annotation")
-    fig2.add_subplot(1, 4, 2).imshow(off_overlay);  plt.axis("off"); plt.title("off-nadir + translated (final res)")
-    fig2.add_subplot(1, 4, 3).imshow(sunglint_u8 if sunglint_u8 is not None else np.zeros_like(offnadir_u8)); plt.axis("off"); plt.title("sun glint")
-    fig2.add_subplot(1, 4, 4).imshow(comb_overlay if comb_overlay is not None else np.zeros_like(offnadir_u8)); plt.axis("off"); plt.title("combined + translated")
+    fig2.add_subplot(1, 4, 1).imshow(orig_overlay);
+    plt.axis("off");
+    plt.title("original + annotation")
+    fig2.add_subplot(1, 4, 2).imshow(tex_overlay);
+    plt.axis("off");
+    plt.title("off-nadir + translated (final res)")
+    fig2.add_subplot(1, 4, 3).imshow(glint_overlay if glint_overlay is not None else glint_u8);
+    plt.axis("off");
+    plt.title("sun glint")
+    fig2.add_subplot(1, 4, 4).imshow(rho_overlay if rho_overlay is not None else rho_u8);
+    plt.axis("off");
+    plt.title("TOA reflectance (scaled)")
     plt.tight_layout()
     plt.show()
 

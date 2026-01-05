@@ -343,7 +343,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
 
     if is_dark:
         print("Dark hours, no image possible")
-        return None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
 
     img_rgb = np.asarray(Image.open(img_path).convert('RGB'))
 
@@ -418,7 +418,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         except Exception as e:
             if bools.get("print_values", False):
                 print(f"Failed to generate sun/sky SPD: {repr(e)}")
-            return None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None, None
 
         if bools['print_values']:
             print(f"Saved solar SPD to {sun_spd}\n")
@@ -549,6 +549,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         DN255_glint2 = None
         radiance_glint = None
         rho_glint = None
+        rho_disp = None
         black_mask_full = None
         scale = None
 
@@ -564,7 +565,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
     dr.flush_malloc_cache()
     dr.flush_kernel_cache()
 
-    return DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, rho_glint, black_mask_full, scale
+    return DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, rho_glint, rho_disp, black_mask_full, scale
 
 
 if __name__ == "__main__":
@@ -602,7 +603,7 @@ if __name__ == "__main__":
 
             dt = datetime(2025, 6, 11, int(hour), int(minute), 0, tzinfo=timezone.utc)
 
-            DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, black_mask_full, scale = generate_image(
+            DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale = generate_image(
                 img_path, satellite,
                 sat_lat, sat_lon, sat_alt,
                 tgt_lat, tgt_lon, tgt_alt,
