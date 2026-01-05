@@ -26,15 +26,6 @@ def crop_black_border_image(img_array: np.ndarray, threshold: int = 10) -> np.nd
 
     return img_array[y0:y1, x0:x1]
 
-def radiance_to_DN2047(radiance_values, gain, offset, eff_bw, abs_cal_factor):
-    DN = (radiance_values - offset) / gain / (abs_cal_factor / eff_bw)
-    DN = np.array(DN)
-    return DN.astype(int)
-
-def DN2047_to_radiance(DN, gain, offset, eff_bw, abs_cal_factor):
-    L = gain * DN * (abs_cal_factor / eff_bw) + offset
-    return L
-
 def DN255_to_linear(img_DN):
     img = img_DN / 255.0
     img_linear = np.power(img, 2.2)
@@ -47,23 +38,78 @@ def linear_to_DN255(img_linear):
     img_DN[img_DN>=255] = 255
     return img_DN.astype(int)
 
-def DN2047_to_linear(img_DN):
-    img = img_DN / 2047.0
-    img_linear = np.power(img, 2.2)
-    img_linear[img_linear>=1] = 1
-    return img_linear
+def _read_spd_two_col(path: str) -> tuple[np.ndarray, np.ndarray]:
+    """Read 2-col SPD (wavelength,value); returns (wvl_nm, values)."""
+    arr = np.genfromtxt(path, comments="#", dtype=float, invalid_raise=False)
+    arr = np.atleast_2d(arr)
 
-def linear_to_DN2047(img_linear):
-    img = np.power(img_linear, 1/2.2)
-    img_DN = img * 2047
-    img_DN = np.array(img_DN)
-    img_DN[img_DN>=2047] = 2047
-    return img_DN.astype(int)
+    if arr.shape[1] < 2:
+        rows = []
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                s = line.strip()
+                if (not s) or s.startswith("#"):
+                    continue
+                parts = s.replace(",", " ").split()
+                if len(parts) < 2:
+                    continue
+                try:
+                    w = float(parts[0]); v = float(parts[1])
+                except Exception:
+                    continue
+                if np.isfinite(w) and np.isfinite(v):
+                    rows.append((w, v))
+        if not rows:
+            raise ValueError(f"SPD file has no valid numeric rows: {path}")
+        arr = np.array(rows, dtype=float)
 
-def DN255_to_DN2047(img_DN255):
-    img_DN2047 = img_DN255 / 255 * 2047
-    return img_DN2047.astype(int)
+    wvl = arr[:, 0].astype(float)
+    val = arr[:, 1].astype(float)
+    m = np.isfinite(wvl) & np.isfinite(val)
+    wvl, val = wvl[m], val[m]
 
-def DN2047_to_DN255(img_DN2047):
-    img_DN255 = img_DN2047 / 2047 * 255
-    return img_DN255.astype(int)
+    if wvl.size < 2:
+        raise ValueError(f"SPD file has too few valid samples: {path}")
+
+    # auto-convert µm -> nm if needed
+    if float(np.max(wvl)) < 20.0:
+        wvl = wvl * 1000.0
+
+    order = np.argsort(wvl)
+    return wvl[order], val[order]
+
+
+def _resample_to(wvl_src: np.ndarray, val_src: np.ndarray, wvl_dst: np.ndarray) -> np.ndarray:
+    """Resample values onto wavelength grid; returns array."""
+    return np.interp(wvl_dst, wvl_src, val_src, left=0.0, right=0.0)
+
+
+def band_weighted_irradiance_integral(spd_path: str, band_rsp_path: str) -> float:
+    """Compute ∫ E(λ)R(λ)dλ over overlap; returns float."""
+    w_spd, E = _read_spd_two_col(spd_path)
+    w_rsp, R = _read_spd_two_col(band_rsp_path)
+
+    w_min = max(float(w_spd.min()), float(w_rsp.min()))
+    w_max = min(float(w_spd.max()), float(w_rsp.max()))
+    if w_max <= w_min:
+        return 0.0
+
+    m = (w_rsp >= w_min) & (w_rsp <= w_max)
+    w = w_rsp[m]
+    if w.size < 2:
+        w = w_spd[(w_spd >= w_min) & (w_spd <= w_max)]
+        if w.size < 2:
+            return 0.0
+        Rw = _resample_to(w_rsp, R, w)
+        Ew = _resample_to(w_spd, E, w)
+    else:
+        Rw = R[m]
+        Ew = _resample_to(w_spd, E, w)
+
+    return float(np.trapz(Ew * Rw, w))
+
+
+def radiance_to_toa_reflectance(L, E_band, cos_theta_s, d_au=1.0):
+    """Convert band-weighted radiance to TOA reflectance; returns array."""
+    return (np.pi * L * (d_au ** 2)) / (E_band * cos_theta_s + 1e-12)
+

@@ -7,18 +7,19 @@ import drjit as dr
 from datetime import datetime, timezone
 from matplotlib import pyplot as plt
 from PIL import Image
+from pathlib import Path
 import gc
 
-from RTM import generate_sun_and_sky_spds
-from create_DEM.create_dummy_DEM import get_DEM
-from create_DEM.convert_DEM import convert_DEM
+from .RTM import generate_sun_and_sky_spds
+from .create_DEM.create_dummy_DEM import get_DEM
+from .create_DEM.convert_DEM import convert_DEM
 
-from functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb
-from functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
-from functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
-from functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation, masked_abs_radiance, masked_percentile, masked_channel_percentiles, masked_channel_means, masked_mean, plot_radiance_timeline
-from functions import image_utils as iu
-from functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy, compute_hit_mask_full
+from .functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb
+from .functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
+from .functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
+from .functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation, masked_abs_radiance, masked_percentile, masked_channel_percentiles, masked_channel_means, masked_mean, plot_radiance_timeline
+from .functions import image_utils as iu
+from .functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy, compute_hit_mask_full
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -280,6 +281,8 @@ def render_rgb_with_optional_glint(img_refl, dem_path, band_data, sun_spd_path, 
     return (DN255_rgb, radiance_rgb if return_linear else None, scale)
 
 
+
+
 def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc, sensor_characteristics, wave_properties, bools, dem_seed):
 
     # dr.set_flag(dr.JitFlag.Debug, True)
@@ -340,7 +343,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
 
     if is_dark:
         print("Dark hours, no image possible")
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
 
     img_rgb = np.asarray(Image.open(img_path).convert('RGB'))
 
@@ -415,7 +418,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         except Exception as e:
             if bools.get("print_values", False):
                 print(f"Failed to generate sun/sky SPD: {repr(e)}")
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
 
         if bools['print_values']:
             print(f"Saved solar SPD to {sun_spd}\n")
@@ -495,13 +498,48 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         print("DN255_black min/max:", DN255_black.min(), DN255_black.max())
         print("fraction black (raw):", np.mean(np.linalg.norm(DN255_black.astype(np.float32), axis=2) <= 2.0))
 
-        if bools['plot_result'] == True:
-            fig = plt.figure(figsize=(18,8))
-            fig.add_subplot(1, 4, 1).imshow(img_rgb); plt.axis('off'); plt.title('original PNG')
-            fig.add_subplot(1, 4, 2).imshow(DN255_texture); plt.axis('off'); plt.title('reproject (constant light)')
-            fig.add_subplot(1, 4, 3).imshow(DN255_no_glint); plt.axis('off'); plt.title('render (sun, no glint)')
-            fig.add_subplot(1, 4, 4).imshow(DN255_glint2); plt.axis('off'); plt.title('render (sun + glint)')
-            plt.show()
+        # --- TOA reflectance (compute once, independent of plotting) ---
+        cos_theta_s = float(np.sin(np.deg2rad(elev_deg)))  # WV-3: cos(theta_s)=sin(sunEl)
+        d_au = 1.0
+
+        E_R = iu.band_weighted_irradiance_integral(sun_spd, band_data["red"]["spd"])
+        E_G = iu.band_weighted_irradiance_integral(sun_spd, band_data["green"]["spd"])
+        E_B = iu.band_weighted_irradiance_integral(sun_spd, band_data["blue"]["spd"])
+
+        if min(E_R, E_G, E_B) <= 0.0:
+            raise ValueError(f"Non-positive band irradiance integrals: E_R={E_R}, E_G={E_G}, E_B={E_B}")
+
+        if cos_theta_s <= 0.0:
+            rho_rgb = np.zeros_like(radiance_glint, dtype=np.float32)
+        else:
+            rho_R = iu.radiance_to_toa_reflectance(radiance_glint[..., 0], E_R, cos_theta_s, d_au)
+            rho_G = iu.radiance_to_toa_reflectance(radiance_glint[..., 1], E_G, cos_theta_s, d_au)
+            rho_B = iu.radiance_to_toa_reflectance(radiance_glint[..., 2], E_B, cos_theta_s, d_au)
+            rho_glint = np.stack([rho_R, rho_G, rho_B], axis=-1).astype(np.float32)
+
+        rho_glint[~black_mask_full] = 0.0
+
+        print(f"Reflectance min: {np.min(rho_glint)}, max: {np.max(rho_glint)}")
+
+        m = black_mask_full.astype(bool)
+        p = float(np.percentile(rho_glint[m], 99.5)) if np.any(m) else 1.0
+        rho_disp = np.clip(rho_glint / (p + 1e-12), 0.0, 1.0)
+
+    if bools['plot_result'] == True:
+
+        fig = plt.figure(figsize=(22, 8))
+        fig.add_subplot(1, 5, 1).imshow(img_rgb);
+        plt.axis('off'); plt.title('original PNG')
+        fig.add_subplot(1, 5, 2).imshow(DN255_texture); plt.axis('off'); plt.title('reproject (constant light)')
+        fig.add_subplot(1, 5, 3).imshow(DN255_no_glint); plt.axis('off'); plt.title('render (sun, no glint)')
+        fig.add_subplot(1, 5, 4).imshow(DN255_glint2); plt.axis('off'); plt.title('render (sun + glint)')
+        fig.add_subplot(1, 5, 5).imshow(rho_disp); plt.axis('off'); plt.title('TOA reflectance')
+        plt.show()
+
+
+
+
+
 
     else:
 
@@ -510,6 +548,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         DN255_no_glint = None
         DN255_glint2 = None
         radiance_glint = None
+        rho_glint = None
         black_mask_full = None
         scale = None
 
@@ -525,7 +564,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
     dr.flush_malloc_cache()
     dr.flush_kernel_cache()
 
-    return DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, black_mask_full, scale
+    return DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, rho_glint, black_mask_full, scale
 
 
 if __name__ == "__main__":
