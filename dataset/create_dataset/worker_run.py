@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 from create_patch import generate_patch
 from save_patch import save_patch
-from translate_patch import translate_image, add_sunglint
+from translate_patch import translate_image
 
 
 def cleanup() -> None:
@@ -126,7 +126,7 @@ def write_meta(meta_out: str,
 def load_patch_bundle_from_patchraw(img_file: str, patch_name: str) -> dict:
     """load_patch_bundle_from_patchraw(img_file,patch_name) -> dict: Build patch_bundle from patch_raw COCO json."""
     main_path = Path(__file__).resolve().parents[2]
-    coco_path = main_path / "dataset" / "create_dataset" / "patch_raw" / "final_annotations.json"
+    coco_path = main_path / "dataset" / "create_dataset" / "patch_raw_255" / "final_annotations.json"
     if not coco_path.is_file():
         raise FileNotFoundError(f"Missing patch_raw COCO json: {coco_path}")
 
@@ -186,7 +186,7 @@ def main() -> int:
             plot_patch=show_plot,
         )
 
-        save_patch("patch_raw", patch_bundle)
+        save_patch("patch_raw_255", patch_bundle)
 
         label_simple = classify_label(
             fracs=list(patch_bundle.get("fracs", [])) if isinstance(patch_bundle.get("fracs", []), list) else [],
@@ -204,7 +204,7 @@ def main() -> int:
             nowhale_max_fraction=float(args.nowhale_max_fraction),
         )
 
-        nadir_raw_bundle = translate_image(
+        nadir_bundle = translate_image(
             patch_bundle,
             render_resolution=int(args.render_resolution),
             sat_lat=args.sat_lat, sat_lon=args.sat_lon, sat_alt=args.sat_alt,
@@ -214,10 +214,29 @@ def main() -> int:
             datetime_utc=dt,
             generate_nadir=True,
         )
-        save_patch("nadir_raw", nadir_raw_bundle)
 
-        nadir_sunglint_bundle = add_sunglint(nadir_raw_bundle, show_plot=False)
-        save_patch("nadir_sunglint", nadir_sunglint_bundle)
+        # save texture
+        b_tex = dict(nadir_bundle)
+        b_tex["patch"] = nadir_bundle["texture_u8"]
+        save_patch("texture_nadir_255", b_tex)
+
+        # save radiance (float .npy)
+
+        # save radiance (float .npy)
+        b_rad = dict(nadir_bundle)
+        b_rad["patch"] = nadir_bundle["radiance"]
+        save_patch("radiance_nadir_npy", b_rad)
+
+        b_rad["patch"] = nadir_bundle["radiance_u8"]
+        save_patch("radiance_nadir_255", b_rad)
+
+        # save reflectance (float .npy)
+        b_ref = dict(nadir_bundle)
+        b_ref["patch"] = nadir_bundle["reflectance"]
+        save_patch("reflection_nadir_npy", b_ref)
+
+        b_ref["patch"] = nadir_bundle["reflectance_u8"]
+        save_patch("reflection_nadir_255", b_ref)
 
         cleanup()
         return 0
@@ -228,7 +247,7 @@ def main() -> int:
 
     patch_bundle = load_patch_bundle_from_patchraw(img_file=args.img_file, patch_name=args.patch_name)
 
-    offnadir_raw_bundle = translate_image(
+    off_bundle = translate_image(
         patch_bundle,
         render_resolution=int(args.render_resolution),
         sat_lat=args.sat_lat, sat_lon=args.sat_lon, sat_alt=args.sat_alt,
@@ -238,10 +257,25 @@ def main() -> int:
         datetime_utc=dt,
         generate_nadir=False,
     )
-    save_patch("offnadir_raw", offnadir_raw_bundle)
 
-    offnadir_sunglint_bundle = add_sunglint(offnadir_raw_bundle, show_plot=False)
-    save_patch("offnadir_sunglint", offnadir_sunglint_bundle)
+    b_tex = dict(off_bundle)
+    b_tex["patch"] = off_bundle["texture_u8"]
+    save_patch("texture_offnadir_255", b_tex)
+
+    b_rad = dict(off_bundle)
+    b_rad["patch"] = off_bundle["radiance"]
+    save_patch("radiance_offnadir_npy", b_rad)
+
+    b_rad["patch"] = off_bundle["radiance_u8"]
+    save_patch("radiance_offnadir_255", b_rad)
+
+    b_ref = dict(off_bundle)
+    b_ref["patch"] = off_bundle["reflectance"]
+    save_patch("reflection_offnadir_npy", b_ref)
+
+    b_ref = dict(off_bundle)
+    b_ref["patch"] = off_bundle["reflectance_u8"]
+    save_patch("reflection_offnadir_255", b_ref)
 
     cleanup()
     return 0

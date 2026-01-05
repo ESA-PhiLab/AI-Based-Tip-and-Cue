@@ -21,17 +21,36 @@ from .functions.intermediate_functions import rmse, normalize, get_scene_charact
 from .functions import image_utils as iu
 from .functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy, compute_hit_mask_full
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_COCO_CACHE = {}
 
-ANNOTATIONS_PATH = os.path.normpath(os.path.join(
-    SCRIPT_DIR, "..", "dataset", "create_dataset", "final_annotations.json"
-))
+def load_coco_index_cached(anns_path: str):
+    """load_coco_index_cached(anns_path) -> tuple: Cache COCO index by path."""
+    p = os.path.normpath(str(anns_path))
+    if p not in _COCO_CACHE:
+        _COCO_CACHE[p] = load_coco_index(p)
+    return _COCO_CACHE[p]
 
-DATASET_ROOT = os.path.normpath(os.path.join(
-    SCRIPT_DIR, "..", "dataset", "whales_from_space"
-))
+def resolve_coco_file_name(img_path: str, by_file: dict) -> str:
+    """resolve_coco_file_name(img_path,by_file) -> str: Find COCO file_name key matching img_path."""
+    p = Path(str(img_path)).as_posix()
 
-BY_FILE, ANNS_BY_IMAGE_ID, IMAGES_BY_ID = load_coco_index(ANNOTATIONS_PATH)
+    # 1) Strong match: full suffix equals COCO key
+    for k in by_file.keys():
+        k_posix = Path(str(k)).as_posix()
+        if p.endswith(k_posix):
+            return str(k_posix)
+
+    # 2) Weaker match: unique basename match
+    base = Path(p).name
+    matches = [Path(str(k)).as_posix() for k in by_file.keys() if Path(str(k)).name == base]
+    if len(matches) == 1:
+        return matches[0]
+
+    raise KeyError(
+        "Image file_name not found in annotations for img_path="
+        f"{p}. Tried suffix match and basename match (matches={len(matches)})."
+    )
+
 
 
 def render_band_radiance(input_img_lin, dem_path, spd_path, sun_spd, sky_spd, satellite_local, target_local, sun_direction, sensor_characteristics, alpha, specular_weight):
@@ -283,7 +302,7 @@ def render_rgb_with_optional_glint(img_refl, dem_path, band_data, sun_spd_path, 
 
 
 
-def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc, sensor_characteristics, wave_properties, bools, dem_seed):
+def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc, sensor_characteristics, wave_properties, bools, dem_seed):
 
     # dr.set_flag(dr.JitFlag.Debug, True)
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -352,7 +371,8 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
 
     img_lin = iu.DN255_to_linear(img_rgb)
 
-    img_file_name_for_coco = os.path.relpath(img_path, start=DATASET_ROOT).replace("\\", "/")
+    BY_FILE, ANNS_BY_IMAGE_ID, IMAGES_BY_ID = load_coco_index_cached(str(anns_path))
+    img_file_name_for_coco = resolve_coco_file_name(img_path, BY_FILE)
 
     whale_mask = get_whale_mask_for_image(
         img_rgb_uint8=img_rgb,
@@ -492,6 +512,7 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         )
 
         radiance_glint[~black_mask_full] = 0.0
+        DN255_texture[~black_mask_full] = 0
         DN255_no_glint[~black_mask_full] = 0
         DN255_glint2[~black_mask_full] = 0
 
@@ -525,16 +546,16 @@ def generate_image(img_path, satellite, satellite_lat, satellite_lon, satellite_
         p = float(np.percentile(rho_glint[m], 99.5)) if np.any(m) else 1.0
         rho_disp = np.clip(rho_glint / (p + 1e-12), 0.0, 1.0)
 
-    if bools['plot_result'] == True:
+        if bools['plot_result'] == True:
 
-        fig = plt.figure(figsize=(22, 8))
-        fig.add_subplot(1, 5, 1).imshow(img_rgb);
-        plt.axis('off'); plt.title('original PNG')
-        fig.add_subplot(1, 5, 2).imshow(DN255_texture); plt.axis('off'); plt.title('reproject (constant light)')
-        fig.add_subplot(1, 5, 3).imshow(DN255_no_glint); plt.axis('off'); plt.title('render (sun, no glint)')
-        fig.add_subplot(1, 5, 4).imshow(DN255_glint2); plt.axis('off'); plt.title('render (sun + glint)')
-        fig.add_subplot(1, 5, 5).imshow(rho_disp); plt.axis('off'); plt.title('TOA reflectance')
-        plt.show()
+            fig = plt.figure(figsize=(22, 8))
+            fig.add_subplot(1, 5, 1).imshow(img_rgb);
+            plt.axis('off'); plt.title('original PNG')
+            fig.add_subplot(1, 5, 2).imshow(DN255_texture); plt.axis('off'); plt.title('reproject (constant light)')
+            fig.add_subplot(1, 5, 3).imshow(DN255_no_glint); plt.axis('off'); plt.title('render (sun, no glint)')
+            fig.add_subplot(1, 5, 4).imshow(DN255_glint2); plt.axis('off'); plt.title('render (sun + glint)')
+            fig.add_subplot(1, 5, 5).imshow(rho_disp); plt.axis('off'); plt.title('TOA reflectance')
+            plt.show()
 
 
 
@@ -581,6 +602,8 @@ if __name__ == "__main__":
     images_folder = PROJECT_ROOT / "dataset" / "whales_from_space"
     img_file = "Pelagos2016/PelagosIm2_FW_WV3_PS_20160619_B2.PNG"
     img_path = str(images_folder / img_file)
+    anns_folder = PROJECT_ROOT / "dataset" / "create_dataset"
+    anns_path = str(anns_folder / "final_annotations.json")
 
     outdir = THIS_DIR / "images"
     outdir.mkdir(parents=True, exist_ok=True)
@@ -604,7 +627,7 @@ if __name__ == "__main__":
             dt = datetime(2025, 6, 11, int(hour), int(minute), 0, tzinfo=timezone.utc)
 
             DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale = generate_image(
-                img_path, satellite,
+                img_path, anns_path, satellite,
                 sat_lat, sat_lon, sat_alt,
                 tgt_lat, tgt_lon, tgt_alt,
                 dt, sensor_characteristics, wave_properties, bools, seed_dem

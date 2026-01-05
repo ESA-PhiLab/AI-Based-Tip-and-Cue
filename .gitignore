@@ -37,11 +37,10 @@ output.log
 sim_output.xlsx
 simulation.mp4
 
-dataset/create_dataset/patch_raw/*
-dataset/create_dataset/nadir_raw/*
-dataset/create_dataset/offnadir_raw/*
-dataset/create_dataset/nadir_sunglint/*
-dataset/create_dataset/offnadir_sunglint/*
+dataset/create_dataset/patch_*
+dataset/create_dataset/radiance_*
+dataset/create_dataset/reflection_*
+dataset/create_dataset/texture_*
 dataset/create_dataset/_meta/*
 dataset/create_dataset/dataset_overview.xlsx
 

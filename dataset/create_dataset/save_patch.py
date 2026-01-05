@@ -15,9 +15,23 @@ DATASET_PATH = Path("dataset")
 CREATE_DATASET_DIR = DATASET_PATH / "create_dataset"
 
 TEMPLATE_JSON_CANDIDATES = [
-    CREATE_DATASET_DIR / "patch_raw" / "final_annotations.json",
+    CREATE_DATASET_DIR / "patch_raw_255" / "final_annotations.json",
     CREATE_DATASET_DIR / "final_annotations.json",
 ]
+
+ALLOWED_SPLITS = {
+    "patch_raw_255",
+    "texture_nadir_255",
+    "radiance_nadir_255",
+    "radiance_nadir_npy",
+    "reflection_nadir_255",
+    "reflection_nadir_npy",
+    "texture_offnadir_255",
+    "radiance_offnadir_255",
+    "radiance_offnadir_npy",
+    "reflection_offnadir_255",
+    "reflection_offnadir_npy",
+}
 
 
 def _load_json(path: Path) -> dict:
@@ -207,9 +221,9 @@ def _next_index_for_base(split_dir: Path, subdir: Path, base: str, ext: str) -> 
 def save_patch(split: str, patch_bundle: dict) -> dict:
     """save_patch(split,patch_bundle) -> dict: Save patch image + append COCO entry; mutates patch_bundle with patch_name."""
     split = str(split).lower().strip()
-    allowed = {"patch_raw", "nadir_raw", "nadir_sunglint", "offnadir_raw", "offnadir_sunglint"}
-    if split not in allowed:
-        raise ValueError(f"split must be one of: {sorted(allowed)}")
+
+    if split not in ALLOWED_SPLITS:
+        raise ValueError(f"split must be one of: {sorted(ALLOWED_SPLITS)}")
 
     split_dir = CREATE_DATASET_DIR / split
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -224,14 +238,15 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
     patch = patch_bundle.get("patch", None)
     if patch is None:
         raise ValueError("patch_bundle['patch'] missing")
-    patch_u8 = np.asarray(patch)
-    if patch_u8.dtype != np.uint8:
-        patch_u8 = np.clip(patch_u8, 0, 255).astype(np.uint8)
-    if patch_u8.ndim != 3 or patch_u8.shape[2] < 3:
-        raise ValueError(f"Expected patch RGB array (H,W,3), got {patch_u8.shape}")
 
-    # Naming: patch_raw creates a new patch_name; others reuse it
-    if split == "patch_raw":
+    arr = np.asarray(patch)
+    if arr.ndim != 3 or arr.shape[2] < 3:
+        raise ValueError(f"Expected array (H,W,3), got {arr.shape}")
+
+    is_float_payload = (arr.dtype != np.uint8) or (split.startswith("radiance_") or split.startswith("reflection_"))
+
+    # Naming: patch_raw_255 creates a new patch_name; others reuse it
+    if split == "patch_raw_255":
         base = Path(img_file).stem
         k = _next_index_for_base(split_dir, subdir, base=base, ext=ext)
         patch_name = f"{base}_{k}"
@@ -239,13 +254,21 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
     else:
         patch_name = patch_bundle.get("patch_name", None)
         if not isinstance(patch_name, str) or not patch_name:
-            raise ValueError(f"For {split}, patch_bundle must contain patch_name (set by save_patch('patch_raw', ...))")
+            raise ValueError(f"For {split}, patch_bundle must contain patch_name (set by save_patch('patch_raw_255', ...))")
 
-    out_rel = subdir / f"{patch_name}{ext}"
+    is_npy_split = split.endswith("_npy")
+    out_rel = (subdir / f"{patch_name}.npy") if is_npy_split else (subdir / f"{patch_name}{ext}")
+
     out_abs = split_dir / out_rel
     out_abs.parent.mkdir(parents=True, exist_ok=True)
 
-    Image.fromarray(patch_u8[:, :, :3], mode="RGB").save(out_abs)
+    if is_npy_split:
+        np.save(out_abs, arr[:, :, :3].astype(np.float32))
+    else:
+        patch_u8 = arr
+        if patch_u8.dtype != np.uint8:
+            patch_u8 = np.clip(patch_u8, 0, 255).astype(np.uint8)
+        Image.fromarray(patch_u8[:, :, :3], mode="RGB").save(out_abs)
 
     coco_path, coco = _ensure_coco(split)
     images = list(coco.get("images", []))
@@ -258,7 +281,7 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
         anns = [a for a in anns if a.get("image_id") not in existing_img_ids]
 
     new_image_id = int(max([int(x.get("id", 0)) for x in images] + [0]) + 1)
-    h, w = int(patch_u8.shape[0]), int(patch_u8.shape[1])
+    h, w = int(arr.shape[0]), int(arr.shape[1])
 
     img_info_src = patch_bundle.get("img_info", {})
     img_rec = dict(img_info_src) if isinstance(img_info_src, dict) else {}
@@ -269,16 +292,16 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
     images.append(img_rec)
 
     # Annotations:
-    if split == "patch_raw":
+    if split == "patch_raw_255":
         top_left = patch_bundle.get("top_left", None)
         patch_wh = patch_bundle.get("patch_wh", None)
         offset_xy = patch_bundle.get("offset_xy", (0, 0))
         anns_in = patch_bundle.get("anns", [])
 
         if not (isinstance(top_left, (tuple, list)) and len(top_left) == 2):
-            raise ValueError("patch_bundle['top_left'] must exist for patch_raw saving")
+            raise ValueError("patch_bundle['top_left'] must exist for patch_raw_255 saving")
         if not (isinstance(patch_wh, (tuple, list)) and len(patch_wh) == 2):
-            raise ValueError("patch_bundle['patch_wh'] must exist for patch_raw saving")
+            raise ValueError("patch_bundle['patch_wh'] must exist for patch_raw_255 saving")
         if not isinstance(anns_in, list):
             raise ValueError("patch_bundle['anns'] must be a list")
 

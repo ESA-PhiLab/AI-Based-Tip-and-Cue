@@ -38,7 +38,19 @@ def _rmtree_force(path: Path, retries: int = 5, delay: float = 0.5) -> None:
 
 def cleanup_previous_outputs(base: Path) -> None:
     """cleanup_previous_outputs(base) -> None: Remove old dataset outputs before a fresh run."""
-    for d in ["patch_raw", "nadir_raw", "nadir_sunglint", "offnadir_raw", "offnadir_sunglint"]:
+    for d in [
+    "patch_raw_255",
+    "texture_nadir_255",
+    "radiance_nadir_255",
+    "radiance_nadir_npy",
+    "reflection_nadir_255",
+    "reflection_nadir_npy",
+    "texture_offnadir_255",
+    "radiance_offnadir_255",
+    "radiance_offnadir_npy",
+    "reflection_offnadir_255",
+    "reflection_offnadir_npy",
+]:
         p = base / d
         if p.exists():
             _rmtree_force(p)

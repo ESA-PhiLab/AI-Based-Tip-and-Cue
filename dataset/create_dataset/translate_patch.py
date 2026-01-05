@@ -24,7 +24,7 @@ os.chdir(main_path)
 
 DATASET_PATH = Path("dataset")
 CREATE_DATASET_DIR = DATASET_PATH / "create_dataset"
-PATCH_DIR = CREATE_DATASET_DIR / "patch_raw"
+PATCH_DIR = CREATE_DATASET_DIR / "patch_raw_255"
 CSV_PATH = DATASET_PATH / "whales_from_space" / "WhaleFromSpaceDB_Whales.csv"
 
 DEFAULT_DATETIME_UTC = datetime(2025, 6, 11, 8, 0, 0, tzinfo=timezone.utc)
@@ -365,6 +365,20 @@ def _resolve_raw_patch_path(patch_bundle: dict) -> Path:
     ext = Path(img_file).suffix
     return PATCH_DIR / subdir / f"{patch_name}{ext}"
 
+ANNS_JSON_NAME = "final_annotations.json"
+
+def _resolve_patch_anns_path(patch_img_path: Path) -> Path:
+    """_resolve_patch_anns_path(patch_img_path) -> Path: Find patch_raw/.../final_annotations.json next to patch image."""
+    subdir = patch_img_path.parent.relative_to(PATCH_DIR)  # e.g. Pelagos2016/
+    p = PATCH_DIR / subdir / ANNS_JSON_NAME
+    if not p.is_file():
+        # fallback: global patch_raw/final_annotations.json (if you store it once)
+        p2 = PATCH_DIR / ANNS_JSON_NAME
+        if p2.is_file():
+            return p2
+        raise FileNotFoundError(f"Missing annotations json for patch: tried {p} and {p2}")
+    return p
+
 
 # =========================
 # Public API
@@ -385,6 +399,8 @@ def translate_image(patch_bundle: dict,
     img_path = _resolve_raw_patch_path(patch_bundle)
     if not img_path.is_file():
         raise FileNotFoundError(f"Missing patch file: {img_path}")
+
+    anns_path = _resolve_patch_anns_path(img_path)
 
     anns = patch_bundle.get("anns_patch", None)
     if not isinstance(anns, list):
@@ -519,8 +535,8 @@ def translate_image(patch_bundle: dict,
     else:
         bools['generate_nadir'] = False
 
-    DN255_translated, DN255_sunglint, _rad_sunglint, DN255_combined = generate_image(
-        str(img_path),
+    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale = generate_image(
+        str(img_path), str(anns_path),
         satellite,
         float(sat_lat), float(sat_lon), float(sat_alt),
         float(tgt_lat), float(tgt_lon), float(tgt_alt),
@@ -530,27 +546,37 @@ def translate_image(patch_bundle: dict,
         bools,
         dem_seed,
     )
-    if DN255_translated is None:
+
+    if DN255_texture is None:
         raise RuntimeError("Renderer returned None (dark hours).")
 
-    translated_u8 = to_uint8_rgb(DN255_translated)
-    sunglint_u8 = to_uint8_rgb(DN255_sunglint)
-    combined_u8 = to_uint8_rgb(DN255_combined)
+    translated_u8 = to_uint8_rgb(DN255_texture)
+    no_glint_u8 = to_uint8_rgb(DN255_no_glint) if DN255_no_glint is not None else np.zeros_like(translated_u8)
+    glint_u8 = to_uint8_rgb(DN255_glint) if DN255_glint is not None else np.zeros_like(translated_u8)
+
+    # reflectance display image is already float in [0,1]
+    rho_u8 = (np.clip(rho_disp, 0.0, 1.0) * 255.0).astype(np.uint8) if rho_disp is not None else np.zeros_like(translated_u8)
 
     off_overlay = draw_overlay_from_polys(Image.fromarray(translated_u8, mode="RGB").copy(), all_polys, boxes_off)
-    comb_overlay = None
-    if combined_u8 is not None:
-        comb_overlay = draw_overlay_from_polys(Image.fromarray(combined_u8, mode="RGB").copy(), all_polys, boxes_off)
+    glint_overlay = draw_overlay_from_polys(Image.fromarray(glint_u8, mode="RGB").copy(), all_polys, boxes_off) if DN255_glint is not None else None
+    rho_overlay = draw_overlay_from_polys(Image.fromarray(rho_u8, mode="RGB").copy(), all_polys, boxes_off) if rho_disp is not None else None
 
     if show_plot:
         fig2 = plt.figure(figsize=(18, 10))
-        fig2.add_subplot(1, 4, 1).imshow(orig_overlay); plt.axis("off"); plt.title("original + annotation")
-        fig2.add_subplot(1, 4, 2).imshow(off_overlay);  plt.axis("off"); plt.title("translated + annotation (per-instance)")
-        fig2.add_subplot(1, 4, 3).imshow(sunglint_u8 if sunglint_u8 is not None else np.zeros_like(translated_u8)); plt.axis("off"); plt.title("sun glint")
-        fig2.add_subplot(1, 4, 4).imshow(comb_overlay if comb_overlay is not None else np.zeros_like(translated_u8)); plt.axis("off"); plt.title("combined + translated")
+        fig2.add_subplot(1, 4, 1).imshow(orig_overlay);
+        plt.axis("off");
+        plt.title("original + annotation")
+        fig2.add_subplot(1, 4, 2).imshow(off_overlay);
+        plt.axis("off");
+        plt.title("translated + annotation (per-instance)")
+        fig2.add_subplot(1, 4, 3).imshow(glint_overlay if glint_overlay is not None else glint_u8);
+        plt.axis("off");
+        plt.title("sun glint")
+        fig2.add_subplot(1, 4, 4).imshow(rho_overlay if rho_overlay is not None else rho_u8);
+        plt.axis("off");
+        plt.title("TOA reflectance (scaled)")
         plt.tight_layout()
         plt.show()
-
 
     # ==========================================================
     # (D) Translate annotations, preserving keys exactly
@@ -568,31 +594,22 @@ def translate_image(patch_bundle: dict,
         translated_anns.append(a2)
 
     out = dict(patch_bundle)
-    out["patch"] = translated_u8              # image to save (raw, no overlay)
-    out["anns_patch"] = translated_anns       # anns to save in json
-    out["combined_u8"] = combined_u8          # used for sunglint (combined)
+    out["anns_patch"] = translated_anns
     out["render_resolution"] = int(render_resolution)
+
+    # texture (uint8 RGB)
+    out["texture_u8"] = translated_u8
+
+    # radiance (float32 HxWx3) + preview (uint8 RGB)
+    out["radiance"] = radiance_glint.astype(np.float32) if radiance_glint is not None else None
+    out["radiance_u8"] = glint_u8  # preview (already DN255)
+
+    # reflectance (float32 HxWx3) + preview (uint8 RGB)
+    out["reflectance"] = rho_glint.astype(np.float32) if rho_glint is not None else None
+    out["reflectance_u8"] = rho_u8  # preview made from rho_disp
+
+    out["black_mask_full"] = black_mask_full
+    out["scale"] = scale
+
     return out
 
-
-def add_sunglint(offnadir_bundle: dict, show_plot: bool = False) -> dict:
-    """add_sunglint(offnadir_bundle,show_plot) -> dict: Save combined image (4th plot), keep anns."""
-    combined_u8 = offnadir_bundle.get("combined_u8", None)
-    if combined_u8 is None:
-        raise ValueError("offnadir_bundle missing 'combined_u8'")
-
-    combined_u8 = np.asarray(combined_u8)
-    if combined_u8.dtype != np.uint8:
-        combined_u8 = np.clip(combined_u8, 0, 255).astype(np.uint8)
-
-    if show_plot:
-        plt.figure(figsize=(6, 6))
-        plt.imshow(combined_u8)
-        plt.axis("off")
-        plt.title("combined (saved for sunglint)")
-        plt.tight_layout()
-        plt.show()
-
-    out = dict(offnadir_bundle)
-    out["patch"] = combined_u8  # what save_patch("sunglint", ...) writes
-    return out
