@@ -218,6 +218,26 @@ def _next_index_for_base(split_dir: Path, subdir: Path, base: str, ext: str) -> 
         k += 1
     return k
 
+def _deg_tag(deg: float | int | None) -> str:
+    """_deg_tag(deg) -> str: Format angle rounded to nearest 5 deg as '_30deg'."""
+    if deg is None:
+        return ""
+    x = float(deg)
+    if not np.isfinite(x):
+        return ""
+
+    # round to nearest multiple of 5
+    x5 = int(round(x / 5.0) * 5)
+
+    return f"_{x5}deg"
+
+
+
+def _split_needs_offnadir_tag(split: str) -> bool:
+    """_split_needs_offnadir_tag(split) -> bool: True for offnadir output splits."""
+    return split.startswith(("texture_offnadir_", "radiance_offnadir_", "reflection_offnadir_"))
+
+
 
 def save_patch(split: str, patch_bundle: dict) -> dict:
     """save_patch(split,patch_bundle) -> dict: Save patch image + append COCO entry; mutates patch_bundle with patch_name."""
@@ -259,7 +279,12 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
             raise ValueError(f"For {split}, patch_bundle must contain patch_name (set by save_patch('patch_raw_255', ...))")
 
     is_npy_split = split.endswith("_npy")
-    out_rel = (subdir / f"{patch_name}.npy") if is_npy_split else (subdir / f"{patch_name}{ext}")
+
+    tag = ""
+    if _split_needs_offnadir_tag(split):
+        tag = _deg_tag(patch_bundle.get("offnadir_deg", None))
+
+    out_rel = (subdir / f"{patch_name}{tag}.npy") if is_npy_split else (subdir / f"{patch_name}{tag}{ext}")
 
     out_abs = split_dir / out_rel
     out_abs.parent.mkdir(parents=True, exist_ok=True)

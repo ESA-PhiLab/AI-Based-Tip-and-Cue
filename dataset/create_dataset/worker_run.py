@@ -287,10 +287,12 @@ def main() -> int:
     })
 
     b_tex = dict(off_bundle)
+    b_tex["offnadir_deg"] = off_bundle.get("offnadir_deg", None)
     b_tex["patch"] = off_bundle["texture_u8"]
     save_patch("texture_offnadir_255", b_tex)
 
     b_rad = dict(off_bundle)
+    b_rad["offnadir_deg"] = off_bundle.get("offnadir_deg", None)
     b_rad["patch"] = off_bundle["radiance"]
     save_patch("radiance_offnadir_npy", b_rad)
 
@@ -298,6 +300,7 @@ def main() -> int:
     save_patch("radiance_offnadir_255", b_rad)
 
     b_ref = dict(off_bundle)
+    b_ref["offnadir_deg"] = off_bundle.get("offnadir_deg", None)
     b_ref["patch"] = off_bundle["reflectance"]
     save_patch("reflection_offnadir_npy", b_ref)
 

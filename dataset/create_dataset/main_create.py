@@ -236,7 +236,6 @@ def run_dataset(n_runs: int,
 
             for ang in offnadir_angles:
 
-
                 rotation_angle_deg = float(rng_rot.choice([0, 90, 180, -90]))
 
                 crop_patch_seed_i = crop_patch_seed + run_idx
