@@ -9,6 +9,8 @@ import openpyxl
 FIELDS = [
     "result_name",
     "detection_id",
+    "offnadir_deg",
+    "offnadir_deg_round5",
     "cue_lat",
     "cue_lon",
     "cue_alt",
@@ -20,7 +22,7 @@ FIELDS = [
 
 
 def find_repo_root(start: Path) -> Path:
-    """Walk up from start to find project root containing '0_results/0_FINAL'; returns root path."""
+    """find_repo_root(start) -> Path: Walk up from start to find project root containing '0_results/0_FINAL'."""
     p = start.resolve()
     for parent in [p, *p.parents]:
         if (parent / "0_results" / "0_FINAL").is_dir():
@@ -29,20 +31,73 @@ def find_repo_root(start: Path) -> Path:
 
 
 def norm(s: Any) -> str:
-    """Normalize header cell to trimmed string; empty -> ''."""
+    """norm(s) -> str: Normalize header cell to trimmed string; empty -> ''."""
     return str(s).strip() if s is not None else ""
 
 
-def iter_img_rows(xlsx_path: Path) -> tuple[list[str], list[dict[str, Any]]]:
-    """Read all rows from sheet ' Img' (or 'Img'); returns (sheet_headers, list of row dicts by header)."""
+def norm_id(v: Any) -> Any:
+    """norm_id(v) -> Any: Normalize Excel-ish IDs so '1', 1, 1.0 match the same key."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return int(v)
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return int(v) if v.is_integer() else v
+    if isinstance(v, str):
+        s = v.strip()
+        if s == "":
+            return None
+        try:
+            f = float(s)
+            return int(f) if f.is_integer() else f
+        except Exception:
+            return s
+    return v
+
+
+def to_float(v: Any) -> float | None:
+    """to_float(v) -> float|None: Convert a value to float if possible; otherwise None."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return float(int(v))
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if s == "":
+            return None
+        try:
+            return float(s)
+        except Exception:
+            return None
+    return None
+
+
+def round_to_nearest_5(v: Any) -> int | None:
+    """round_to_nearest_5(v) -> int|None: Round numeric value to nearest 5 (0,5,10,...) using half-up behavior."""
+    x = to_float(v)
+    if x is None:
+        return None
+    # half-up rounding to nearest integer of (x/5), then *5
+    q = x / 5.0
+    rounded_q = int(q + 0.5) if q >= 0 else int(q - 0.5)
+    return int(rounded_q * 5)
+
+
+def iter_sheet_rows(xlsx_path: Path, sheet_candidates: tuple[str, ...]) -> tuple[list[str], list[dict[str, Any]]]:
+    """iter_sheet_rows(xlsx_path,sheet_candidates) -> tuple[list[str], list[dict[str,Any]]]: Read rows into dicts keyed by header."""
     wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
     try:
-        if " Img" in wb.sheetnames:
-            ws = wb[" Img"]
-        elif "Img" in wb.sheetnames:
-            ws = wb["Img"]
-        else:
-            raise KeyError(f"Sheet ' Img' (or 'Img') not found. Sheets: {wb.sheetnames}")
+        ws = None
+        for name in sheet_candidates:
+            if name in wb.sheetnames:
+                ws = wb[name]
+                break
+        if ws is None:
+            raise KeyError(f"Sheet not found. Tried {sheet_candidates}. Sheets: {wb.sheetnames}")
 
         rows = ws.iter_rows(values_only=True)
         header_row = next(rows, None)
@@ -68,8 +123,34 @@ def iter_img_rows(xlsx_path: Path) -> tuple[list[str], list[dict[str, Any]]]:
         wb.close()
 
 
+def iter_img_rows(xlsx_path: Path) -> tuple[list[str], list[dict[str, Any]]]:
+    """iter_img_rows(xlsx_path) -> tuple[list[str], list[dict[str,Any]]]: Read all rows from sheet ' Img' or 'Img'."""
+    return iter_sheet_rows(xlsx_path, (" Img", "Img"))
+
+
+def iter_combined_offnadir_map(xlsx_path: Path) -> dict[Any, Any]:
+    """iter_combined_offnadir_map(xlsx_path) -> dict[Any,Any]: Map detection_id -> offnadir_deg from sheet 'Combined'."""
+    _, combined_rows = iter_sheet_rows(xlsx_path, ("Combined", " combined", "COMBINED"))
+
+    det_cols = ("detection_id", "detectionId", "det_id", "id", "ID", "idx", "index")
+    out: dict[Any, Any] = {}
+    for i, row in enumerate(combined_rows, start=1):
+        det_id = None
+        for c in det_cols:
+            if c in row and row[c] is not None:
+                det_id = row[c]
+                break
+        if det_id is None:
+            det_id = i
+        key = norm_id(det_id)
+        if key is None:
+            continue
+        out[key] = row.get("offnadir_deg", None)
+    return out
+
+
 def choose_results_xlsx(folder: Path) -> Path | None:
-    """Pick the results Excel in a folder; returns path or None."""
+    """choose_results_xlsx(folder) -> Path|None: Pick the results Excel in a folder."""
     candidates = sorted(folder.glob("results_*.xlsx"))
     if candidates:
         return candidates[0]
@@ -78,14 +159,14 @@ def choose_results_xlsx(folder: Path) -> Path | None:
 
 
 def write_output_xlsx(out_path: Path, rows: list[list[Any]]) -> None:
-    """Write rows (including header row) to a new xlsx file."""
+    """write_output_xlsx(out_path,rows) -> None: Write rows (including header row) to a new xlsx file."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "all_results"
     for r in rows:
         ws.append(r)
 
-    for col_idx, name in enumerate(rows[0], start=1):
+    for col_idx, _name in enumerate(rows[0], start=1):
         ws.cell(row=1, column=col_idx).font = openpyxl.styles.Font(bold=True)
 
     ws.freeze_panes = "A2"
@@ -94,7 +175,7 @@ def write_output_xlsx(out_path: Path, rows: list[list[Any]]) -> None:
 
 
 def main() -> int:
-    """Aggregate all rows from ' Img' of each TC_1x1* results xlsx into one output xlsx."""
+    """main() -> int: Aggregate all rows from 'Img' of each TC_1x1* results xlsx into one output xlsx (adds offnadir columns)."""
     cwd = Path.cwd()
     root = find_repo_root(cwd)
     final_dir = root / "0_results" / "0_FINAL"
@@ -117,31 +198,38 @@ def main() -> int:
 
         try:
             _, img_rows = iter_img_rows(xlsx)
+            offnadir_map = iter_combined_offnadir_map(xlsx)
         except Exception as e:
             total_skipped_files += 1
             print(f"SKIP {d.name} ({xlsx.name}): {e}")
             continue
 
-        # detection_id: try to use a column if present; otherwise use sequential index per file (1..N).
+        det_cols = ("detection_id", "detectionId", "det_id", "id", "ID", "idx", "index")
+
         for i, row_dict in enumerate(img_rows, start=1):
             det_id = None
-            for cand in ("detection_id", "detectionId", "det_id", "id", "ID", "idx", "index"):
+            for cand in det_cols:
                 if cand in row_dict and row_dict[cand] is not None:
                     det_id = row_dict[cand]
                     break
             if det_id is None:
                 det_id = i
 
+            det_key = norm_id(det_id)
+            offnadir_deg = offnadir_map.get(det_key, offnadir_map.get(i, None))
+            offnadir_deg_round5 = round_to_nearest_5(offnadir_deg)
+
             out_row: list[Any] = []
             out_row.append(d.name)  # result_name
-
             out_row.append(det_id)  # detection_id
+            out_row.append(offnadir_deg)
+            out_row.append(offnadir_deg_round5)
 
-            for k in FIELDS[2:]:
+            for k in FIELDS[4:]:
                 v = row_dict.get(k, None)
                 if k != "t_datetime" and isinstance(v, str) and v.strip() == "":
                     v = None
-                if k != "t_datetime" and k in row_dict is False:
+                if k != "t_datetime" and (k in row_dict) is False:
                     missing_col_counts[k] += 1
                 out_row.append(v)
 
@@ -153,7 +241,7 @@ def main() -> int:
 
     print(f"Wrote {total_written} rows to: {out_path}")
     if total_skipped_files:
-        print(f"Skipped {total_skipped_files} folder(s) with no readable xlsx/' Img' sheet.")
+        print(f"Skipped {total_skipped_files} folder(s) with no readable xlsx/'Img'/'Combined' sheet.")
     return 0
 
 

@@ -15,6 +15,10 @@ import re
 from pathlib import Path
 from typing import Optional, Tuple, Any
 
+from pathlib import Path
+from typing import Iterable, Sequence
+
+
 # =========================
 # Windows-safe delete helpers
 # =========================
@@ -129,32 +133,72 @@ def _normalize_offnadir_angle(offnadir_angle: Any) -> float:
         raise ValueError(f"Could not parse offnadir_angle={offnadir_angle!r}. Use e.g. 10, 30, '10deg'.") from e
 
 
+from typing import Any, Optional
+from pathlib import Path
+
+
+def to_float(v: Any) -> float | None:
+    """to_float(v) -> float|None: Convert value to float if possible; otherwise None."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return float(int(v))
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if s == "":
+            return None
+        try:
+            return float(s)
+        except Exception:
+            return None
+    return None
+
+
+def round_to_nearest_5(v: Any) -> int | None:
+    """round_to_nearest_5(v) -> int|None: Round numeric value to nearest 5 (0,5,10,...) using half-up behavior."""
+    x = to_float(v)
+    if x is None:
+        return None
+    q = x / 5.0
+    rq = int(q + 0.5) if q >= 0 else int(q - 0.5)
+    return int(rq * 5)
+
+
 def pick_random_pose(xlsx_path: Path, pick_pose_seed: int, offnadir_angle: Optional[object] = None) -> tuple:
-    """pick_random_pose(xlsx_path,pick_pose_seed,offnadir_angle=None) -> tuple: Pick one random row (optionally filtered by off-nadir angle in result_name); returns result_name,detection_id,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,datetime_utc."""
+    """pick_random_pose(xlsx_path,pick_pose_seed,offnadir_angle=None) -> tuple: Pick one random row (optionally filtered by offnadir_deg_round5); returns result_name,detection_id,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,datetime_utc."""
+    import random
+
     random.seed(pick_pose_seed)
 
     header, rows = _load_excel_cache(xlsx_path)
     if not rows:
         raise ValueError("No data rows found in Excel file.")
 
-    if offnadir_angle is not None:
-        target_ang = _normalize_offnadir_angle(offnadir_angle)
+    if "offnadir_deg_round5" not in header:
+        raise KeyError("Required column 'offnadir_deg_round5' not found in Excel header.")
 
-        filtered = []
-        present_angles = set()
+    if offnadir_angle is not None:
+        target_ang = round_to_nearest_5(offnadir_angle)
+        if target_ang is None:
+            raise ValueError(f"offnadir_angle={offnadir_angle!r} is not numeric and cannot be rounded to nearest 5.")
+
+        idx_ang = header.index("offnadir_deg_round5")
+        filtered: list[tuple[Any, ...]] = []
+        present_angles: set[int] = set()
 
         for row in rows:
-            d_tmp = dict(zip(header, row))
-            ang = _extract_offnadir_angle_from_result_name(d_tmp.get("result_name"))
+            ang = round_to_nearest_5(row[idx_ang] if idx_ang < len(row) else None)
             if ang is not None:
                 present_angles.add(ang)
             if ang is not None and ang == target_ang:
                 filtered.append(row)
 
         if not filtered:
-            available = ", ".join(str(a).rstrip("0").rstrip(".") for a in sorted(present_angles)) or "(none found in result_name)"
+            available = ", ".join(str(a) for a in sorted(present_angles)) or "(none found in offnadir_deg_round5)"
             raise ValueError(
-                f"No rows match offnadir_angle={target_ang}deg (derived from result_name). Available angles: {available}."
+                f"No rows match offnadir_angle={target_ang}deg (using offnadir_deg_round5). Available angles: {available}."
             )
 
         rows = filtered
@@ -174,8 +218,7 @@ def pick_random_pose(xlsx_path: Path, pick_pose_seed: int, offnadir_angle: Optio
 
     return result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc
 
-from pathlib import Path
-from typing import Iterable, Sequence
+
 
 
 def count_images_in_subfolders(dataset_root: str | Path, allowed_ext: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")) -> int:
