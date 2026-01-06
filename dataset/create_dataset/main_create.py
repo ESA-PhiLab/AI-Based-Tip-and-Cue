@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 import shutil
 from typing import Iterator, List, Sequence
+import numpy as np
 
 from read_and_write_data import (
     cleanup_previous_outputs,
@@ -192,7 +193,6 @@ def run_one(i: int,
 
 
 def run_dataset(n_runs: int,
-                img_file: str,
                 render_resolution: int,
                 pick_img_seed: int,
                 crop_patch_seed: int,
@@ -202,8 +202,9 @@ def run_dataset(n_runs: int,
                 patch_parameters: dict,
                 poses_xlsx: Path,
                 overview_xlsx: Path,
-                script_dir: Path) -> None:
-    """run_dataset(...) -> None: Run workers, read meta, append to dataset_overview.xlsx."""
+                script_dir: Path,
+                balanced_offnadir: bool = False) -> None:
+    """run_dataset(...) -> None: Run workers, read meta, append to dataset_overview.xlsx; optional balanced off-nadir sampling."""
     if not poses_xlsx.is_file():
         raise FileNotFoundError(f"Missing poses file: {poses_xlsx}")
 
@@ -214,6 +215,76 @@ def run_dataset(n_runs: int,
     meta_dir = (script_dir / "_meta").resolve()
     meta_dir.mkdir(parents=True, exist_ok=True)
 
+    if balanced_offnadir:
+
+        offnadir_angles = np.arange(5, 65, 5)  # 5,10,...,60
+
+        run_idx = 0
+        for img_i in range(int(n_runs)):
+            pick_img_seed_i = pick_img_seed + img_i
+
+            whales_root = Path("dataset") / "whales_from_space"
+            img_file = load_image(pick_img_seed_i, whales_root)
+
+            for ang in offnadir_angles:
+                crop_patch_seed_i = crop_patch_seed + run_idx
+                dem_seed_i = dem_seed + run_idx
+                pick_pose_seed_i = pick_pose_seed + run_idx
+
+                result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc = pick_random_pose(
+                    poses_xlsx, pick_pose_seed=pick_pose_seed_i, offnadir_angle=float(ang)
+                )
+
+                meta_out = meta_dir / f"run_{run_idx:05d}.json"
+
+                print(f"\n ====================== Start new process {run_idx} ====================== \n")
+                print(f"Pose: sat=({sat_lat},{sat_lon},{sat_alt}) tgt=({tgt_lat},{tgt_lon},{tgt_alt}) dt={datetime_utc}")
+                print(f"Image: {img_file} | Offnadir request: {ang} deg")
+
+                run_one(
+                    i=run_idx,
+                    img_file=img_file,
+                    crop_patch_seed_i=crop_patch_seed_i,
+                    dem_seed_i=dem_seed_i,
+                    show_plot=show_plot,
+                    render_resolution=render_resolution,
+                    sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
+                    tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
+                    datetime_utc=datetime_utc,
+                    patch_parameters=patch_parameters,
+                    meta_out=meta_out,
+                )
+
+                meta = json.loads(meta_out.read_text(encoding="utf-8"))
+
+                append_run_rows(
+                    ws_patch=ws_patch,
+                    ws_off=ws_off,
+                    ws_ann=ws_ann,
+                    i=run_idx,
+                    img_file=img_file,
+                    result_name=result_name,
+                    detection_id=detection_id,
+                    pick_img_seed_i=pick_img_seed_i,
+                    crop_patch_seed_i=crop_patch_seed_i,
+                    dem_seed_i=dem_seed_i,
+                    pick_pose_seed_i=pick_pose_seed_i,
+                    sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
+                    tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
+                    datetime_utc=datetime_utc,
+                    meta=meta,
+                )
+
+                wb.save(overview_xlsx)
+                time.sleep(0.1)
+
+                run_idx += 1
+
+        wb.save(overview_xlsx)
+        wb.close()
+        return
+
+    # Option 1 (old behavior): one run per iteration, images advance by i, no offnadir filtering
     for i in range(int(n_runs)):
         pick_img_seed_i = pick_img_seed + i
         crop_patch_seed_i = crop_patch_seed + i
@@ -223,6 +294,9 @@ def run_dataset(n_runs: int,
         result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc = pick_random_pose(
             poses_xlsx, pick_pose_seed=pick_pose_seed_i
         )
+
+        whales_root = Path("dataset") / "whales_from_space"
+        img_file = load_image(pick_img_seed_i, whales_root)
 
         meta_out = meta_dir / f"run_{i:04d}.json"
 
@@ -271,24 +345,33 @@ def run_dataset(n_runs: int,
     wb.close()
 
 
+
 def main() -> None:
     """main() -> None: Configure and run dataset generation."""
     base = Path("dataset") / "create_dataset"
     cleanup_previous_outputs(base)
 
-    whales_root = Path("dataset") / "whales_from_space"
-    image_n = 2
-    img_file = load_image(image_n, whales_root)
+    render_resolution = 64 # 64 * 2
 
-    render_resolution = 124 # 64 * 2
-
-    pick_img_seed = 12
+    pick_img_seed_0 = 12
     crop_patch_seed = 42
     dem_seed = 1
     pick_pose_seed = 17
 
     show_plot = False
-    n_runs = 5
+    n_images = 5
+    balanced_offnadir = False  # False = random offnadir, loop by one, True = per-image angles 5..60
+
+    # mode_single options:
+    #   "full"      -> only full whales
+    #   "half"      -> only half whales
+    #   "ocean"     -> only ocean (no whales)
+    #   "full_half" -> full OR half whales
+    #   "all"       -> anything
+    #
+    # mode_multiple_allow_partial:
+    #   True  -> if multiple whales, allow other partial whales in the patch
+    #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
         "mode_single": "full",
@@ -304,10 +387,9 @@ def main() -> None:
     overview_xlsx = SCRIPT_DIR / "dataset_overview.xlsx"
 
     run_dataset(
-        n_runs=n_runs,
-        img_file=img_file,
+        n_runs=n_images,
         render_resolution=render_resolution,
-        pick_img_seed=pick_img_seed,
+        pick_img_seed=pick_img_seed_0,
         crop_patch_seed=crop_patch_seed,
         dem_seed=dem_seed,
         pick_pose_seed=pick_pose_seed,
@@ -316,6 +398,7 @@ def main() -> None:
         poses_xlsx=poses_xlsx,
         overview_xlsx=overview_xlsx,
         script_dir=SCRIPT_DIR,
+        balanced_offnadir=balanced_offnadir,
     )
 
     cleanup_meta_only(base)

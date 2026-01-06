@@ -10,6 +10,10 @@ from typing import Any
 
 import openpyxl
 
+import random
+import re
+from pathlib import Path
+from typing import Optional, Tuple, Any
 
 # =========================
 # Windows-safe delete helpers
@@ -91,18 +95,72 @@ def _load_excel_cache(xlsx_path: Path) -> tuple[list[str], list[list[Any]]]:
         wb.close()
 
 
-def pick_random_pose(xlsx_path: Path, pick_pose_seed: int) -> tuple:
-    """pick_random_pose(xlsx_path,pick_pose_seed) -> tuple: Pick one random row; returns result_name,detection_id,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,datetime_utc."""
+
+
+_OFFNADIR_RE = re.compile(r"(?P<ang>\d+(?:\.\d+)?)\s*deg", re.IGNORECASE)
+
+
+def _extract_offnadir_angle_from_result_name(result_name: Any) -> Optional[float]:
+    """_extract_offnadir_angle_from_result_name(result_name) -> Optional[float]: Extract angle in degrees from '...10deg...' style names; returns float or None."""
+    if result_name is None:
+        return None
+    m = _OFFNADIR_RE.search(str(result_name))
+    return float(m.group("ang")) if m else None
+
+
+def _normalize_offnadir_angle(offnadir_angle: Any) -> float:
+    """_normalize_offnadir_angle(offnadir_angle) -> float: Normalize input (e.g., 10, '10', '10deg', 10.0) into a float degrees value."""
+    if offnadir_angle is None:
+        raise ValueError("offnadir_angle is None; only call _normalize_offnadir_angle when an angle is provided.")
+
+    if isinstance(offnadir_angle, (int, float)):
+        return float(offnadir_angle)
+
+    s = str(offnadir_angle).strip().lower()
+    m = _OFFNADIR_RE.search(s)
+    if m:
+        return float(m.group("ang"))
+
+    # allow plain numeric strings like "10" or "10.0"
+    try:
+        return float(s)
+    except ValueError as e:
+        raise ValueError(f"Could not parse offnadir_angle={offnadir_angle!r}. Use e.g. 10, 30, '10deg'.") from e
+
+
+def pick_random_pose(xlsx_path: Path, pick_pose_seed: int, offnadir_angle: Optional[object] = None) -> tuple:
+    """pick_random_pose(xlsx_path,pick_pose_seed,offnadir_angle=None) -> tuple: Pick one random row (optionally filtered by off-nadir angle in result_name); returns result_name,detection_id,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,datetime_utc."""
     random.seed(pick_pose_seed)
 
     header, rows = _load_excel_cache(xlsx_path)
     if not rows:
         raise ValueError("No data rows found in Excel file.")
 
+    if offnadir_angle is not None:
+        target_ang = _normalize_offnadir_angle(offnadir_angle)
+
+        filtered = []
+        present_angles = set()
+
+        for row in rows:
+            d_tmp = dict(zip(header, row))
+            ang = _extract_offnadir_angle_from_result_name(d_tmp.get("result_name"))
+            if ang is not None:
+                present_angles.add(ang)
+            if ang is not None and ang == target_ang:
+                filtered.append(row)
+
+        if not filtered:
+            available = ", ".join(str(a).rstrip("0").rstrip(".") for a in sorted(present_angles)) or "(none found in result_name)"
+            raise ValueError(
+                f"No rows match offnadir_angle={target_ang}deg (derived from result_name). Available angles: {available}."
+            )
+
+        rows = filtered
+
     row = random.choice(rows)
     d = dict(zip(header, row))
 
-    # Your sheet uses cue_* for satellite pose, tgt_* for target pose
     result_name = d["result_name"]
     detection_id = d["detection_id"]
     sat_lat = float(d["cue_lat"])
@@ -111,11 +169,10 @@ def pick_random_pose(xlsx_path: Path, pick_pose_seed: int) -> tuple:
     tgt_lat = float(d["tgt_lat"])
     tgt_lon = float(d["tgt_lon"])
     tgt_alt = float(d["tgt_alt"])
-
-    # Keep as string; worker_run.py already parses ISO with Z
     datetime_utc = str(d["t_datetime"])
 
     return result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc
+
 
 
 # =========================
@@ -164,7 +221,7 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
             "dem_seed_i", "pick_pose_seed_i",
             "sat_lat", "sat_lon", "sat_alt",
             "tgt_lat", "tgt_lon", "tgt_alt",
-            "datetime_utc",
+            "datetime_utc", "offnadir_deg"
         ])
         ws_off.freeze_panes = "A2"
 
@@ -279,6 +336,12 @@ def append_run_rows(ws_patch,
 
     patch_name = meta.get("patch_name", "")
     label_simple = meta.get("label_simple", "")
+    offnadir_deg = meta.get("offnadir_deg", None)
+    if offnadir_deg is not None:
+        try:
+            offnadir_deg = float(offnadir_deg)
+        except Exception:
+            offnadir_deg = None
 
     ws_patch.append([
         i,
@@ -308,6 +371,7 @@ def append_run_rows(ws_patch,
         tgt_lon,
         tgt_alt,
         datetime_utc,
+        offnadir_deg
     ])
 
     anns_patch = meta.get("anns_patch", [])

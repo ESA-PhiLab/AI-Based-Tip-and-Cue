@@ -410,7 +410,7 @@ def translate_image(patch_bundle: dict,
     tex_h, tex_w = orig_rgb.shape[:2]
     orig_overlay = draw_overlay(Image.fromarray(orig_rgb, mode="RGB").copy(), anns)
 
-    satellite = get_satellite(str(img_path), str(CSV_PATH))
+    satellite = get_satellite(str(img_path), str(CSV_PATH), fixed_sat="WV3")
     gsd = get_spatial_res(str(img_path), str(CSV_PATH))
 
     dem_folder = main_path / "offnadir_imaging" / "create_DEM"
@@ -535,7 +535,7 @@ def translate_image(patch_bundle: dict,
     else:
         bools['generate_nadir'] = False
 
-    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale = generate_image(
+    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg = generate_image(
         str(img_path), str(anns_path),
         satellite,
         float(sat_lat), float(sat_lon), float(sat_alt),
@@ -610,6 +610,7 @@ def translate_image(patch_bundle: dict,
 
     out["black_mask_full"] = black_mask_full
     out["scale"] = scale
+    out["offnadir_deg"] = offnadir_deg
 
     return out
 

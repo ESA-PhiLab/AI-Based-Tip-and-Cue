@@ -362,7 +362,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
     if is_dark:
         print("Dark hours, no image possible")
-        return None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, offnadir_deg
 
     img_rgb = np.asarray(Image.open(img_path).convert('RGB'))
 
@@ -402,9 +402,11 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
     satellite_local, target_local, sun_direction, fov_deg, off_nadir_rad, azimuth_rad = get_scene_characteristics(
         satellite_ecef, target_ecef, sun_ecef, img_height, img_width, GSD)
 
+    offnadir_deg = off_nadir_rad * 180 / np.pi
+
     if bools['print_values']:
         print(f"\nFOV \t\t: {fov_deg:.5f} deg")
-        print(f"Off Nadir \t: {off_nadir_rad * 180 / np.pi:.2f} deg")
+        print(f"Off Nadir \t: {offnadir_deg:.2f} deg")
         print(f"Azimuth \t: {azimuth_rad * 180 / np.pi:.2f} deg\n")
 
     sensor_characteristics['fov_deg'] = fov_deg
@@ -438,7 +440,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         except Exception as e:
             if bools.get("print_values", False):
                 print(f"Failed to generate sun/sky SPD: {repr(e)}")
-            return None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None, None, offnadir_deg
 
         if bools['print_values']:
             print(f"Saved solar SPD to {sun_spd}\n")
@@ -557,11 +559,6 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
             fig.add_subplot(1, 5, 5).imshow(rho_disp); plt.axis('off'); plt.title('TOA reflectance')
             plt.show()
 
-
-
-
-
-
     else:
 
         off_nadir_image = render_projected_texture(img_lin, dem_path, satellite_local, target_local, sensor_characteristics)
@@ -586,7 +583,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
     dr.flush_malloc_cache()
     dr.flush_kernel_cache()
 
-    return DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, rho_glint, rho_disp, black_mask_full, scale
+    return DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg
 
 
 if __name__ == "__main__":
@@ -626,7 +623,7 @@ if __name__ == "__main__":
 
             dt = datetime(2025, 6, 11, int(hour), int(minute), 0, tzinfo=timezone.utc)
 
-            DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale = generate_image(
+            DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg = generate_image(
                 img_path, anns_path, satellite,
                 sat_lat, sat_lon, sat_alt,
                 tgt_lat, tgt_lon, tgt_alt,
