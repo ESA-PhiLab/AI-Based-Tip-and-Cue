@@ -77,6 +77,7 @@ def _run_worker(stage: str,
                 dem_seed_i: int,
                 show_plot: bool,
                 render_resolution: int,
+                rotation_angle_deg: float,
                 sat_lat: float, sat_lon: float, sat_alt: float,
                 tgt_lat: float, tgt_lon: float, tgt_alt: float,
                 datetime_utc: str,
@@ -119,6 +120,8 @@ def _run_worker(stage: str,
         "--mode_single", str(patch_parameters["mode_single"]),
         "--mode_multiple_allow_partial", "1" if bool(patch_parameters["mode_multiple_allow_partial"]) else "0",
         "--window_size", str(int(patch_parameters["window_size"])),
+        "--rotation_angle_deg", str(float(rotation_angle_deg)),
+
         "--nowhale_max_fraction", str(float(patch_parameters["nowhale_max_fraction"])),
         "--whale_min_fraction", str(float(patch_parameters["whale_min_fraction"])),
         "--half_fraction_low", str(float(patch_parameters["half_fraction_range"][0])),
@@ -143,6 +146,7 @@ def run_one(i: int,
             dem_seed_i: int,
             show_plot: bool,
             render_resolution: int,
+            rotation_angle_deg: float,
             sat_lat: float, sat_lon: float, sat_alt: float,
             tgt_lat: float, tgt_lon: float, tgt_alt: float,
             datetime_utc: str,
@@ -160,6 +164,7 @@ def run_one(i: int,
         dem_seed_i=dem_seed_i,
         show_plot=show_plot,
         render_resolution=render_resolution,
+        rotation_angle_deg=rotation_angle_deg,
         sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
         tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
         datetime_utc=datetime_utc,
@@ -183,6 +188,7 @@ def run_one(i: int,
         dem_seed_i=dem_seed_i,
         show_plot=show_plot,
         render_resolution=render_resolution,
+        rotation_angle_deg=rotation_angle_deg,
         sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
         tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
         datetime_utc=datetime_utc,
@@ -195,6 +201,7 @@ def run_one(i: int,
 def run_dataset(n_runs: int,
                 render_resolution: int,
                 pick_img_seed: int,
+                img_rot_seed: int,
                 crop_patch_seed: int,
                 dem_seed: int,
                 pick_pose_seed: int,
@@ -215,6 +222,8 @@ def run_dataset(n_runs: int,
     meta_dir = (script_dir / "_meta").resolve()
     meta_dir.mkdir(parents=True, exist_ok=True)
 
+    rng_rot = np.random.default_rng(img_rot_seed)
+
     if balanced_offnadir:
 
         offnadir_angles = np.arange(5, 65, 5)  # 5,10,...,60
@@ -227,6 +236,10 @@ def run_dataset(n_runs: int,
             img_file = load_image(pick_img_seed_i, whales_root)
 
             for ang in offnadir_angles:
+
+
+                rotation_angle_deg = float(rng_rot.choice([0, 90, 180, -90]))
+
                 crop_patch_seed_i = crop_patch_seed + run_idx
                 dem_seed_i = dem_seed + run_idx
                 pick_pose_seed_i = pick_pose_seed + run_idx
@@ -248,6 +261,7 @@ def run_dataset(n_runs: int,
                     dem_seed_i=dem_seed_i,
                     show_plot=show_plot,
                     render_resolution=render_resolution,
+                    rotation_angle_deg=rotation_angle_deg,
                     sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
                     tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
                     datetime_utc=datetime_utc,
@@ -284,12 +298,14 @@ def run_dataset(n_runs: int,
         wb.close()
         return
 
-    # Option 1 (old behavior): one run per iteration, images advance by i, no offnadir filtering
+    # Option 1: one run per iteration, images advance by i, no offnadir filtering
     for i in range(int(n_runs)):
         pick_img_seed_i = pick_img_seed + i
         crop_patch_seed_i = crop_patch_seed + i
         dem_seed_i = dem_seed + i
         pick_pose_seed_i = pick_pose_seed + i
+
+        rotation_angle_deg = float(rng_rot.choice([0, 90, 180, -90]))
 
         result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc = pick_random_pose(
             poses_xlsx, pick_pose_seed=pick_pose_seed_i
@@ -311,6 +327,7 @@ def run_dataset(n_runs: int,
             dem_seed_i=dem_seed_i,
             show_plot=show_plot,
             render_resolution=render_resolution,
+            rotation_angle_deg=rotation_angle_deg,
             sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
             tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
             datetime_utc=datetime_utc,
@@ -357,10 +374,11 @@ def main() -> None:
     crop_patch_seed = 42
     dem_seed = 1
     pick_pose_seed = 17
+    img_rot_seed = 10
 
     show_plot = False
     n_images = 5
-    balanced_offnadir = False  # False = random offnadir, loop by one, True = per-image angles 5..60
+    balanced_offnadir = True  # False = random offnadir, loop by one, True = per-image angles 5..60
 
     # mode_single options:
     #   "full"      -> only full whales
@@ -392,6 +410,7 @@ def main() -> None:
         pick_img_seed=pick_img_seed_0,
         crop_patch_seed=crop_patch_seed,
         dem_seed=dem_seed,
+        img_rot_seed=img_rot_seed,
         pick_pose_seed=pick_pose_seed,
         show_plot=show_plot,
         patch_parameters=patch_parameters,

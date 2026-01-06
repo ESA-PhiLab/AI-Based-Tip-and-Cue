@@ -337,6 +337,7 @@ def append_run_rows(ws_patch,
     patch_name = meta.get("patch_name", "")
     label_simple = meta.get("label_simple", "")
     offnadir_deg = meta.get("offnadir_deg", None)
+
     if offnadir_deg is not None:
         try:
             offnadir_deg = float(offnadir_deg)

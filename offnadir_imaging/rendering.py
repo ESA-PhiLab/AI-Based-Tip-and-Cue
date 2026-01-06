@@ -362,7 +362,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
     if is_dark:
         print("Dark hours, no image possible")
-        return None, None, None, None, None, None, None, None, offnadir_deg
+        return None, None, None, None, None, None, None, None, None
 
     img_rgb = np.asarray(Image.open(img_path).convert('RGB'))
 
@@ -447,8 +447,6 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
         if bools['print_values']:
             print(f"Generate off nadir image\n")
-
-
 
         off_nadir_image = render_projected_texture(img_lin, dem_path, satellite_local, target_local, sensor_characteristics)
 

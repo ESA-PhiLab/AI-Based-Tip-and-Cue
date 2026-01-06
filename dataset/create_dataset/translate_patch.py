@@ -7,6 +7,10 @@ import numpy as np
 import mitsuba as mi
 from PIL import Image, ImageDraw
 from matplotlib import pyplot as plt
+import tempfile
+import uuid
+
+import json
 
 from offnadir_imaging.rendering import generate_image
 from offnadir_imaging.create_DEM.create_dummy_DEM import get_DEM
@@ -379,6 +383,133 @@ def _resolve_patch_anns_path(patch_img_path: Path) -> Path:
         raise FileNotFoundError(f"Missing annotations json for patch: tried {p} and {p2}")
     return p
 
+def _normalize_rotation_angle(rotation_angle_deg: float) -> int:
+    """_normalize_rotation_angle(rotation_angle_deg) -> int: Normalize to one of {0,90,180,-90}."""
+    a = int(round(float(rotation_angle_deg)))
+    a = ((a + 180) % 360) - 180  # map to [-180,180)
+    if a == -180:
+        a = 180
+    if a not in (0, 90, 180, -90):
+        raise ValueError("rotation_angle_deg must be one of {0, 90, 180, -90}.")
+    return a
+
+
+def _rotate_xy(x: float, y: float, w: int, h: int, angle: int) -> tuple[float, float]:
+    """_rotate_xy(x,y,w,h,angle) -> (x2,y2): Rotate a point around image origin for multiples of 90 deg."""
+    if angle == 0:
+        return x, y
+    if angle == 90:      # CCW
+        return y, (w - 1) - x
+    if angle == -90:     # CW
+        return (h - 1) - y, x
+    # 180
+    return (w - 1) - x, (h - 1) - y
+
+
+def _rotated_size(w: int, h: int, angle: int) -> tuple[int, int]:
+    """_rotated_size(w,h,angle) -> (w2,h2): Output image size after rotation."""
+    if angle in (90, -90):
+        return h, w
+    return w, h
+
+
+def _rotate_segmentation(segmentation: list, w: int, h: int, angle: int) -> list:
+    """_rotate_segmentation(segmentation,w,h,angle) -> list: Rotate COCO polygon segmentation."""
+    if not isinstance(segmentation, list):
+        return segmentation
+
+    out = []
+    for poly in segmentation:
+        if not isinstance(poly, list) or len(poly) < 6:
+            out.append(poly)
+            continue
+        flat = []
+        for i in range(0, len(poly), 2):
+            x, y = float(poly[i]), float(poly[i + 1])
+            x2, y2 = _rotate_xy(x, y, w, h, angle)
+            flat.extend([x2, y2])
+        out.append(flat)
+    return out
+
+
+def _rotate_bbox_xywh(bbox: list, w: int, h: int, angle: int) -> list:
+    """_rotate_bbox_xywh(bbox,w,h,angle) -> list: Rotate bbox [x,y,w,h] and return new axis-aligned bbox."""
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return bbox
+
+    x, y, bw, bh = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+    corners = [(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh)]
+    rc = [_rotate_xy(cx, cy, w, h, angle) for (cx, cy) in corners]
+
+    xs = [p[0] for p in rc]
+    ys = [p[1] for p in rc]
+    x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+    return [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
+
+
+def rotate_image_and_annotations(orig_img_u8: np.ndarray, anns: list, rotation_angle_deg: float) -> tuple[np.ndarray, list]:
+    """rotate_image_and_annotations(orig_img_u8,anns,rotation_angle_deg) -> (img_u8,anns2): Rotate image and COCO anns by 0/90/180/-90."""
+    angle = _normalize_rotation_angle(rotation_angle_deg)
+    if angle == 0:
+        return orig_img_u8, anns
+
+    h, w = orig_img_u8.shape[:2]
+
+    # numpy rotations are CCW for k>0
+    if angle == 90:
+        img2 = np.rot90(orig_img_u8, k=1)
+    elif angle == -90:
+        img2 = np.rot90(orig_img_u8, k=3)
+    else:  # 180
+        img2 = np.rot90(orig_img_u8, k=2)
+
+    anns2 = []
+    for ann in anns:
+        if not isinstance(ann, dict):
+            continue
+        a2 = dict(ann)
+        if "segmentation" in a2:
+            a2["segmentation"] = _rotate_segmentation(a2.get("segmentation", []), w, h, angle)
+        if "bbox" in a2:
+            a2["bbox"] = _rotate_bbox_xywh(a2.get("bbox", None), w, h, angle)
+        anns2.append(a2)
+
+    return img2, anns2
+
+
+def _write_temp_rotated_inputs(rot_img_u8: np.ndarray, rot_anns: list, base_coco_path: Path) -> tuple[Path, Path]:
+    """_write_temp_rotated_inputs(rot_img_u8,rot_anns,base_coco_path) -> (img_path,anns_path): Write temp rotated image + COCO json."""
+    coco_in = json.loads(Path(base_coco_path).read_text(encoding="utf-8"))
+
+    h2, w2 = rot_img_u8.shape[:2]
+    tmp_dir = Path(tempfile.gettempdir()) / "ai_tc_rotate"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    tag = uuid.uuid4().hex[:10]
+    img_name = f"rot_{tag}.png"
+    img_path = tmp_dir / img_name
+    Image.fromarray(rot_img_u8, mode="RGB").save(img_path)
+
+    coco_out = {
+        "info": coco_in.get("info", {}),
+        "licenses": coco_in.get("licenses", []),
+        "categories": coco_in.get("categories", []),
+        "images": [{"id": 1, "file_name": img_name, "width": int(w2), "height": int(h2)}],
+        "annotations": [],
+    }
+
+    for a in rot_anns:
+        if not isinstance(a, dict):
+            continue
+        a2 = dict(a)
+        a2["image_id"] = 1
+        coco_out["annotations"].append(a2)
+
+    anns_path = tmp_dir / f"rot_{tag}.json"
+    anns_path.write_text(json.dumps(coco_out, indent=2), encoding="utf-8")
+    return img_path, anns_path
+
+
 
 # =========================
 # Public API
@@ -390,7 +521,8 @@ def translate_image(patch_bundle: dict,
                        dem_seed: int,
                        show_plot: bool = False,
                        datetime_utc: datetime | None = None,
-                       generate_nadir: bool = False) -> dict:
+                       generate_nadir: bool = False,
+                       rotation_angle_deg: float = 0.0) -> dict:
 
     """translate_image(patch_bundle,render_resolution,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,show_plot,datetime_utc) -> dict: Render offnadir + translate anns."""
     if not isinstance(patch_bundle, dict):
@@ -407,18 +539,27 @@ def translate_image(patch_bundle: dict,
         raise ValueError("patch_bundle['anns_patch'] missing. Call save_patch('nadir', patch_bundle) before translate_image.")
 
     orig_rgb = np.asarray(Image.open(img_path).convert("RGB"), dtype=np.uint8)
-    tex_h, tex_w = orig_rgb.shape[:2]
-    orig_overlay = draw_overlay(Image.fromarray(orig_rgb, mode="RGB").copy(), anns)
+
+    rot_rgb, rot_anns = rotate_image_and_annotations(orig_rgb, anns, rotation_angle_deg=float(rotation_angle_deg))
+    tex_h, tex_w = rot_rgb.shape[:2]
+    orig_overlay = draw_overlay(Image.fromarray(rot_rgb, mode="RGB").copy(), rot_anns)
+
+    # write rotated inputs for generate_image (and for functions that read the image file)
+    rot_img_path, rot_anns_path = _write_temp_rotated_inputs(rot_rgb, rot_anns, Path(anns_path))
 
     satellite = get_satellite(str(img_path), str(CSV_PATH), fixed_sat="WV3")
     gsd = get_spatial_res(str(img_path), str(CSV_PATH))
+
+    # from here on, use rotated anns in-memory too
+    anns = rot_anns
 
     dem_folder = main_path / "offnadir_imaging" / "create_DEM"
     dem_tiff_path = str(dem_folder / "input_dem_WV.tiff")
     dem_obj_path = str(dem_folder / "dem_mesh_WV.obj")
 
-    get_DEM(str(img_path), dem_tiff_path, gsd, WAVE_PROPERTIES, random_seed=int(dem_seed), waves=True, curvature=True, plot_DEM=False)
-    convert_DEM(str(img_path), dem_tiff_path, dem_obj_path, gsd, scale_km=False, print_output=False, plot_DEM=False)
+    get_DEM(str(rot_img_path), dem_tiff_path, gsd, WAVE_PROPERTIES, random_seed=int(dem_seed), waves=True, curvature=True, plot_DEM=False)
+    convert_DEM(str(rot_img_path), dem_tiff_path, dem_obj_path, gsd, scale_km=False, print_output=False, plot_DEM=False)
+
     _ = get_band_data(satellite, str(main_path / "offnadir_imaging" / "spd_files"))
 
     dt = datetime_utc if datetime_utc is not None else DEFAULT_DATETIME_UTC
@@ -536,7 +677,7 @@ def translate_image(patch_bundle: dict,
         bools['generate_nadir'] = False
 
     DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg = generate_image(
-        str(img_path), str(anns_path),
+        str(rot_img_path), str(rot_anns_path),
         satellite,
         float(sat_lat), float(sat_lon), float(sat_alt),
         float(tgt_lat), float(tgt_lon), float(tgt_alt),
@@ -611,6 +752,12 @@ def translate_image(patch_bundle: dict,
     out["black_mask_full"] = black_mask_full
     out["scale"] = scale
     out["offnadir_deg"] = offnadir_deg
+
+    try:
+        Path(rot_img_path).unlink(missing_ok=True)
+        Path(rot_anns_path).unlink(missing_ok=True)
+    except Exception:
+        pass
 
     return out
 

@@ -48,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mode_single", type=str, default="full")
     p.add_argument("--mode_multiple_allow_partial", type=int, default=0)
     p.add_argument("--window_size", type=int, default=64)
+    p.add_argument("--rotation_angle_deg", type=float, default=0.0)
+
     p.add_argument("--nowhale_max_fraction", type=float, default=0.10)
     p.add_argument("--whale_min_fraction", type=float, default=0.99)
     p.add_argument("--half_fraction_low", type=float, default=0.20)
@@ -213,6 +215,7 @@ def main() -> int:
             show_plot=show_plot,
             datetime_utc=dt,
             generate_nadir=True,
+            rotation_angle_deg=args.rotation_angle_deg
         )
 
         # save texture
@@ -256,6 +259,7 @@ def main() -> int:
         show_plot=show_plot,
         datetime_utc=dt,
         generate_nadir=False,
+        rotation_angle_deg=args.rotation_angle_deg
     )
 
     b_tex = dict(off_bundle)
