@@ -21,6 +21,7 @@ TEMPLATE_JSON_CANDIDATES = [
 
 ALLOWED_SPLITS = {
     "patch_raw_255",
+    "patch_raw_rot_255",
     "texture_nadir_255",
     "radiance_nadir_255",
     "radiance_nadir_npy",
@@ -246,7 +247,8 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
     is_float_payload = (arr.dtype != np.uint8) or (split.startswith("radiance_") or split.startswith("reflection_"))
 
     # Naming: patch_raw_255 creates a new patch_name; others reuse it
-    if split == "patch_raw_255":
+    # Naming: patch_raw_255 and patch_raw_rot_255 create a new patch_name; others reuse it
+    if split in ("patch_raw_255", "patch_raw_rot_255"):
         base = Path(img_file).stem
         k = _next_index_for_base(split_dir, subdir, base=base, ext=ext)
         patch_name = f"{base}_{k}"
@@ -292,16 +294,17 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
     images.append(img_rec)
 
     # Annotations:
-    if split == "patch_raw_255":
+    # Annotations:
+    if split in ("patch_raw_255", "patch_raw_rot_255"):
         top_left = patch_bundle.get("top_left", None)
         patch_wh = patch_bundle.get("patch_wh", None)
         offset_xy = patch_bundle.get("offset_xy", (0, 0))
         anns_in = patch_bundle.get("anns", [])
 
         if not (isinstance(top_left, (tuple, list)) and len(top_left) == 2):
-            raise ValueError("patch_bundle['top_left'] must exist for patch_raw_255 saving")
+            raise ValueError("patch_bundle['top_left'] must exist for raw saving")
         if not (isinstance(patch_wh, (tuple, list)) and len(patch_wh) == 2):
-            raise ValueError("patch_bundle['patch_wh'] must exist for patch_raw_255 saving")
+            raise ValueError("patch_bundle['patch_wh'] must exist for raw saving")
         if not isinstance(anns_in, list):
             raise ValueError("patch_bundle['anns'] must be a list")
 

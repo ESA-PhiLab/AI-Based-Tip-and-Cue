@@ -44,6 +44,7 @@ def cleanup_previous_outputs(base: Path) -> None:
     """cleanup_previous_outputs(base) -> None: Remove old dataset outputs before a fresh run."""
     for d in [
     "patch_raw_255",
+    "patch_raw_rot_255",
     "texture_nadir_255",
     "radiance_nadir_255",
     "radiance_nadir_npy",
@@ -173,6 +174,27 @@ def pick_random_pose(xlsx_path: Path, pick_pose_seed: int, offnadir_angle: Optio
 
     return result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc
 
+from pathlib import Path
+from typing import Iterable, Sequence
+
+
+def count_images_in_subfolders(dataset_root: str | Path, allowed_ext: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")) -> int:
+    """count_images_in_subfolders(dataset_root,allowed_ext) -> int: Count images only inside first-level subfolders of dataset_root."""
+    root = Path(dataset_root)
+    if not root.is_dir():
+        raise FileNotFoundError(f"Dataset root not found: {root}")
+
+    allowed = {e.lower() for e in allowed_ext}
+    total = 0
+
+    for sub in root.iterdir():
+        if not sub.is_dir():
+            continue
+        for f in sub.iterdir():
+            if f.is_file() and f.suffix.lower() in allowed:
+                total += 1
+
+    return total
 
 
 # =========================
@@ -209,7 +231,7 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
             "pick_img_seed_i", "crop_patch_seed_i",
             "patch_name", "label_simple",
             "top_left_x", "top_left_y",
-            "offset_x", "offset_y",
+            "offset_x", "offset_y", "rotation_angle_deg",
             "fracs_json",
         ])
         ws_patch.freeze_panes = "A2"
@@ -337,12 +359,19 @@ def append_run_rows(ws_patch,
     patch_name = meta.get("patch_name", "")
     label_simple = meta.get("label_simple", "")
     offnadir_deg = meta.get("offnadir_deg", None)
+    rotation_angle_deg = meta.get("rotation_angle_deg", None)
 
     if offnadir_deg is not None:
         try:
             offnadir_deg = float(offnadir_deg)
         except Exception:
             offnadir_deg = None
+
+    if rotation_angle_deg is not None:
+        try:
+            rotation_angle_deg = float(rotation_angle_deg)
+        except Exception:
+            rotation_angle_deg = None
 
     ws_patch.append([
         i,
@@ -357,6 +386,7 @@ def append_run_rows(ws_patch,
         top_left[1] if isinstance(top_left, list) and len(top_left) == 2 else None,
         offset_xy[0] if isinstance(offset_xy, list) and len(offset_xy) == 2 else None,
         offset_xy[1] if isinstance(offset_xy, list) and len(offset_xy) == 2 else None,
+        rotation_angle_deg,
         fracs_json,
     ])
 

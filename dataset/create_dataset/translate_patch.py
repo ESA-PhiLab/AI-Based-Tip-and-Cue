@@ -511,6 +511,36 @@ def _write_temp_rotated_inputs(rot_img_u8: np.ndarray, rot_anns: list, base_coco
 
 
 
+import numpy as np
+
+
+def rotate_raw_patch_bundle(patch_bundle: dict, rotation_angle_deg: float) -> dict:
+    """rotate_raw_patch_bundle_for_saving(patch_bundle,rotation_angle_deg) -> dict: Rotate patch + raw anns for save_patch('patch_raw_rot_255')."""
+    if "patch" not in patch_bundle:
+        raise KeyError("patch_bundle['patch'] missing")
+    if "anns" not in patch_bundle or not isinstance(patch_bundle["anns"], list):
+        raise KeyError("patch_bundle['anns'] missing (expected raw image-space COCO anns)")
+
+    patch = np.asarray(patch_bundle["patch"])
+    if patch.ndim != 3 or patch.shape[2] < 3:
+        raise ValueError(f"patch_bundle['patch'] must be HxWx3, got shape={patch.shape}")
+
+    rot_patch, rot_anns = rotate_image_and_annotations(
+        orig_img_u8=patch.astype(np.uint8),
+        anns=patch_bundle["anns"],
+        rotation_angle_deg=float(rotation_angle_deg),
+    )
+
+    out = dict(patch_bundle)
+    out["patch"] = rot_patch
+    out["anns"] = rot_anns
+    out["rotation_angle_deg"] = float(rotation_angle_deg)
+    out.pop("patch_name", None)     # ensure save_patch creates a new name for the rot split
+    out.pop("anns_patch", None)     # ensure save_patch re-derives patch-local anns_patch
+    return out
+
+
+
 # =========================
 # Public API
 # =========================
@@ -752,6 +782,7 @@ def translate_image(patch_bundle: dict,
     out["black_mask_full"] = black_mask_full
     out["scale"] = scale
     out["offnadir_deg"] = offnadir_deg
+    out["rotation_angle_deg"] = rotation_angle_deg
 
     try:
         Path(rot_img_path).unlink(missing_ok=True)

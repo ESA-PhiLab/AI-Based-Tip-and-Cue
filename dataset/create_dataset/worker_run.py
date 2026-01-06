@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 from create_patch import generate_patch
 from save_patch import save_patch
-from translate_patch import translate_image
+from translate_patch import translate_image, rotate_raw_patch_bundle
 
 
 def cleanup() -> None:
@@ -101,8 +101,9 @@ def write_meta(meta_out: str,
                label_simple: str,
                half_fraction_range: tuple[float, float],
                whale_min_fraction: float,
-               nowhale_max_fraction: float) -> None:
-    """write_meta(meta_out,patch_bundle,label_simple,half_fraction_range,whale_min_fraction,nowhale_max_fraction) -> None: Write per-run patch outputs."""
+               nowhale_max_fraction: float,
+               rotation_angle_deg: float) -> None:
+    """write_meta(meta_out,patch_bundle,label_simple,half_fraction_range,whale_min_fraction,nowhale_max_fraction,rotation_angle_deg) -> None: Write per-run patch outputs."""
     anns_patch = patch_bundle.get("anns_patch", patch_bundle.get("anns", []))
     anns_patch_rows = [ann_to_row_dict(a) for a in anns_patch] if isinstance(anns_patch, list) else []
 
@@ -112,6 +113,7 @@ def write_meta(meta_out: str,
         "top_left": list(patch_bundle.get("top_left", (None, None))),
         "fracs": patch_bundle.get("fracs", []),
         "offset_xy": list(patch_bundle.get("offset_xy", (None, None))),
+        "rotation_angle_deg": float(rotation_angle_deg),
         "anns_patch": anns_patch_rows,
         "label_thresholds": {
             "nowhale_max_fraction": float(nowhale_max_fraction),
@@ -123,6 +125,17 @@ def write_meta(meta_out: str,
     out_path = Path(meta_out).expanduser()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+def update_meta_file(meta_out: str, updates: dict) -> None:
+    """update_meta_file(meta_out,updates) -> None: Load meta_out JSON, update keys, write back."""
+    p = Path(meta_out)
+    if p.is_file():
+        meta = json.loads(p.read_text(encoding="utf-8"))
+    else:
+        meta = {}
+    meta.update(updates)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
 
 def load_patch_bundle_from_patchraw(img_file: str, patch_name: str) -> dict:
@@ -190,6 +203,9 @@ def main() -> int:
 
         save_patch("patch_raw_255", patch_bundle)
 
+        b_rot = rotate_raw_patch_bundle(patch_bundle, args.rotation_angle_deg)
+        save_patch("patch_raw_rot_255", b_rot)
+
         label_simple = classify_label(
             fracs=list(patch_bundle.get("fracs", [])) if isinstance(patch_bundle.get("fracs", []), list) else [],
             whale_min_fraction=float(args.whale_min_fraction),
@@ -204,6 +220,7 @@ def main() -> int:
             half_fraction_range=half_range,
             whale_min_fraction=float(args.whale_min_fraction),
             nowhale_max_fraction=float(args.nowhale_max_fraction),
+            rotation_angle_deg=float(args.rotation_angle_deg),
         )
 
         nadir_bundle = translate_image(
@@ -217,6 +234,8 @@ def main() -> int:
             generate_nadir=True,
             rotation_angle_deg=args.rotation_angle_deg
         )
+
+
 
         # save texture
         b_tex = dict(nadir_bundle)
@@ -261,6 +280,11 @@ def main() -> int:
         generate_nadir=False,
         rotation_angle_deg=args.rotation_angle_deg
     )
+
+    update_meta_file(args.meta_out, {
+        "offnadir_deg": float(off_bundle.get("offnadir_deg", 0.0)) if off_bundle.get("offnadir_deg", None) is not None else None,
+        "rotation_angle_deg": float(args.rotation_angle_deg),
+    })
 
     b_tex = dict(off_bundle)
     b_tex["patch"] = off_bundle["texture_u8"]

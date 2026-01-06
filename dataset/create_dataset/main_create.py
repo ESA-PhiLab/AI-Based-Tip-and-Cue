@@ -13,14 +13,13 @@ from read_and_write_data import (
     cleanup_meta_only,
     open_overview_book,
     append_run_rows,
-    pick_random_pose,
+    pick_random_pose, count_images_in_subfolders
 )
 
 main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-
 
 def iter_images_round_robin(dataset_root: Path,
                             allowed_ext: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")) -> Iterator[Path]:
@@ -377,7 +376,8 @@ def main() -> None:
     img_rot_seed = 10
 
     show_plot = False
-    n_images = 5
+    n_images = 1 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
+
     balanced_offnadir = True  # False = random offnadir, loop by one, True = per-image angles 5..60
 
     # mode_single options:
