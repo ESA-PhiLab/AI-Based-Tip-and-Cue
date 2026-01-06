@@ -19,6 +19,12 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
+from typing import Any, Optional
+from pathlib import Path
+import random
+
+
+
 # =========================
 # Windows-safe delete helpers
 # =========================
@@ -133,9 +139,6 @@ def _normalize_offnadir_angle(offnadir_angle: Any) -> float:
         raise ValueError(f"Could not parse offnadir_angle={offnadir_angle!r}. Use e.g. 10, 30, '10deg'.") from e
 
 
-from typing import Any, Optional
-from pathlib import Path
-
 
 def to_float(v: Any) -> float | None:
     """to_float(v) -> float|None: Convert value to float if possible; otherwise None."""
@@ -166,40 +169,67 @@ def round_to_nearest_5(v: Any) -> int | None:
     return int(rq * 5)
 
 
-def pick_random_pose(xlsx_path: Path, pick_pose_seed: int, offnadir_angle: Optional[object] = None) -> tuple:
-    """pick_random_pose(xlsx_path,pick_pose_seed,offnadir_angle=None) -> tuple: Pick one random row (optionally filtered by offnadir_deg_round5); returns result_name,detection_id,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,datetime_utc."""
-    import random
-
+def pick_random_pose(
+    xlsx_path: Path,
+    pick_pose_seed: int,
+    offnadir_angle: Optional[object] = None,
+    selection_method: str = "exact",        # exact or mission
+) -> tuple:
+    """pick_random_pose(xlsx_path,pick_pose_seed,offnadir_angle=None,selection_method='mission') -> tuple:
+    Pick one random row. 'mission' filters via result_name (legacy), 'exact' via offnadir_deg_round5."""
     random.seed(pick_pose_seed)
 
     header, rows = _load_excel_cache(xlsx_path)
     if not rows:
         raise ValueError("No data rows found in Excel file.")
 
-    if "offnadir_deg_round5" not in header:
-        raise KeyError("Required column 'offnadir_deg_round5' not found in Excel header.")
-
     if offnadir_angle is not None:
         target_ang = round_to_nearest_5(offnadir_angle)
         if target_ang is None:
-            raise ValueError(f"offnadir_angle={offnadir_angle!r} is not numeric and cannot be rounded to nearest 5.")
+            raise ValueError(f"offnadir_angle={offnadir_angle!r} is not numeric.")
 
-        idx_ang = header.index("offnadir_deg_round5")
-        filtered: list[tuple[Any, ...]] = []
+        filtered = []
         present_angles: set[int] = set()
 
-        for row in rows:
-            ang = round_to_nearest_5(row[idx_ang] if idx_ang < len(row) else None)
-            if ang is not None:
-                present_angles.add(ang)
-            if ang is not None and ang == target_ang:
-                filtered.append(row)
+        if selection_method == "mission":
+            # legacy behavior: derive angle from result_name
+            for row in rows:
+                d_tmp = dict(zip(header, row))
+                ang = _extract_offnadir_angle_from_result_name(d_tmp.get("result_name"))
+                if ang is not None:
+                    present_angles.add(ang)
+                if ang is not None and ang == target_ang:
+                    filtered.append(row)
 
-        if not filtered:
-            available = ", ".join(str(a) for a in sorted(present_angles)) or "(none found in offnadir_deg_round5)"
-            raise ValueError(
-                f"No rows match offnadir_angle={target_ang}deg (using offnadir_deg_round5). Available angles: {available}."
-            )
+            if not filtered:
+                available = ", ".join(str(a) for a in sorted(present_angles)) or "(none found in result_name)"
+                raise ValueError(
+                    f"No rows match offnadir_angle={target_ang}deg (derived from result_name). "
+                    f"Available angles: {available}."
+                )
+
+        elif selection_method == "exact":
+            # new behavior: use explicit column
+            if "offnadir_deg_round5" not in header:
+                raise KeyError("Required column 'offnadir_deg_round5' not found in Excel header.")
+
+            idx_ang = header.index("offnadir_deg_round5")
+            for row in rows:
+                ang = round_to_nearest_5(row[idx_ang] if idx_ang < len(row) else None)
+                if ang is not None:
+                    present_angles.add(ang)
+                if ang is not None and ang == target_ang:
+                    filtered.append(row)
+
+            if not filtered:
+                available = ", ".join(str(a) for a in sorted(present_angles)) or "(none found in offnadir_deg_round5)"
+                raise ValueError(
+                    f"No rows match offnadir_angle={target_ang}deg (using offnadir_deg_round5). "
+                    f"Available angles: {available}."
+                )
+
+        else:
+            raise ValueError("selection_method must be 'mission' or 'exact'.")
 
         rows = filtered
 
@@ -217,6 +247,7 @@ def pick_random_pose(xlsx_path: Path, pick_pose_seed: int, offnadir_angle: Optio
     datetime_utc = str(d["t_datetime"])
 
     return result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc
+
 
 
 

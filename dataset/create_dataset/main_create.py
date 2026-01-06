@@ -243,7 +243,7 @@ def run_dataset(n_runs: int,
                 pick_pose_seed_i = pick_pose_seed + run_idx
 
                 result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc = pick_random_pose(
-                    poses_xlsx, pick_pose_seed=pick_pose_seed_i, offnadir_angle=float(ang)
+                    poses_xlsx, pick_pose_seed=pick_pose_seed_i, offnadir_angle=float(ang), selection_method='exact'
                 )
 
                 meta_out = meta_dir / f"run_{run_idx:05d}.json"
