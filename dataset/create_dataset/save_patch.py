@@ -267,8 +267,8 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
     is_float_payload = (arr.dtype != np.uint8) or (split.startswith("radiance_") or split.startswith("reflection_"))
 
     # Naming: patch_raw_255 creates a new patch_name; others reuse it
-    # Naming: patch_raw_255 and patch_raw_rot_255 create a new patch_name; others reuse it
-    if split in ("patch_raw_255", "patch_raw_rot_255"):
+    # Naming: only patch_raw_255 creates a new patch_name; all others reuse it
+    if split == "patch_raw_255":
         base = Path(img_file).stem
         k = _next_index_for_base(split_dir, subdir, base=base, ext=ext)
         patch_name = f"{base}_{k}"
@@ -277,6 +277,7 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
         patch_name = patch_bundle.get("patch_name", None)
         if not isinstance(patch_name, str) or not patch_name:
             raise ValueError(f"For {split}, patch_bundle must contain patch_name (set by save_patch('patch_raw_255', ...))")
+
 
     is_npy_split = split.endswith("_npy")
 
@@ -319,8 +320,7 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
     images.append(img_rec)
 
     # Annotations:
-    # Annotations:
-    if split in ("patch_raw_255", "patch_raw_rot_255"):
+    if split == "patch_raw_255":
         top_left = patch_bundle.get("top_left", None)
         patch_wh = patch_bundle.get("patch_wh", None)
         offset_xy = patch_bundle.get("offset_xy", (0, 0))
@@ -340,10 +340,11 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
             offset_xy=(int(offset_xy[0]), int(offset_xy[1])),
         )
         patch_bundle["anns_patch"] = anns_kept
+
     else:
-        anns_kept = patch_bundle.get("anns_patch", patch_bundle.get("anns", []))
+        anns_kept = patch_bundle.get("anns_patch", None)
         if not isinstance(anns_kept, list):
-            raise ValueError("Expected annotations list in patch_bundle['anns_patch'] or ['anns']")
+            raise ValueError(f"Expected patch-local annotations list in patch_bundle['anns_patch'] for split={split}")
 
     next_ann_id = int(max([int(a.get("id", 0)) for a in anns] + [0]) + 1)
     out_anns = []

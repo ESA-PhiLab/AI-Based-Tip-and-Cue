@@ -588,40 +588,39 @@ def _write_temp_rotated_inputs(rot_img_u8: np.ndarray, rot_anns: list, base_coco
     anns_path.write_text(json.dumps(coco_out, indent=2), encoding="utf-8")
     return img_path, anns_path
 
-def mirror_rotate_raw_patch_bundle(patch_bundle: dict, rotation_angle_deg: float, mirror_bool: bool = False) -> dict:
-    """rotate_raw_patch_bundle(patch_bundle,rotation_angle_deg,mirror=False) -> dict: Mirror then rotate patch + raw anns."""
+
+def mirror_rotate_patchlocal_bundle(patch_bundle: dict, rotation_angle_deg: float, mirror_bool: bool = False) -> dict:
+    """mirror_rotate_patchlocal_bundle(patch_bundle,rotation_angle_deg,mirror_bool=False) -> dict: Mirror+rotate patch AND patch-local anns_patch."""
     if "patch" not in patch_bundle:
         raise KeyError("patch_bundle['patch'] missing")
-    if "anns" not in patch_bundle or not isinstance(patch_bundle["anns"], list):
-        raise KeyError("patch_bundle['anns'] missing (expected raw image-space COCO anns)")
+    if "anns_patch" not in patch_bundle or not isinstance(patch_bundle["anns_patch"], list):
+        raise KeyError("patch_bundle['anns_patch'] missing (call save_patch('patch_raw_255', ...) first)")
 
-    patch = np.asarray(patch_bundle["patch"])
+    patch = np.asarray(patch_bundle["patch"], dtype=np.uint8)
     if patch.ndim != 3 or patch.shape[2] < 3:
         raise ValueError(f"patch_bundle['patch'] must be HxWx3, got shape={patch.shape}")
 
+    anns_patch = patch_bundle["anns_patch"]
+
     mirr_patch, mirr_anns = mirror_image_and_annotations(
-        orig_img_u8=patch.astype(np.uint8),
-        anns=patch_bundle["anns"],
+        orig_img_u8=patch,
+        anns=anns_patch,
         mirror_bool=bool(mirror_bool),
         direction="horizontal",
     )
 
     rot_patch, rot_anns = rotate_image_and_annotations(
-        orig_img_u8=mirr_patch.astype(np.uint8),
+        orig_img_u8=mirr_patch,
         anns=mirr_anns,
         rotation_angle_deg=float(rotation_angle_deg),
     )
 
     out = dict(patch_bundle)
     out["patch"] = rot_patch
-    out["anns"] = rot_anns
+    out["anns_patch"] = rot_anns
     out["rotation_angle_deg"] = float(rotation_angle_deg)
     out["mirror_bool"] = bool(mirror_bool)
-    out.pop("patch_name", None)
-    out.pop("anns_patch", None)
     return out
-
-
 
 
 # =========================

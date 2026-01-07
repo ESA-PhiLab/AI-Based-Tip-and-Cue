@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 from create_patch import generate_patch
 from save_patch import save_patch
-from translate_patch import translate_image, mirror_rotate_raw_patch_bundle
+from translate_patch import translate_image, mirror_rotate_patchlocal_bundle
 
 
 def cleanup() -> None:
@@ -207,7 +207,7 @@ def main() -> int:
 
         save_patch("patch_raw_255", patch_bundle)
 
-        b_rot = mirror_rotate_raw_patch_bundle(patch_bundle, args.rotation_angle_deg, mirror_bool=mirror_bool)
+        b_rot = mirror_rotate_patchlocal_bundle(patch_bundle, args.rotation_angle_deg, mirror_bool=mirror_bool)
         save_patch("patch_raw_rot_255", b_rot)
 
         label_simple = classify_label(
