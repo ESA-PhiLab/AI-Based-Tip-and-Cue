@@ -8,6 +8,7 @@ import shutil
 from typing import Iterator, List, Sequence
 import numpy as np
 
+
 from read_and_write_data import (
     cleanup_previous_outputs,
     cleanup_meta_only,
@@ -376,7 +377,7 @@ def main() -> None:
     img_rot_seed = 10
 
     show_plot = False
-    n_images = 1 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
+    n_images = count_images_in_subfolders(Path("dataset") / "whales_from_space")
 
     balanced_offnadir = True  # False = random offnadir, loop by one, True = per-image angles 5..60
 

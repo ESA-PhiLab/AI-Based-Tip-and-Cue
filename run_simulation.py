@@ -77,8 +77,6 @@ if real_run:
 vm = orekit.initVM()
 setup_orekit_curdir(from_pip_library=True)
 
-
-
 from org.orekit.models.earth import ReferenceEllipsoid
 from org.orekit.bodies import CelestialBodyFactory
 from org.orekit.utils import IERSConventions

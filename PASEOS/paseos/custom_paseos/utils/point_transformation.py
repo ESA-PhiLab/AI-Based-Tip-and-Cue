@@ -22,6 +22,11 @@ from __future__ import annotations
 import numpy as np
 from math import radians, degrees
 
+import orekit
+from orekit.pyhelpers import setup_orekit_curdir
+vm = orekit.initVM()
+setup_orekit_curdir(from_pip_library=True)
+
 from org.orekit.bodies import GeodeticPoint
 from org.orekit.frames import FramesFactory
 from org.orekit.models.earth import ReferenceEllipsoid
