@@ -53,3 +53,4 @@ offnadir_imaging/create_DEM/input_dem_PATCH.tiff
 offnadir_imaging/create_DEM/dem_mesh_PATCH.obj
 offnadir_imaging/spd_files/sky_diffuse_radiance.spd
 offnadir_imaging/spd_files/solar_direct_normal.spd
+notes.txt

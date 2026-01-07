@@ -385,19 +385,16 @@ def main() -> None:
 
     render_resolution = 64 # 64 * 2
 
-    n_images = 1 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
+    n_images = 3 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
     balanced_offnadir = True  # False = random offnadir, loop by one, True = per-image angles 5..60
 
-
-    pick_img_seed_0 = 12
+    pick_img_seed_0 = 1
     crop_patch_seed = 42
     dem_seed = 1
     pick_pose_seed = 17
     img_rot_seed = 10
 
     show_plot = False
-
-
 
     # mode_single options:
     #   "full"      -> only full whales
