@@ -82,19 +82,20 @@ class EOTools:
     # Intersection with WGS-84 ellipsoid
     # -------------------------------------------------------------------------
 
-    def _find_intersection_in_Geodetic(self, ray_dirs_brf, time, r_eci, v_eci):
-        if self.att_model is None:
-            raise RuntimeError("EOTools._find_intersection_in_Geodetic: att_model not attached.")
+    def _find_intersection_in_Geodetic(self, ray_dirs_brf, time, r_eci, v_eci, eul_deg_override=None):
+        if self.att_model is None and eul_deg_override is None:
+            raise RuntimeError("att_model not attached and no eul_deg_override provided.")
 
         r = np.asarray(r_eci, float).reshape(3)
         v = np.asarray(v_eci, float).reshape(3)
+
+        eul_deg = np.asarray(eul_deg_override, float).reshape(3) if eul_deg_override is not None else self.att_model._actor_attitude_deg
 
         a, b = 6378137.0, 6356752.314245
 
         x_ecef, y_ecef, z_ecef = pm.eci2ecef(r[0], r[1], r[2], time)
         r_ecef = np.array([x_ecef, y_ecef, z_ecef], float)
 
-        eul_deg = self.att_model._actor_attitude_deg
 
         d_ecef_list = []
         for ray_brf in np.asarray(ray_dirs_brf, float):
@@ -180,13 +181,22 @@ class EOTools:
     # Pointing vectors
     # -------------------------------------------------------------------------
     def point_to_target_unbounded(self, r_eci, v_eci, tgt_geodetic, t_datetime):
-        P_tgt_eci = Point_Geodetic2ECI(*tgt_geodetic, t_datetime)
-        vec_eci = P_tgt_eci.flatten() - np.asarray(r_eci, float).reshape(3)
-        d_brf = IRF2BRF_eul(vec_eci, r_eci, v_eci, [0.0, 0.0, 0.0])
-        d_brf /= np.linalg.norm(d_brf)
-        offnadir = np.degrees(np.arccos(np.clip(np.dot([0, 0, 1], d_brf), -1, 1)))
-        return d_brf, float(offnadir)
+        """point_to_target_unbounded(r_eci,v_eci,tgt_geodetic,t_datetime) -> tuple[np.ndarray,float]: Return LOS unit vector in LVLH and off-nadir [deg] wrt LVLH +Z."""
+        P_tgt_eci = np.array(Point_Geodetic2ECI(*tgt_geodetic, t_datetime)).reshape(3)
+        r = np.asarray(r_eci, float).reshape(3)
+        v = np.asarray(v_eci, float).reshape(3)
 
+        los_eci = P_tgt_eci - r
+        n = float(np.linalg.norm(los_eci))
+        if n <= 0.0:
+            return np.array([0.0, 0.0, 1.0], float), 0.0
+        los_eci /= n
+
+        los_lvlh = IRF2LVLH(los_eci, r, v)
+        los_lvlh /= float(np.linalg.norm(los_lvlh))
+
+        offnadir = float(np.degrees(np.arccos(np.clip(np.dot([0.0, 0.0, 1.0], los_lvlh), -1.0, 1.0))))
+        return los_lvlh, offnadir
 
     def point_to_target_bounded(self, r_eci, v_eci, target_geodetic, t_datetime,
                                 offnadir_max=None, mode='max', dt_step_coarse=1.0):
@@ -346,10 +356,10 @@ class EOTools:
     def get_center_vector_in_BRF(self):
         return np.array([[0.0, 0.0, 1.0]], float)
 
-    def get_FovPoints(self, r_vec, v_vec, t_datetime):
-
+    def get_FovPoints(self, r_vec, v_vec, t_datetime, eul_deg_override=None):
+        """get_FovPoints(r_vec,v_vec,t_datetime,eul_deg_override=None) -> np.ndarray: Footprint lat/lon points using current or overridden Euler."""
         rays_brf = self.get_fov_vectors_in_BRF()
-        P = self._find_intersection_in_Geodetic(rays_brf, t_datetime, r_vec, v_vec)
+        P = self._find_intersection_in_Geodetic(rays_brf, t_datetime, r_vec, v_vec, eul_deg_override=eul_deg_override)
         return P[:2, :].T
 
     def get_CenterRay_Intersection(self, r_vec, v_vec, t_datetime):

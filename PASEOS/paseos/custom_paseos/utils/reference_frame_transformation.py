@@ -127,9 +127,9 @@ def get_rpy_angles_irf(x, y, z):
     return rotation_matrix_to_ypr(R_brf_in_irf)
 
 
-def get_rpy_angles_brf(x, y, z, r, v):
-    """Roll, pitch, yaw [deg] of BRF wrt LVLH (0,0,0 = nadir)."""
-    R_brf_in_irf = np.c_[x, y, z]
-    R_lvlh_in_irf = RotMat_IRF_to_LVLH(r, v).T
-    R_rel = R_lvlh_in_irf.T @ R_brf_in_irf
-    return rotation_matrix_to_ypr(R_rel)
+def get_rpy_angles_brf(x, y, z, r, v) -> np.ndarray:
+    """get_rpy_angles_brf(x,y,z,r,v) -> np.ndarray: (roll,pitch,yaw) [deg] for LVLH->BRF (0,0,0 = nadir)."""
+    R_brf_in_irf = np.c_[x, y, z]                  # BRF->IRF
+    R_lvlh_in_irf = RotMat_IRF_to_LVLH(r, v).T     # LVLH->IRF
+    R_lvlh_to_brf = R_brf_in_irf.T @ R_lvlh_in_irf # LVLH->BRF
+    return rotation_matrix_to_ypr(R_lvlh_to_brf)

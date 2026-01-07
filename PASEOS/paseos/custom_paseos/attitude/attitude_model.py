@@ -250,11 +250,6 @@ class AttitudeModel:
         self._planned_start_eul = None  # Euler angles at the start of slew
         self._planned_start_time = None  # elapsed_seconds when slew started
 
-
-
-
-
-
     # -------------------------------------------------------------------------
     # Initialization helpers
     # -------------------------------------------------------------------------
@@ -363,15 +358,69 @@ class AttitudeModel:
     # -------------------------------------------------------------------------
     @staticmethod
     def offnadir_from_euler(eul_deg, boresight_brf=(0.0, 0.0, 1.0)) -> tuple[float, np.ndarray]:
-        """offnadir_from_euler(eul_deg,boresight_brf=(0,0,1)) -> tuple[float,np.ndarray]: Off-nadir [deg] between LVLH +Z and body boresight, plus boresight in LVLH."""
-        R_lvlh_to_brf = RotMat_LVLH_to_BRF_by_eul(np.asarray(eul_deg, float))
+        """offnadir_from_euler(eul_deg,boresight_brf=(0,0,1)) -> tuple[float,np.ndarray]: Off-nadir [deg] between LVLH +Z and BRF boresight (returned in LVLH)."""
+        eul = np.asarray(eul_deg, float).reshape(3)
+        R_lvlh_to_brf = RotMat_LVLH_to_BRF_by_eul(eul)
+
         b_brf = np.asarray(boresight_brf, float).reshape(3)
-        b_brf /= np.linalg.norm(b_brf)
-        b_lvlh = R_lvlh_to_brf.T @ b_brf
-        b_lvlh /= np.linalg.norm(b_lvlh)
-        nadir_lvlh = np.array([0.0, 0.0, 1.0], float)
+        nb = float(np.linalg.norm(b_brf))
+        if nb <= 0.0:
+            raise ValueError("boresight_brf must be non-zero.")
+        b_brf = b_brf / nb
+
+        b_lvlh = R_lvlh_to_brf.T @ b_brf  # BRF->LVLH
+        nl = float(np.linalg.norm(b_lvlh))
+        if nl <= 0.0:
+            raise ValueError("boresight_brf produced near-zero b_lvlh.")
+        b_lvlh = b_lvlh / nl
+
+        nadir_lvlh = np.array([0.0, 0.0, 1.0], float)  # your convention: LVLH +Z = nadir
         dot = float(np.clip(np.dot(nadir_lvlh, b_lvlh), -1.0, 1.0))
-        return float(np.degrees(np.arccos(dot))), b_lvlh
+        off_deg = float(np.degrees(np.arccos(dot)))
+        return off_deg, b_lvlh
+
+    @staticmethod
+    def pointing_attitude_lvlh(target_vec_lvlh, boresight_brf=(0.0, 0.0, 1.0)) -> list[float]:
+        """pointing_attitude_lvlh(target_vec_lvlh,boresight_brf=(0,0,1)) -> list[float]: Euler [deg] for LVLH->BRF so that R(target_vec_lvlh)=boresight_brf."""
+        import numpy as np
+
+        t = np.asarray(target_vec_lvlh, float).reshape(3)
+        nt = float(np.linalg.norm(t))
+        if nt <= 0.0:
+            raise ValueError("target_vec_lvlh must be non-zero.")
+        t = t / nt
+
+        b = np.asarray(boresight_brf, float).reshape(3)
+        nb = float(np.linalg.norm(b))
+        if nb <= 0.0:
+            raise ValueError("boresight_brf must be non-zero.")
+        b = b / nb
+
+        dot = float(np.clip(np.dot(t, b), -1.0, 1.0))
+
+        if dot > 1.0 - 1e-12:
+            R = np.eye(3)
+        elif dot < -1.0 + 1e-12:
+            axis = np.cross(t, np.array([1.0, 0.0, 0.0]))
+            if np.linalg.norm(axis) < 1e-9:
+                axis = np.cross(t, np.array([0.0, 1.0, 0.0]))
+            axis = axis / np.linalg.norm(axis)
+            # 180 deg rotation: quaternion [axis*sin(pi/2), cos(pi/2)=0]
+            q = np.array([axis[0], axis[1], axis[2], 0.0], float)
+            R = RotMat_by_quat(q)
+        else:
+            axis = np.cross(t, b)
+            q_vec = axis
+            q_scalar = 1.0 + dot
+            quat = np.concatenate((q_vec, [q_scalar]))
+            quat = quat / np.linalg.norm(quat)
+            R = RotMat_by_quat(quat)
+
+        roll, pitch, yaw = rotation_matrix_to_ypr(R)
+        angles = np.array([roll, pitch, yaw], float)
+        angles = (angles + 180.0) % 360.0 - 180.0
+        return angles.tolist()
+
 
     @staticmethod
     def pointing_attitude_brf(pointing_vec_brf_target):
@@ -630,6 +679,7 @@ class AttitudeModel:
         # Same extra delay formula you use in 'pause'
         delay_extra = delta_eul / np.rad2deg(omega_max_rad) + delay_stab_extra
         return delay_extra
+
 
 # -----------------------------------------------------------------------------
 # Controller estimator (unchanged behavior)

@@ -11,7 +11,7 @@ import gc
 import os, sys
 import pandas as pd
 import openpyxl
-import shutil       
+import shutil
 import random
 import uuid
 
@@ -22,6 +22,7 @@ import paseos
 
 from paseos.custom_paseos.propagation.orekit_propagator import OrekitPropagator
 from paseos.custom_paseos.utils.point_transformation import Point_ECI2Geodetic, Point_Geodetic2ECI
+from paseos.custom_paseos.utils.reference_frame_transformation import IRF2LVLH
 
 from simulation.targets.whales import update_whales, init_whales
 from simulation.targets.water_target_utils import load_land_mask, generate_random_water_targets, build_land_mask
@@ -45,7 +46,7 @@ plot_propagation, uhd = False, False
 plot_footprints = True
 plot_whale_trajectories = False
 
-create_image = False
+create_image = True
 onboard_ai_tip = True
 onboard_ai_cue = True
 model_attitude_control = True
@@ -76,6 +77,8 @@ if real_run:
 vm = orekit.initVM()
 setup_orekit_curdir(from_pip_library=True)
 
+
+
 from org.orekit.models.earth import ReferenceEllipsoid
 from org.orekit.bodies import CelestialBodyFactory
 from org.orekit.utils import IERSConventions
@@ -89,6 +92,11 @@ conf.auto_max_age = None  # allow predictive values older than 30 days
 
 pv.global_theme.allow_empty_mesh = True
 paseos.set_log_level("WARNING")
+
+
+
+
+
 
 main_path = Path(__file__).resolve().parent
 print(main_path)
@@ -303,7 +311,7 @@ while elapsed_seconds <= sim_duration_seconds:
     t_start = time.time()
 
     t_pykep = sim.local_time
-    t_datetime = datetime(2000, 1, 1, 0, 0, 0) + timedelta(days=t_pykep.mjd2000)
+    t_datetime = datetime(2000, 1, 1, 0, 0, 0, tzinfo=timezone.utc) + timedelta(days=t_pykep.mjd2000)
     t_abs = AbsoluteDate(t_datetime.year, t_datetime.month, t_datetime.day, t_datetime.hour, t_datetime.minute, t_datetime.second + t_datetime.microsecond / 1e6, utc)
 
     for actor in tip_actors + cue_actors:
@@ -581,27 +589,35 @@ while elapsed_seconds <= sim_duration_seconds:
                         task_id = eo_tools_dict[actor.name].current_task["target_id"]
                         task_coord = eo_tools_dict[actor.name].current_task["coord"]
 
+                        if "pointing_vec_lvlh_target" not in eo_tools_dict[actor.name].__dict__:
+                            eo_tools_dict[actor.name].pointing_vec_lvlh_target = None
+
                         in_view = eo_tools_dict[actor.name].is_in_sight(task_coord, r_vec, v_vec, t_datetime, el_min_deg=elevation_min)
                         will_be_in_view_soon, t_until = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, att_models_dict[actor.name].slew_stab_time_max, el_min_deg=elevation_min, step=30.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
                         will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_tipcue, el_min_deg=elevation_min,  step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
                         moving_towards, _ = eo_tools_dict[actor.name].is_moving_towards_target(r_vec, v_vec, task_coord, t_datetime, dt_check=sim_step_seconds )
 
-
                         if (will_be_in_view_soon or in_view) and not (eo_tools_dict[actor.name].move_set and moving_towards):
-                            pointing_vec_brf_target, offnadir_bound, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max', dt_step_coarse=sim_step_seconds)
+                            pointing_vec_lvlh_target, offnadir_bound, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max', dt_step_coarse=sim_step_seconds)
+
+                            eo_tools_dict[actor.name].pointing_vec_lvlh_target = pointing_vec_lvlh_target
 
                             if time_to_sight != None:
                                 eo_tools_dict[actor.name].move_set = True
                                 eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
+                                eo_tools_dict[actor.name].pointing_vec_lvlh_target = pointing_vec_lvlh_target
+
 
                             else:
                                 print(f"!! {actor.name}: Target {task_id} won't be in sight, delete task")
                                 will_be_in_view_later = False
+                                will_be_in_view_soon = False
                                 in_view = False
+                                eo_tools_dict[actor.name].pointing_vec_lvlh_target = None
 
                         if (in_view or will_be_in_view_soon) and eo_tools_dict[actor.name].offnadir_unbound_target != None and not (eo_tools_dict[actor.name].offnadir_unbound_target >= (offnadir_limit + offnadir_margin) and not moving_towards):
-                            if np.all(pointing_vec_brf_target) != None:
-                                att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_brf_target)
+                            if np.all(pointing_vec_lvlh_target) != None:
+                                att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_lvlh_target)
 
                         if not (in_view or will_be_in_view_later):
                             # Task finished → reset and pick next later
@@ -638,6 +654,8 @@ while elapsed_seconds <= sim_duration_seconds:
 
                     else:
                         task_update_mode = "taken"
+
+
 
                     att_models_dict[actor.name].plan_slew( start_eul_deg=att_models_dict[actor.name]._planned_start_eul, target_eul_deg=att_models_dict[actor.name]._new_target_attitude_deg,
                         omega_max_rad=omega_max_rad, alpha_max_rad=alpha_max_rad, zeta=zeta, wn_rad=wn_rad, dt=sim_step_seconds/10, mode="per_axis",
@@ -698,8 +716,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
                 target_coord = whale.position()
                 in_footprint = eo_tools_dict[actor.name].check_point_in_footprint(target_coord, FovPoints)
-                offnadir_cue_deg, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)
-
+                _, offnadir_cue_deg = eo_tools_dict[actor.name].point_to_target_unbounded(r_vec, v_vec, target_coord, t_datetime)
 
                 # CUE OBSERVATION
                 if in_footprint and whale.state_observing != 2 and offnadir_cue_deg <= (offnadir_limit + offnadir_margin):
@@ -734,13 +751,14 @@ while elapsed_seconds <= sim_duration_seconds:
                     cue_lat, cue_lon, cue_alt = float(cue_lat), float(cue_lon), float(cue_alt)
                     dem_seed = rng_dem.randint(0, 1000)
 
-                    create_image = True
                     if create_image:
+
                         print("Generate image")
                         DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg_new = generate_image(img_path, anns_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1], target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
 
                         print(f"Old off nadir:{offnadir_cue_deg:.2f} deg")
                         print(f"New off nadir:{offnadir_deg_new:.2f} deg")
+
                     if whale.tip_actor != None and whale.t_observed_tip != None:
                         if t_datetime <= whale.t_observed_tip + timedelta(seconds=observation_time_limit):
                             latency_observation = (whale.t_observed_cue - whale.t_observed_tip).total_seconds()

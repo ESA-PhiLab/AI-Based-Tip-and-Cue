@@ -25,7 +25,7 @@ anns_path = os.path.join(anns_folder, "final_annotations.json")
 
 print_values = True
 plot_3d = False
-plot_result = True
+plot_result = False
 max_glint = False
 generate_radiation = True
 generate_nadir = False
@@ -40,7 +40,7 @@ nSats_cue = 1
 nPlanes_tip = 1
 nPlanes_cue = 1
 
-offnadir_limit = 5.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
+offnadir_limit = 30.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
