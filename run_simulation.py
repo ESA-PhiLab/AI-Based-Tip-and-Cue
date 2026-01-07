@@ -615,9 +615,10 @@ while elapsed_seconds <= sim_duration_seconds:
                                 in_view = False
                                 eo_tools_dict[actor.name].pointing_vec_lvlh_target = None
 
-                        if (in_view or will_be_in_view_soon) and eo_tools_dict[actor.name].offnadir_unbound_target != None and not (eo_tools_dict[actor.name].offnadir_unbound_target >= (offnadir_limit + offnadir_margin) and not moving_towards):
-                            if np.all(pointing_vec_lvlh_target) != None:
-                                att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_brf(pointing_vec_lvlh_target)
+                        pv = eo_tools_dict[actor.name].pointing_vec_lvlh_target
+                        if (in_view or will_be_in_view_soon) and (eo_tools_dict[actor.name].offnadir_unbound_target is not None) and not (eo_tools_dict[actor.name].offnadir_unbound_target >= (offnadir_limit + offnadir_margin) and not moving_towards):
+                            if pv is not None:
+                                att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_lvlh(pv)
 
                         if not (in_view or will_be_in_view_later):
                             # Task finished → reset and pick next later

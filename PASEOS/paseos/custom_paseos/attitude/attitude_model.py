@@ -380,47 +380,47 @@ class AttitudeModel:
         return off_deg, b_lvlh
 
     @staticmethod
-    def pointing_attitude_lvlh(target_vec_lvlh, boresight_brf=(0.0, 0.0, 1.0)) -> list[float]:
-        """pointing_attitude_lvlh(target_vec_lvlh,boresight_brf=(0,0,1)) -> list[float]: Euler [deg] for LVLH->BRF so that R(target_vec_lvlh)=boresight_brf."""
+    def pointing_attitude_lvlh(target_vec_lvlh, boresight_brf=(0.0, 0.0, 1.0), up_lvlh=(1.0, 0.0, 0.0), up_brf=(1.0, 0.0, 0.0)) -> list[float]:
+        """pointing_attitude_lvlh(target_vec_lvlh,boresight_brf=(0,0,1),up_lvlh=(1,0,0),up_brf=(1,0,0)) -> list[float]: Euler [deg] for LVLH->BRF so that R@target_vec_lvlh=boresight_brf with a defined roll via up vectors."""
         import numpy as np
 
-        t = np.asarray(target_vec_lvlh, float).reshape(3)
-        nt = float(np.linalg.norm(t))
-        if nt <= 0.0:
-            raise ValueError("target_vec_lvlh must be non-zero.")
-        t = t / nt
+        def _unit(x):
+            x = np.asarray(x, float).reshape(3)
+            n = float(np.linalg.norm(x))
+            if n <= 0.0:
+                raise ValueError("Vector must be non-zero.")
+            return x / n
 
-        b = np.asarray(boresight_brf, float).reshape(3)
-        nb = float(np.linalg.norm(b))
-        if nb <= 0.0:
-            raise ValueError("boresight_brf must be non-zero.")
-        b = b / nb
+        def _orthonormal_basis(z_hat, up_hint):
+            z_hat = _unit(z_hat)
+            up_hint = _unit(up_hint)
+            x_hat = np.cross(up_hint, z_hat)
+            nx = float(np.linalg.norm(x_hat))
+            if nx < 1e-9:
+                # up_hint parallel to z_hat -> pick another
+                alt = np.array([0.0, 1.0, 0.0], float) if abs(z_hat[0]) > 0.9 else np.array([1.0, 0.0, 0.0], float)
+                x_hat = np.cross(alt, z_hat)
+                nx = float(np.linalg.norm(x_hat))
+                if nx < 1e-9:
+                    raise ValueError("Failed to build basis.")
+            x_hat /= nx
+            y_hat = np.cross(z_hat, x_hat)
+            y_hat /= float(np.linalg.norm(y_hat))
+            return np.column_stack((x_hat, y_hat, z_hat))  # 3x3
 
-        dot = float(np.clip(np.dot(t, b), -1.0, 1.0))
+        t_lvlh = _unit(target_vec_lvlh)
+        b_brf = _unit(boresight_brf)
 
-        if dot > 1.0 - 1e-12:
-            R = np.eye(3)
-        elif dot < -1.0 + 1e-12:
-            axis = np.cross(t, np.array([1.0, 0.0, 0.0]))
-            if np.linalg.norm(axis) < 1e-9:
-                axis = np.cross(t, np.array([0.0, 1.0, 0.0]))
-            axis = axis / np.linalg.norm(axis)
-            # 180 deg rotation: quaternion [axis*sin(pi/2), cos(pi/2)=0]
-            q = np.array([axis[0], axis[1], axis[2], 0.0], float)
-            R = RotMat_by_quat(q)
-        else:
-            axis = np.cross(t, b)
-            q_vec = axis
-            q_scalar = 1.0 + dot
-            quat = np.concatenate((q_vec, [q_scalar]))
-            quat = quat / np.linalg.norm(quat)
-            R = RotMat_by_quat(quat)
+        B_lvlh = _orthonormal_basis(t_lvlh, up_lvlh)  # columns = LVLH basis vectors, with z=t
+        B_brf = _orthonormal_basis(b_brf, up_brf)  # columns = BRF basis vectors, with z=b
+
+        # Map LVLH coords -> BRF coords: R * (basis in LVLH) = (basis in BRF)
+        R = B_brf @ B_lvlh.T
 
         roll, pitch, yaw = rotation_matrix_to_ypr(R)
         angles = np.array([roll, pitch, yaw], float)
         angles = (angles + 180.0) % 360.0 - 180.0
         return angles.tolist()
-
 
     @staticmethod
     def pointing_attitude_brf(pointing_vec_brf_target):

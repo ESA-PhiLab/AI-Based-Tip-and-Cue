@@ -140,6 +140,10 @@ def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_d
     eo.offnadir_unbound_target = None
     eo.move_set = False
 
+    eo_tools_dict[actor_name].move_set = False
+    eo_tools_dict[actor_name].offnadir_unbound_target = None
+    eo_tools_dict[actor_name].pointing_vec_lvlh_target = None
+
     # Always clean the task queue
     if hasattr(eo, "task_queue") and eo.task_queue:
         eo.task_queue = [t for t in eo.task_queue if t.get("target_id") != task_id]

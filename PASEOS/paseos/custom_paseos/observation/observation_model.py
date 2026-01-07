@@ -180,8 +180,8 @@ class EOTools:
     # -------------------------------------------------------------------------
     # Pointing vectors
     # -------------------------------------------------------------------------
-    def point_to_target_unbounded(self, r_eci, v_eci, tgt_geodetic, t_datetime):
-        """point_to_target_unbounded(r_eci,v_eci,tgt_geodetic,t_datetime) -> tuple[np.ndarray,float]: Return LOS unit vector in LVLH and off-nadir [deg] wrt LVLH +Z."""
+    def point_to_target_unbounded(self, r_eci, v_eci, tgt_geodetic, t_datetime, frame: str = "LVLH", eul_deg_override=None):
+        """point_to_target_unbounded(r_eci,v_eci,tgt_geodetic,t_datetime,frame="LVLH",eul_deg_override=None) -> tuple[np.ndarray,float]: Return LOS unit vector in requested frame ("LVLH" or "BRF") and off-nadir [deg]."""
         P_tgt_eci = np.array(Point_Geodetic2ECI(*tgt_geodetic, t_datetime)).reshape(3)
         r = np.asarray(r_eci, float).reshape(3)
         v = np.asarray(v_eci, float).reshape(3)
@@ -189,32 +189,59 @@ class EOTools:
         los_eci = P_tgt_eci - r
         n = float(np.linalg.norm(los_eci))
         if n <= 0.0:
-            return np.array([0.0, 0.0, 1.0], float), 0.0
-        los_eci /= n
-
-        los_lvlh = IRF2LVLH(los_eci, r, v)
-        los_lvlh /= float(np.linalg.norm(los_lvlh))
+            los_lvlh = np.array([0.0, 0.0, 1.0], float)
+        else:
+            los_eci /= n
+            los_lvlh = IRF2LVLH(los_eci, r, v)
+            los_lvlh /= float(np.linalg.norm(los_lvlh))
 
         offnadir = float(np.degrees(np.arccos(np.clip(np.dot([0.0, 0.0, 1.0], los_lvlh), -1.0, 1.0))))
-        return los_lvlh, offnadir
 
-    def point_to_target_bounded(self, r_eci, v_eci, target_geodetic, t_datetime,
-                                offnadir_max=None, mode='max', dt_step_coarse=1.0):
+        frame_u = (frame or "LVLH").upper()
+        if frame_u == "LVLH":
+            return los_lvlh, offnadir
 
-        pointing_vec_brf_target, offnadir_unbound = self.point_to_target_unbounded(
-            r_eci, v_eci, target_geodetic, t_datetime
+        if frame_u != "BRF":
+            raise ValueError(f"frame must be 'LVLH' or 'BRF', got {frame!r}")
+
+        if self.att_model is None and eul_deg_override is None:
+            raise RuntimeError("att_model not attached and no eul_deg_override provided.")
+
+        eul_deg = np.asarray(eul_deg_override, float).reshape(3) if eul_deg_override is not None else np.asarray(self.att_model._actor_attitude_deg, float).reshape(3)
+
+        los_brf = LVLH2BRF_eul(los_lvlh, eul_deg)
+
+        los_brf = np.asarray(los_brf, float).reshape(3)
+        los_brf /= float(np.linalg.norm(los_brf))
+        return los_brf, offnadir
+
+
+    def point_to_target_bounded(self, r_eci, v_eci, target_geodetic, t_datetime, offnadir_max=None, mode="max", dt_step_coarse=1.0, dt_step_fine=0.5, dt_step_ultrafine=0.1, dt_max=600.0):
+        """point_to_target_bounded(r_eci,v_eci,target_geodetic,t_datetime,offnadir_max=None,mode="max",dt_step_coarse=1.0,dt_step_fine=0.5,dt_step_ultrafine=0.1,dt_max=600.0) -> tuple[np.ndarray,float,float,float|None]: Return LVLH LOS unit vector, bounded off-nadir, unbounded off-nadir, and time_to_sight (s)."""
+        pointing_vec_lvlh_target, offnadir_unbound = self.point_to_target_unbounded(
+            r_eci, v_eci, target_geodetic, t_datetime, frame="LVLH"
         )
 
-        if offnadir_max is not None and offnadir_unbound > offnadir_max + 1e-3:
-            pointing_vec_brf_target, offnadir_deg_target, time_to_sight = self.set_max_offnadir(
-                offnadir_max, offnadir_unbound, pointing_vec_brf_target,
-                r_eci, v_eci, target_geodetic, t_datetime, mode=mode, dt_step_coarse=dt_step_coarse
+        if offnadir_max is not None and offnadir_unbound > float(offnadir_max) + 1e-3:
+            pointing_vec_lvlh_target, offnadir_deg_target, time_to_sight = self.set_max_offnadir(
+                offnadir_max=float(offnadir_max),
+                offnadir_unbound=float(offnadir_unbound),
+                pointing_vec_lvlh_target=pointing_vec_lvlh_target,
+                r_eci=r_eci,
+                v_eci=v_eci,
+                target_geodetic=target_geodetic,
+                t_datetime=t_datetime,
+                dt_step_coarse=float(dt_step_coarse),
+                dt_step_fine=float(dt_step_fine),
+                dt_step_ultrafine=float(dt_step_ultrafine),
+                dt_max=float(dt_max),
+                mode=str(mode),
             )
         else:
-            offnadir_deg_target = offnadir_unbound
+            offnadir_deg_target = float(offnadir_unbound)
             time_to_sight = 0.0
 
-        return pointing_vec_brf_target, offnadir_deg_target, offnadir_unbound, time_to_sight
+        return pointing_vec_lvlh_target, float(offnadir_deg_target), float(offnadir_unbound), time_to_sight
 
     # -------------------------------------------------------------------------
     # Visibility
@@ -251,6 +278,10 @@ class EOTools:
         while t < t_ahead:
             h = min(step, t_ahead - t)
             r, v = self._kepler_propagate_universal(r, v, h)
+
+            r = np.asarray(r, float).reshape(3)
+            v = np.asarray(v, float).reshape(3)
+
             t += h
             t_step = t_datetime + timedelta(seconds=float(t))
 
@@ -282,73 +313,56 @@ class EOTools:
         range_rate = (distance_future - distance_now) / dt_check
         return (range_rate < 0.0), range_rate
 
-    def compute_viewing_time(self,
-                             r_eci, v_eci,
-                             target_geodetic, t_datetime,
-                             offnadir_max: float,
-                             offnadir_margin: float = 0.0,
-                             dt_step_coarse: float = 1.0,
-                             dt_step_fine: float = 0.5,
-                             dt_step_ultrafine: float = 0.1,
-                             dt_max: float = 600.0) -> float:
-        """
-        Compute remaining viewing time until target leaves strict off-nadir limit.
+    # --- eotools.py: REPLACE compute_viewing_time COMPLETELY ---
 
-        - Entry allowed if within (limit + margin).
-        - Viewing time counted only while off-nadir <= strict limit.
-        - If entering from margin, dwell starts when crossing into strict region.
-        - If exiting, dwell stops immediately when leaving strict region.
-        """
+    def compute_viewing_time(self, r_eci, v_eci, target_geodetic, t_datetime, offnadir_max, offnadir_margin=0.0, dt_step_coarse=1.0, dt_step_fine=0.5, dt_step_ultrafine=0.1, dt_max=600.0):
+        """compute_viewing_time(r_eci,v_eci,target_geodetic,t_datetime,offnadir_max,offnadir_margin=0.0,dt_step_coarse=1.0,dt_step_fine=0.5,dt_step_ultrafine=0.1,dt_max=600.0) -> float: Remaining time (s) target stays within strict off-nadir in LVLH (+Z nadir)."""
+        offnadir_max = float(offnadir_max)
+        offnadir_margin = float(offnadir_margin)
+        dt_step_coarse = float(dt_step_coarse)
+        dt_step_fine = min(float(dt_step_fine), dt_step_coarse)
+        dt_step_ultrafine = min(float(dt_step_ultrafine), dt_step_coarse)
+        dt_max = float(dt_max)
 
-        _, offnadir_now = self.point_to_target_unbounded(r_eci, v_eci, target_geodetic, t_datetime)
+        # off-nadir is defined in LVLH; do NOT use frame="BRF" here
+        _, offnadir_now = self.point_to_target_unbounded(r_eci, v_eci, target_geodetic, t_datetime, frame="LVLH")
 
-        # --- Entry check ---
-        if offnadir_now > offnadir_max + offnadir_margin:
+        if float(offnadir_now) > offnadir_max + offnadir_margin + 1e-9:
             return 0.0
 
-        # Track whether we've entered strict region yet
-        inside_strict = offnadir_now <= offnadir_max + 1e-6
-
-        dt = 0.0
+        inside_strict = float(offnadir_now) <= offnadir_max + 1e-9
         last_good = 0.0
+        dt = 0.0
 
-        if dt_step_fine > dt_step_coarse:
-            dt_step_fine = dt_step_coarse
+        r0 = np.asarray(r_eci, float).reshape(3)
+        v0 = np.asarray(v_eci, float).reshape(3)
 
-        if dt_step_ultrafine > dt_step_coarse:
-            dt_step_ultrafine = dt_step_coarse
+        while dt <= dt_max + 1e-9:
+            t_future = t_datetime + timedelta(seconds=float(dt))
+            r_future, v_future = self._kepler_propagate_universal(r0, v0, float(dt))
+            _, off_future = self.point_to_target_unbounded(r_future, v_future, target_geodetic, t_future, frame="LVLH")
+            off_future = float(off_future)
 
-        while dt <= dt_max:
-            t_future = t_datetime + timedelta(seconds=dt)
-            r_future, v_future = self._kepler_propagate_universal(r_eci, v_eci, dt)
-            _, offnadir_future = self.point_to_target_unbounded(r_future, v_future, target_geodetic, t_future)
-
-            if offnadir_future <= offnadir_max + 1e-6:
-                # Now inside strict region
+            if off_future <= offnadir_max + 1e-9:
                 inside_strict = True
                 last_good = dt
-                # adaptive stepping
-                if offnadir_future < offnadir_max - 1.0:
-                    step = dt_step_coarse
-                elif offnadir_future < offnadir_max - 0.3:
-                    step = dt_step_fine
+                if off_future < offnadir_max - 1.0:
+                    dt += dt_step_coarse
+                elif off_future < offnadir_max - 0.3:
+                    dt += dt_step_fine
                 else:
-                    step = dt_step_ultrafine
-                dt += step
+                    dt += dt_step_ultrafine
 
-            elif offnadir_future <= offnadir_max + offnadir_margin + 1e-6:
+            elif off_future <= offnadir_max + offnadir_margin + 1e-9:
                 if not inside_strict:
-                    # Still in margin on the way IN → keep stepping finely
                     dt += dt_step_ultrafine
                 else:
-                    # We were already inside strict, now leaving back into margin → stop
-                    return last_good
+                    return float(last_good)
 
             else:
-                # Beyond margin → stop regardless
-                return last_good
+                return float(last_good)
 
-        return last_good
+        return float(last_good)
 
     # -------------------------------------------------------------------------
     # Footprint helpers
@@ -480,65 +494,82 @@ class EOTools:
         v_tgt_eci = np.cross(omega_earth, r_tgt_eci).flatten()
         return r_tgt_eci, v_tgt_eci
 
+    # --- eotools.py: REPLACE set_max_offnadir COMPLETELY ---
 
+    def set_max_offnadir(self, offnadir_max, offnadir_unbound, pointing_vec_lvlh_target, r_eci, v_eci, target_geodetic, t_datetime, dt_step_coarse=1.0, dt_step_fine=0.5, dt_step_ultrafine=0.1, dt_max=600.0, mode="max"):
+        """set_max_offnadir(offnadir_max,offnadir_unbound,pointing_vec_lvlh_target,r_eci,v_eci,target_geodetic,t_datetime,dt_step_coarse=1.0,dt_step_fine=0.5,dt_step_ultrafine=0.1,dt_max=600.0,mode="max") -> tuple[np.ndarray,float,float|None]: Enforce off-nadir limit in LVLH; returns (LVLH LOS vec, offnadir_deg, time_to_sight_s)."""
+        offnadir_max = float(offnadir_max)
+        offnadir_unbound = float(offnadir_unbound)
 
-    def set_max_offnadir(self,
-                         offnadir_max: float,
-                         offnadir_deg_target: float,
-                         pointing_vec_brf_target,
-                         r_eci, v_eci, target_geodetic, t_datetime,
-                         dt_step_coarse: float = 1.0,
-                         dt_step_fine: float = 0.5,
-                         dt_step_ultrafine: float = 0.1,
-                         dt_max: float = 600.0,
-                         mode: str = 'max'):
-        """Predictive off-nadir limiter with adaptive step size."""
-        if offnadir_deg_target <= offnadir_max + 1e-3:
-            return pointing_vec_brf_target, offnadir_deg_target, None
+        pv = np.asarray(pointing_vec_lvlh_target, float).reshape(3)
+        n = float(np.linalg.norm(pv))
+        if n <= 0.0:
+            pv = np.array([0.0, 0.0, 1.0], float)
+        else:
+            pv /= n
 
+        if offnadir_unbound <= offnadir_max + 1e-3:
+            return pv, offnadir_unbound, 0.0
 
-        if mode == 'cap':
-            boresight_brf = np.array([0.0, 0.0, 1.0])
-            rot_axis = np.cross(boresight_brf, pointing_vec_brf_target)
-            n = np.linalg.norm(rot_axis)
-            rot_axis = np.array([1.0, 0.0, 0.0]) if n < 1e-8 else rot_axis / n
+        mode = str(mode).lower()
+
+        # "cap": immediately clamp to the max off-nadir along the great-circle between nadir and target (LVLH).
+        if mode == "cap":
+            boresight_lvlh = np.array([0.0, 0.0, 1.0], float)
+
+            rot_axis = np.cross(boresight_lvlh, pv)
+            axn = float(np.linalg.norm(rot_axis))
+            if axn < 1e-12:
+                # target is (anti)parallel; just return nadir or 180 case
+                return boresight_lvlh.copy(), offnadir_max, 0.0
+            rot_axis /= axn
 
             ang = np.deg2rad(offnadir_max)
-            K = np.array([[0, -rot_axis[2], rot_axis[1]],
-                          [rot_axis[2], 0, -rot_axis[0]],
-                          [-rot_axis[1], rot_axis[0], 0]])
-            R = np.eye(3) + np.sin(ang) * K + (1 - np.cos(ang)) * (K @ K)
-            new_vec = R @ boresight_brf
-            new_vec /= np.linalg.norm(new_vec)
-            if np.dot(new_vec, pointing_vec_brf_target) < 0:
-                new_vec = -new_vec
-            return new_vec, offnadir_max, None
+            K = np.array([[0.0, -rot_axis[2], rot_axis[1]],
+                          [rot_axis[2], 0.0, -rot_axis[0]],
+                          [-rot_axis[1], rot_axis[0], 0.0]], float)
+            R = np.eye(3) + np.sin(ang) * K + (1.0 - np.cos(ang)) * (K @ K)
 
-        if mode == 'max':
+            new_vec = R @ boresight_lvlh
+            new_vec /= float(np.linalg.norm(new_vec))
+            return new_vec, offnadir_max, 0.0
 
-            if dt_step_fine > dt_step_coarse:
-                dt_step_fine = dt_step_coarse
-
-            if dt_step_ultrafine > dt_step_coarse:
-                dt_step_ultrafine = dt_step_coarse
+        # "max": predictive—wait until target comes within the limit (LVLH), return the reachable LVLH vector at that time.
+        if mode == "max":
+            dt_step_coarse = float(dt_step_coarse)
+            dt_step_fine = min(float(dt_step_fine), dt_step_coarse)
+            dt_step_ultrafine = min(float(dt_step_ultrafine), dt_step_coarse)
+            dt_max = float(dt_max)
 
             dt = 0.0
+            r0 = np.asarray(r_eci, float).reshape(3)
+            v0 = np.asarray(v_eci, float).reshape(3)
 
-            while dt <= dt_max:
-                t_future = t_datetime + timedelta(seconds=dt)
-                r_future, v_future = self._kepler_propagate_universal(r_eci, v_eci, dt)
-                pointing_vec_brf_future, offnadir_future = self.point_to_target_unbounded(
-                    r_future, v_future, target_geodetic, t_future
+            while dt <= dt_max + 1e-9:
+                t_future = t_datetime + timedelta(seconds=float(dt))
+                r_future, v_future = self._kepler_propagate_universal(r0, v0, float(dt))
+
+                pv_future, off_future = self.point_to_target_unbounded(
+                    r_future, v_future, target_geodetic, t_future, frame="LVLH"
                 )
-                if offnadir_future <= offnadir_max:
-                    return pointing_vec_brf_future, offnadir_future, dt
-                if offnadir_future > offnadir_max + 2.0:
+
+                if float(off_future) <= offnadir_max + 1e-9:
+                    pv_future = np.asarray(pv_future, float).reshape(3)
+                    pv_future /= float(np.linalg.norm(pv_future))
+                    return pv_future, float(off_future), float(dt)
+
+                # adaptive stepping based on how far outside the bound we are
+                if float(off_future) > offnadir_max + 2.0:
                     step = dt_step_coarse
-                elif offnadir_future > offnadir_max + 0.5:
+                elif float(off_future) > offnadir_max + 0.5:
                     step = dt_step_fine
                 else:
                     step = dt_step_ultrafine
-                dt += step
+
+                dt += float(step)
 
             return None, None, None
+
+        raise ValueError("mode must be 'cap' or 'max'")
+
 

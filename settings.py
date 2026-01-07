@@ -148,7 +148,7 @@ J_sat = estimate_box_inertia(sat_mass, sat_length, sat_width, sat_height)       
 # SENSOR
 
 elevation_min = 10.0                                    # Minimal elevation [deg]
-offnadir_margin = offnadir_limit * 0.02                 # Margin to add allow observation at offnadir max
+offnadir_margin = 0.0                # Margin to add allow observation at offnadir max
 
 resolution = 124                                        # Resolution of render
 sample_count = 512                                      # 8192 min, 2048 * 2**7 max
