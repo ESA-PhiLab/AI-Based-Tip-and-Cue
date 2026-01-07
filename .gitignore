@@ -37,6 +37,7 @@ output.log
 sim_output.xlsx
 simulation.mp4
 
+dataset/create_dataset/dataset_test/*
 dataset/create_dataset/patch_*
 dataset/create_dataset/radiance_*
 dataset/create_dataset/reflection_*

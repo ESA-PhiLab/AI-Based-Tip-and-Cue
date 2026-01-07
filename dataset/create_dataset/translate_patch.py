@@ -447,6 +447,8 @@ def _rotate_bbox_xywh(bbox: list, w: int, h: int, angle: int) -> list:
     return [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
 
 
+
+
 def rotate_image_and_annotations(orig_img_u8: np.ndarray, anns: list, rotation_angle_deg: float) -> tuple[np.ndarray, list]:
     """rotate_image_and_annotations(orig_img_u8,anns,rotation_angle_deg) -> (img_u8,anns2): Rotate image and COCO anns by 0/90/180/-90."""
     angle = _normalize_rotation_angle(rotation_angle_deg)
@@ -475,6 +477,83 @@ def rotate_image_and_annotations(orig_img_u8: np.ndarray, anns: list, rotation_a
         anns2.append(a2)
 
     return img2, anns2
+
+def _mirror_xy(x: float, y: float, w: int, h: int, direction: str) -> tuple[float, float]:
+    """_mirror_xy(x,y,w,h,direction) -> (x2,y2): Mirror a point in image coords ('horizontal' or 'vertical')."""
+    if direction == "horizontal":   # left-right flip
+        return (w - 1) - x, y
+    if direction == "vertical":     # up-down flip
+        return x, (h - 1) - y
+    raise ValueError("direction must be 'horizontal' or 'vertical'.")
+
+
+def _mirror_segmentation(segmentation: list, w: int, h: int, direction: str) -> list:
+    """_mirror_segmentation(segmentation,w,h,direction) -> list: Mirror COCO polygon segmentation."""
+    if not isinstance(segmentation, list):
+        return segmentation
+
+    out = []
+    for poly in segmentation:
+        if not isinstance(poly, list) or len(poly) < 6:
+            out.append(poly)
+            continue
+        flat = []
+        for i in range(0, len(poly), 2):
+            x, y = float(poly[i]), float(poly[i + 1])
+            x2, y2 = _mirror_xy(x, y, w, h, direction)
+            flat.extend([x2, y2])
+        out.append(flat)
+    return out
+
+
+def _mirror_bbox_xywh(bbox: list, w: int, h: int, direction: str) -> list:
+    """_mirror_bbox_xywh(bbox,w,h,direction) -> list: Mirror bbox [x,y,w,h] and keep axis-aligned bbox."""
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return bbox
+
+    x, y, bw, bh = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+
+    if direction == "horizontal":
+        x2 = (w - 1) - (x + bw)
+        return [float(x2), float(y), float(bw), float(bh)]
+    if direction == "vertical":
+        y2 = (h - 1) - (y + bh)
+        return [float(x), float(y2), float(bw), float(bh)]
+
+    raise ValueError("direction must be 'horizontal' or 'vertical'.")
+
+
+def mirror_image_and_annotations(orig_img_u8: np.ndarray, anns: list, mirror_bool: bool = False, direction: str = "horizontal") -> tuple[np.ndarray, list]:
+    """mirror_image_and_annotations(orig_img_u8,anns,mirror=False,direction='horizontal') -> (img_u8,anns2): Mirror image+COCO anns."""
+    if not mirror_bool:
+        return orig_img_u8, anns
+
+    img = np.asarray(orig_img_u8)
+    if img.ndim != 3:
+        raise ValueError(f"orig_img_u8 must be HxWxC, got shape={img.shape}")
+
+    h, w = img.shape[:2]
+
+    if direction == "horizontal":
+        img2 = img[:, ::-1, ...]
+    elif direction == "vertical":
+        img2 = img[::-1, :, ...]
+    else:
+        raise ValueError("direction must be 'horizontal' or 'vertical'.")
+
+    anns2 = []
+    for ann in anns:
+        if not isinstance(ann, dict):
+            continue
+        a2 = dict(ann)
+        if "segmentation" in a2:
+            a2["segmentation"] = _mirror_segmentation(a2.get("segmentation", []), w, h, direction)
+        if "bbox" in a2:
+            a2["bbox"] = _mirror_bbox_xywh(a2.get("bbox", None), w, h, direction)
+        anns2.append(a2)
+
+    return img2, anns2
+
 
 
 def _write_temp_rotated_inputs(rot_img_u8: np.ndarray, rot_anns: list, base_coco_path: Path) -> tuple[Path, Path]:
@@ -509,13 +588,8 @@ def _write_temp_rotated_inputs(rot_img_u8: np.ndarray, rot_anns: list, base_coco
     anns_path.write_text(json.dumps(coco_out, indent=2), encoding="utf-8")
     return img_path, anns_path
 
-
-
-import numpy as np
-
-
-def rotate_raw_patch_bundle(patch_bundle: dict, rotation_angle_deg: float) -> dict:
-    """rotate_raw_patch_bundle_for_saving(patch_bundle,rotation_angle_deg) -> dict: Rotate patch + raw anns for save_patch('patch_raw_rot_255')."""
+def mirror_rotate_raw_patch_bundle(patch_bundle: dict, rotation_angle_deg: float, mirror_bool: bool = False) -> dict:
+    """rotate_raw_patch_bundle(patch_bundle,rotation_angle_deg,mirror=False) -> dict: Mirror then rotate patch + raw anns."""
     if "patch" not in patch_bundle:
         raise KeyError("patch_bundle['patch'] missing")
     if "anns" not in patch_bundle or not isinstance(patch_bundle["anns"], list):
@@ -525,9 +599,16 @@ def rotate_raw_patch_bundle(patch_bundle: dict, rotation_angle_deg: float) -> di
     if patch.ndim != 3 or patch.shape[2] < 3:
         raise ValueError(f"patch_bundle['patch'] must be HxWx3, got shape={patch.shape}")
 
-    rot_patch, rot_anns = rotate_image_and_annotations(
+    mirr_patch, mirr_anns = mirror_image_and_annotations(
         orig_img_u8=patch.astype(np.uint8),
         anns=patch_bundle["anns"],
+        mirror_bool=bool(mirror_bool),
+        direction="horizontal",
+    )
+
+    rot_patch, rot_anns = rotate_image_and_annotations(
+        orig_img_u8=mirr_patch.astype(np.uint8),
+        anns=mirr_anns,
         rotation_angle_deg=float(rotation_angle_deg),
     )
 
@@ -535,9 +616,11 @@ def rotate_raw_patch_bundle(patch_bundle: dict, rotation_angle_deg: float) -> di
     out["patch"] = rot_patch
     out["anns"] = rot_anns
     out["rotation_angle_deg"] = float(rotation_angle_deg)
-    out.pop("patch_name", None)     # ensure save_patch creates a new name for the rot split
-    out.pop("anns_patch", None)     # ensure save_patch re-derives patch-local anns_patch
+    out["mirror_bool"] = bool(mirror_bool)
+    out.pop("patch_name", None)
+    out.pop("anns_patch", None)
     return out
+
 
 
 
@@ -545,14 +628,15 @@ def rotate_raw_patch_bundle(patch_bundle: dict, rotation_angle_deg: float) -> di
 # Public API
 # =========================
 def translate_image(patch_bundle: dict,
-                       render_resolution: int,
-                       sat_lat: float, sat_lon: float, sat_alt: float,
-                       tgt_lat: float, tgt_lon: float, tgt_alt: float,
-                       dem_seed: int,
-                       show_plot: bool = False,
-                       datetime_utc: datetime | None = None,
-                       generate_nadir: bool = False,
-                       rotation_angle_deg: float = 0.0) -> dict:
+                    render_resolution: int,
+                    sat_lat: float, sat_lon: float, sat_alt: float,
+                    tgt_lat: float, tgt_lon: float, tgt_alt: float,
+                    dem_seed: int,
+                    show_plot: bool = False,
+                    datetime_utc: datetime | None = None,
+                    generate_nadir: bool = False,
+                    rotation_angle_deg: float = 0.0,
+                    mirror_bool: bool = False) -> dict:
 
     """translate_image(patch_bundle,render_resolution,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,show_plot,datetime_utc) -> dict: Render offnadir + translate anns."""
     if not isinstance(patch_bundle, dict):
@@ -570,7 +654,19 @@ def translate_image(patch_bundle: dict,
 
     orig_rgb = np.asarray(Image.open(img_path).convert("RGB"), dtype=np.uint8)
 
-    rot_rgb, rot_anns = rotate_image_and_annotations(orig_rgb, anns, rotation_angle_deg=float(rotation_angle_deg))
+    mirr_rgb, mirr_anns = mirror_image_and_annotations(
+        orig_img_u8=orig_rgb,
+        anns=anns,
+        mirror_bool=bool(mirror_bool),
+        direction="horizontal",
+    )
+
+    rot_rgb, rot_anns = rotate_image_and_annotations(
+        orig_img_u8=mirr_rgb.astype(np.uint8),
+        anns=mirr_anns,
+        rotation_angle_deg=float(rotation_angle_deg),
+    )
+
     tex_h, tex_w = rot_rgb.shape[:2]
     orig_overlay = draw_overlay(Image.fromarray(rot_rgb, mode="RGB").copy(), rot_anns)
 
@@ -783,6 +879,7 @@ def translate_image(patch_bundle: dict,
     out["scale"] = scale
     out["offnadir_deg"] = offnadir_deg
     out["rotation_angle_deg"] = rotation_angle_deg
+    out["mirror_bool"] = bool(mirror_bool)
 
     try:
         Path(rot_img_path).unlink(missing_ok=True)

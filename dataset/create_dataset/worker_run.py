@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 from create_patch import generate_patch
 from save_patch import save_patch
-from translate_patch import translate_image, rotate_raw_patch_bundle
+from translate_patch import translate_image, mirror_rotate_raw_patch_bundle
 
 
 def cleanup() -> None:
@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mode_multiple_allow_partial", type=int, default=0)
     p.add_argument("--window_size", type=int, default=64)
     p.add_argument("--rotation_angle_deg", type=float, default=0.0)
+    p.add_argument("--mirror_bool", type=int, default=0)
 
     p.add_argument("--nowhale_max_fraction", type=float, default=0.10)
     p.add_argument("--whale_min_fraction", type=float, default=0.99)
@@ -102,7 +103,8 @@ def write_meta(meta_out: str,
                half_fraction_range: tuple[float, float],
                whale_min_fraction: float,
                nowhale_max_fraction: float,
-               rotation_angle_deg: float) -> None:
+               rotation_angle_deg: float,
+               mirror_bool: bool) -> None:
     """write_meta(meta_out,patch_bundle,label_simple,half_fraction_range,whale_min_fraction,nowhale_max_fraction,rotation_angle_deg) -> None: Write per-run patch outputs."""
     anns_patch = patch_bundle.get("anns_patch", patch_bundle.get("anns", []))
     anns_patch_rows = [ann_to_row_dict(a) for a in anns_patch] if isinstance(anns_patch, list) else []
@@ -114,6 +116,7 @@ def write_meta(meta_out: str,
         "fracs": patch_bundle.get("fracs", []),
         "offset_xy": list(patch_bundle.get("offset_xy", (None, None))),
         "rotation_angle_deg": float(rotation_angle_deg),
+        "mirror_bool": bool(mirror_bool),
         "anns_patch": anns_patch_rows,
         "label_thresholds": {
             "nowhale_max_fraction": float(nowhale_max_fraction),
@@ -176,6 +179,7 @@ def main() -> int:
     """main() -> int: Run one isolated pipeline stage (nadir or offnadir)."""
     args = parse_args()
     show_plot = bool(int(args.show_plot))
+    mirror_bool = bool(int(args.mirror_bool))
 
     dt = (
         datetime.fromisoformat(args.datetime_utc.replace("Z", "+00:00"))
@@ -203,7 +207,7 @@ def main() -> int:
 
         save_patch("patch_raw_255", patch_bundle)
 
-        b_rot = rotate_raw_patch_bundle(patch_bundle, args.rotation_angle_deg)
+        b_rot = mirror_rotate_raw_patch_bundle(patch_bundle, args.rotation_angle_deg, mirror_bool=mirror_bool)
         save_patch("patch_raw_rot_255", b_rot)
 
         label_simple = classify_label(
@@ -221,6 +225,7 @@ def main() -> int:
             whale_min_fraction=float(args.whale_min_fraction),
             nowhale_max_fraction=float(args.nowhale_max_fraction),
             rotation_angle_deg=float(args.rotation_angle_deg),
+            mirror_bool=mirror_bool
         )
 
         nadir_bundle = translate_image(
@@ -232,7 +237,8 @@ def main() -> int:
             show_plot=show_plot,
             datetime_utc=dt,
             generate_nadir=True,
-            rotation_angle_deg=args.rotation_angle_deg
+            rotation_angle_deg=args.rotation_angle_deg,
+            mirror_bool=mirror_bool
         )
 
 
@@ -278,7 +284,8 @@ def main() -> int:
         show_plot=show_plot,
         datetime_utc=dt,
         generate_nadir=False,
-        rotation_angle_deg=args.rotation_angle_deg
+        rotation_angle_deg=args.rotation_angle_deg,
+        mirror_bool=mirror_bool
     )
 
     update_meta_file(args.meta_out, {

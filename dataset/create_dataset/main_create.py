@@ -78,6 +78,7 @@ def _run_worker(stage: str,
                 show_plot: bool,
                 render_resolution: int,
                 rotation_angle_deg: float,
+                mirror_bool: int,
                 sat_lat: float, sat_lon: float, sat_alt: float,
                 tgt_lat: float, tgt_lon: float, tgt_alt: float,
                 datetime_utc: str,
@@ -121,6 +122,7 @@ def _run_worker(stage: str,
         "--mode_multiple_allow_partial", "1" if bool(patch_parameters["mode_multiple_allow_partial"]) else "0",
         "--window_size", str(int(patch_parameters["window_size"])),
         "--rotation_angle_deg", str(float(rotation_angle_deg)),
+        "--mirror_bool", "1" if mirror_bool else "0",
 
         "--nowhale_max_fraction", str(float(patch_parameters["nowhale_max_fraction"])),
         "--whale_min_fraction", str(float(patch_parameters["whale_min_fraction"])),
@@ -147,6 +149,7 @@ def run_one(i: int,
             show_plot: bool,
             render_resolution: int,
             rotation_angle_deg: float,
+            mirror_bool: int,
             sat_lat: float, sat_lon: float, sat_alt: float,
             tgt_lat: float, tgt_lon: float, tgt_alt: float,
             datetime_utc: str,
@@ -165,6 +168,7 @@ def run_one(i: int,
         show_plot=show_plot,
         render_resolution=render_resolution,
         rotation_angle_deg=rotation_angle_deg,
+        mirror_bool=mirror_bool,
         sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
         tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
         datetime_utc=datetime_utc,
@@ -189,6 +193,7 @@ def run_one(i: int,
         show_plot=show_plot,
         render_resolution=render_resolution,
         rotation_angle_deg=rotation_angle_deg,
+        mirror_bool=mirror_bool,
         sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
         tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
         datetime_utc=datetime_utc,
@@ -223,6 +228,7 @@ def run_dataset(n_runs: int,
     meta_dir.mkdir(parents=True, exist_ok=True)
 
     rng_rot = np.random.default_rng(img_rot_seed)
+    rng_mirr = np.random.default_rng(img_rot_seed+1)
 
     if balanced_offnadir:
 
@@ -240,6 +246,7 @@ def run_dataset(n_runs: int,
                 print(f"Image: {img_file} | Offnadir request: {ang} deg")
 
                 rotation_angle_deg = float(rng_rot.choice([0, 90, 180, -90]))
+                mirror_bool = bool(rng_mirr.integers(0, 2))
 
                 crop_patch_seed_i = crop_patch_seed + run_idx
                 dem_seed_i = dem_seed + run_idx
@@ -254,43 +261,49 @@ def run_dataset(n_runs: int,
 
                 print(f"Pose: sat=({sat_lat},{sat_lon},{sat_alt}) tgt=({tgt_lat},{tgt_lon},{tgt_alt}) dt={datetime_utc}")
 
-                run_one(
-                    i=run_idx,
-                    img_file=img_file,
-                    crop_patch_seed_i=crop_patch_seed_i,
-                    dem_seed_i=dem_seed_i,
-                    show_plot=show_plot,
-                    render_resolution=render_resolution,
-                    rotation_angle_deg=rotation_angle_deg,
-                    sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
-                    tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
-                    datetime_utc=datetime_utc,
-                    patch_parameters=patch_parameters,
-                    meta_out=meta_out,
-                )
+                try:
+                    run_one(
+                        i=run_idx,
+                        img_file=img_file,
+                        crop_patch_seed_i=crop_patch_seed_i,
+                        dem_seed_i=dem_seed_i,
+                        show_plot=show_plot,
+                        render_resolution=render_resolution,
+                        rotation_angle_deg=rotation_angle_deg,
+                        mirror_bool=mirror_bool,
+                        sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
+                        tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
+                        datetime_utc=datetime_utc,
+                        patch_parameters=patch_parameters,
+                        meta_out=meta_out,
+                    )
 
-                meta = json.loads(meta_out.read_text(encoding="utf-8"))
+                    meta = json.loads(meta_out.read_text(encoding="utf-8"))
 
-                append_run_rows(
-                    ws_patch=ws_patch,
-                    ws_off=ws_off,
-                    ws_ann=ws_ann,
-                    i=run_idx,
-                    img_file=img_file,
-                    result_name=result_name,
-                    detection_id=detection_id,
-                    pick_img_seed_i=pick_img_seed_i,
-                    crop_patch_seed_i=crop_patch_seed_i,
-                    dem_seed_i=dem_seed_i,
-                    pick_pose_seed_i=pick_pose_seed_i,
-                    sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
-                    tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
-                    datetime_utc=datetime_utc,
-                    meta=meta,
-                )
+                    append_run_rows(
+                        ws_patch=ws_patch,
+                        ws_off=ws_off,
+                        ws_ann=ws_ann,
+                        i=run_idx,
+                        img_file=img_file,
+                        result_name=result_name,
+                        detection_id=detection_id,
+                        pick_img_seed_i=pick_img_seed_i,
+                        crop_patch_seed_i=crop_patch_seed_i,
+                        dem_seed_i=dem_seed_i,
+                        pick_pose_seed_i=pick_pose_seed_i,
+                        sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
+                        tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
+                        datetime_utc=datetime_utc,
+                        meta=meta,
+                    )
 
-                wb.save(overview_xlsx)
-                time.sleep(0.1)
+                    wb.save(overview_xlsx)
+                    time.sleep(0.1)
+
+                except Exception as e:
+                    print(f"Failed to add image {img_file} to dataset, given Exception:")
+                    print(f"{e}")
 
                 run_idx += 1
 
@@ -306,6 +319,7 @@ def run_dataset(n_runs: int,
         pick_pose_seed_i = pick_pose_seed + i
 
         rotation_angle_deg = float(rng_rot.choice([0, 90, 180, -90]))
+        mirror_bool = bool(rng_mirr.integers(0, 2))
 
         result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc = pick_random_pose(
             poses_xlsx, pick_pose_seed=pick_pose_seed_i
@@ -328,6 +342,7 @@ def run_dataset(n_runs: int,
             show_plot=show_plot,
             render_resolution=render_resolution,
             rotation_angle_deg=rotation_angle_deg,
+            mirror_bool=mirror_bool,
             sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
             tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
             datetime_utc=datetime_utc,
@@ -370,6 +385,10 @@ def main() -> None:
 
     render_resolution = 64 # 64 * 2
 
+    n_images = 1 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
+    balanced_offnadir = True  # False = random offnadir, loop by one, True = per-image angles 5..60
+
+
     pick_img_seed_0 = 12
     crop_patch_seed = 42
     dem_seed = 1
@@ -377,9 +396,8 @@ def main() -> None:
     img_rot_seed = 10
 
     show_plot = False
-    n_images = count_images_in_subfolders(Path("dataset") / "whales_from_space")
 
-    balanced_offnadir = True  # False = random offnadir, loop by one, True = per-image angles 5..60
+
 
     # mode_single options:
     #   "full"      -> only full whales
@@ -387,7 +405,7 @@ def main() -> None:
     #   "ocean"     -> only ocean (no whales)
     #   "full_half" -> full OR half whales
     #   "all"       -> anything
-    #
+
     # mode_multiple_allow_partial:
     #   True  -> if multiple whales, allow other partial whales in the patch
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)

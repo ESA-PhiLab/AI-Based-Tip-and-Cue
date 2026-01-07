@@ -6,6 +6,10 @@ import numpy as np
 from PIL import Image, ImageDraw
 import matplotlib.pyplot as plt
 
+import tempfile
+import uuid
+
+
 
 # =========================
 # Path handling
@@ -442,6 +446,403 @@ def generate_patch(mode_single: str,
 
     return patch_bundle
 
+def _resolve_patch_anns_path(patch_img_path: Path) -> Path:
+    """_resolve_patch_anns_path(patch_img_path) -> Path: Find patch_raw/.../final_annotations.json next to patch image."""
+    subdir = patch_img_path.parent.relative_to(PATCH_DIR)  # e.g. Pelagos2016/
+    p = PATCH_DIR / subdir / ANNS_JSON_NAME
+    if not p.is_file():
+        # fallback: global patch_raw/final_annotations.json (if you store it once)
+        p2 = PATCH_DIR / ANNS_JSON_NAME
+        if p2.is_file():
+            return p2
+        raise FileNotFoundError(f"Missing annotations json for patch: tried {p} and {p2}")
+    return p
+
+def _normalize_rotation_angle(rotation_angle_deg: float) -> int:
+    """_normalize_rotation_angle(rotation_angle_deg) -> int: Normalize to one of {0,90,180,-90}."""
+    a = int(round(float(rotation_angle_deg)))
+    a = ((a + 180) % 360) - 180  # map to [-180,180)
+    if a == -180:
+        a = 180
+    if a not in (0, 90, 180, -90):
+        raise ValueError("rotation_angle_deg must be one of {0, 90, 180, -90}.")
+    return a
+
+
+def _rotate_xy(x: float, y: float, w: int, h: int, angle: int) -> tuple[float, float]:
+    """_rotate_xy(x,y,w,h,angle) -> (x2,y2): Rotate a point around image origin for multiples of 90 deg."""
+    if angle == 0:
+        return x, y
+    if angle == 90:      # CCW
+        return y, (w - 1) - x
+    if angle == -90:     # CW
+        return (h - 1) - y, x
+    # 180
+    return (w - 1) - x, (h - 1) - y
+
+
+def _rotated_size(w: int, h: int, angle: int) -> tuple[int, int]:
+    """_rotated_size(w,h,angle) -> (w2,h2): Output image size after rotation."""
+    if angle in (90, -90):
+        return h, w
+    return w, h
+
+
+def _rotate_segmentation(segmentation: list, w: int, h: int, angle: int) -> list:
+    """_rotate_segmentation(segmentation,w,h,angle) -> list: Rotate COCO polygon segmentation."""
+    if not isinstance(segmentation, list):
+        return segmentation
+
+    out = []
+    for poly in segmentation:
+        if not isinstance(poly, list) or len(poly) < 6:
+            out.append(poly)
+            continue
+        flat = []
+        for i in range(0, len(poly), 2):
+            x, y = float(poly[i]), float(poly[i + 1])
+            x2, y2 = _rotate_xy(x, y, w, h, angle)
+            flat.extend([x2, y2])
+        out.append(flat)
+    return out
+
+
+def _rotate_bbox_xywh(bbox: list, w: int, h: int, angle: int) -> list:
+    """_rotate_bbox_xywh(bbox,w,h,angle) -> list: Rotate bbox [x,y,w,h] and return new axis-aligned bbox."""
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return bbox
+
+    x, y, bw, bh = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+    corners = [(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh)]
+    rc = [_rotate_xy(cx, cy, w, h, angle) for (cx, cy) in corners]
+
+    xs = [p[0] for p in rc]
+    ys = [p[1] for p in rc]
+    x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+    return [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
+
+
+
+
+def _write_temp_rotated_inputs(rot_img_u8: np.ndarray, rot_anns: list, base_coco_path: Path) -> tuple[Path, Path]:
+    """_write_temp_rotated_inputs(rot_img_u8,rot_anns,base_coco_path) -> (img_path,anns_path): Write temp rotated image + COCO json."""
+    coco_in = json.loads(Path(base_coco_path).read_text(encoding="utf-8"))
+
+    h2, w2 = rot_img_u8.shape[:2]
+    tmp_dir = Path(tempfile.gettempdir()) / "ai_tc_rotate"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    tag = uuid.uuid4().hex[:10]
+    img_name = f"rot_{tag}.png"
+    img_path = tmp_dir / img_name
+    Image.fromarray(rot_img_u8, mode="RGB").save(img_path)
+
+    coco_out = {
+        "info": coco_in.get("info", {}),
+        "licenses": coco_in.get("licenses", []),
+        "categories": coco_in.get("categories", []),
+        "images": [{"id": 1, "file_name": img_name, "width": int(w2), "height": int(h2)}],
+        "annotations": [],
+    }
+
+    for a in rot_anns:
+        if not isinstance(a, dict):
+            continue
+        a2 = dict(a)
+        a2["image_id"] = 1
+        coco_out["annotations"].append(a2)
+
+    anns_path = tmp_dir / f"rot_{tag}.json"
+    anns_path.write_text(json.dumps(coco_out, indent=2), encoding="utf-8")
+    return img_path, anns_path
+
+
+
+
+
+
+def mirror_rotate_raw_patch_bundle(patch_bundle: dict, rotation_angle_deg: float, mirror: bool = False) -> dict:
+    """rotate_raw_patch_bundle(patch_bundle,rotation_angle_deg,mirror=False) -> dict: Mirror then rotate patch + raw anns."""
+    if "patch" not in patch_bundle:
+        raise KeyError("patch_bundle['patch'] missing")
+    if "anns" not in patch_bundle or not isinstance(patch_bundle["anns"], list):
+        raise KeyError("patch_bundle['anns'] missing (expected raw image-space COCO anns)")
+
+    patch = np.asarray(patch_bundle["patch"])
+    if patch.ndim != 3 or patch.shape[2] < 3:
+        raise ValueError(f"patch_bundle['patch'] must be HxWx3, got shape={patch.shape}")
+
+    mirr_patch, mirr_anns = mirror_image_and_annotations(
+        orig_img_u8=patch.astype(np.uint8),
+        anns=patch_bundle["anns"],
+        mirror=bool(mirror),
+        direction="horizontal",
+    )
+
+    rot_patch, rot_anns = rotate_image_and_annotations(
+        orig_img_u8=mirr_patch.astype(np.uint8),
+        anns=mirr_anns,
+        rotation_angle_deg=float(rotation_angle_deg),
+    )
+
+    out = dict(patch_bundle)
+    out["patch"] = rot_patch
+    out["anns"] = rot_anns
+    out["rotation_angle_deg"] = float(rotation_angle_deg)
+    out["mirror"] = bool(mirror)
+    out.pop("patch_name", None)
+    out.pop("anns_patch", None)
+    return out
+
+
+
+
+
+def rotate_image_and_annotations(orig_img_u8: np.ndarray, anns: list, rotation_angle_deg: float) -> tuple[np.ndarray, list]:
+    """rotate_image_and_annotations(orig_img_u8,anns,rotation_angle_deg) -> (img_u8,anns2): Rotate image and COCO anns by 0/90/180/-90."""
+    angle = _normalize_rotation_angle(rotation_angle_deg)
+    if angle == 0:
+        return orig_img_u8, anns
+
+    h, w = orig_img_u8.shape[:2]
+
+    # numpy rotations are CCW for k>0
+    if angle == 90:
+        img2 = np.rot90(orig_img_u8, k=1)
+    elif angle == -90:
+        img2 = np.rot90(orig_img_u8, k=3)
+    else:  # 180
+        img2 = np.rot90(orig_img_u8, k=2)
+
+    anns2 = []
+    for ann in anns:
+        if not isinstance(ann, dict):
+            continue
+        a2 = dict(ann)
+        if "segmentation" in a2:
+            a2["segmentation"] = _rotate_segmentation(a2.get("segmentation", []), w, h, angle)
+        if "bbox" in a2:
+            a2["bbox"] = _rotate_bbox_xywh(a2.get("bbox", None), w, h, angle)
+        anns2.append(a2)
+
+    return img2, anns2
+
+def _mirror_xy(x: float, y: float, w: int, h: int, direction: str) -> tuple[float, float]:
+    """_mirror_xy(x,y,w,h,direction) -> (x2,y2): Mirror a point ('horizontal' or 'vertical')."""
+    if direction == "horizontal":  # left-right
+        return (w - 1) - x, y
+    if direction == "vertical":    # up-down
+        return x, (h - 1) - y
+    raise ValueError("direction must be 'horizontal' or 'vertical'.")
+
+
+def _mirror_segmentation(segmentation: list, w: int, h: int, direction: str) -> list:
+    """_mirror_segmentation(segmentation,w,h,direction) -> list: Mirror COCO polygon segmentation."""
+    if not isinstance(segmentation, list):
+        return segmentation
+
+    out = []
+    for poly in segmentation:
+        if not isinstance(poly, list) or len(poly) < 6:
+            out.append(poly)
+            continue
+        flat = []
+        for i in range(0, len(poly), 2):
+            x, y = float(poly[i]), float(poly[i + 1])
+            x2, y2 = _mirror_xy(x, y, w, h, direction)
+            flat.extend([x2, y2])
+        out.append(flat)
+    return out
+
+
+def _mirror_bbox_xywh(bbox: list, w: int, h: int, direction: str) -> list:
+    """_mirror_bbox_xywh(bbox,w,h,direction) -> list: Mirror bbox [x,y,w,h]."""
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return bbox
+
+    x, y, bw, bh = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+
+    if direction == "horizontal":
+        x2 = (w - 1) - (x + bw)
+        return [float(x2), float(y), float(bw), float(bh)]
+    if direction == "vertical":
+        y2 = (h - 1) - (y + bh)
+        return [float(x), float(y2), float(bw), float(bh)]
+
+    raise ValueError("direction must be 'horizontal' or 'vertical'.")
+
+
+def mirror_image_and_annotations(orig_img_u8: np.ndarray, anns: list, mirror: bool = False, direction: str = "horizontal") -> tuple[np.ndarray, list]:
+    """mirror_image_and_annotations(orig_img_u8,anns,mirror=False,direction='horizontal') -> (img_u8,anns2): Mirror image+COCO anns."""
+    if not mirror:
+        return orig_img_u8, anns
+
+    img = np.asarray(orig_img_u8)
+    if img.ndim != 3:
+        raise ValueError(f"orig_img_u8 must be HxWxC, got shape={img.shape}")
+
+    h, w = img.shape[:2]
+
+    if direction == "horizontal":
+        img2 = img[:, ::-1, ...]
+    elif direction == "vertical":
+        img2 = img[::-1, :, ...]
+    else:
+        raise ValueError("direction must be 'horizontal' or 'vertical'.")
+
+    anns2 = []
+    for ann in anns:
+        if not isinstance(ann, dict):
+            continue
+        a2 = dict(ann)
+        if "segmentation" in a2:
+            a2["segmentation"] = _mirror_segmentation(a2.get("segmentation", []), w, h, direction)
+        if "bbox" in a2:
+            a2["bbox"] = _mirror_bbox_xywh(a2.get("bbox", None), w, h, direction)
+        anns2.append(a2)
+
+    return img2, anns2
+
+
+def make_patch_local_anns(anns: list, top_left: tuple[int, int], patch_wh: tuple[int, int], offset_xy: tuple[int, int]) -> list:
+    """make_patch_local_anns(anns,top_left,patch_wh,offset_xy) -> list: Clip anns to patch and shift to patch-local coords."""
+    x, y = int(top_left[0]), int(top_left[1])
+    pw, ph = int(patch_wh[0]), int(patch_wh[1])
+    ox, oy = int(offset_xy[0]), int(offset_xy[1])
+
+    rect_xyxy = (float(x), float(y), float(x + pw), float(y + ph))
+    out = []
+
+    for ann in anns:
+        if not isinstance(ann, dict):
+            continue
+
+        segs_out = []
+        for seg in ann.get("segmentation", []):
+            if not seg or len(seg) < 6:
+                continue
+
+            poly = np.array([(seg[i] - ox, seg[i + 1] - oy) for i in range(0, len(seg), 2)], dtype=float)
+            poly = clip_polygon_to_rect(poly, rect_xyxy)
+            if poly.shape[0] < 3:
+                continue
+
+            poly[:, 0] -= float(x)
+            poly[:, 1] -= float(y)
+
+            flat = []
+            for px, py in poly.tolist():
+                flat.extend([float(px), float(py)])
+            if len(flat) >= 6:
+                segs_out.append(flat)
+
+        bbox_out = None
+        if "bbox" in ann and isinstance(ann["bbox"], (list, tuple)) and len(ann["bbox"]) == 4:
+            bx, by, bw, bh = ann["bbox"]
+            bbox_img = (float(bx - ox), float(by - oy), float(bw), float(bh))
+            ib = intersect_bbox_with_rect(bbox_img, rect_xyxy)
+            if ib is not None:
+                ix, iy, iw, ih = ib
+                bbox_out = [float(ix - x), float(iy - y), float(iw), float(ih)]
+
+        if not segs_out and bbox_out is None:
+            continue
+
+        a2 = dict(ann)
+        a2["segmentation"] = segs_out
+        if bbox_out is not None:
+            a2["bbox"] = bbox_out
+        out.append(a2)
+
+    return out
+
+
+def plot_patch_after_rotation(patch_bundle: dict) -> None:
+    """plot_patch_after_rotation(patch_bundle) -> None: Left panel identical to generate_patch(plot_patch=True); right panel is rotated patch with rotated anns."""
+    if "img_file" not in patch_bundle:
+        raise KeyError("patch_bundle['img_file'] missing")
+    if "top_left" not in patch_bundle or "patch_wh" not in patch_bundle:
+        raise KeyError("patch_bundle['top_left'] or ['patch_wh'] missing")
+    if "rotation_angle_deg" not in patch_bundle:
+        raise KeyError("patch_bundle['rotation_angle_deg'] missing (call rotate_raw_patch_bundle first)")
+    if "patch" not in patch_bundle:
+        raise KeyError("patch_bundle['patch'] missing")
+
+    img_file = str(patch_bundle["img_file"])
+    x, y = map(int, patch_bundle["top_left"])
+    pw, ph = map(int, patch_bundle["patch_wh"])
+    rot_patch = np.asarray(patch_bundle["patch"], dtype=np.uint8)
+    angle = float(patch_bundle["rotation_angle_deg"])
+    label_out = str(patch_bundle.get("label", "UNKNOWN"))
+    mirror = bool(patch_bundle.get("mirror", False))
+
+    # --- Rebuild LEFT panel exactly like generate_patch(plot_patch=True) ---
+    coco = load_json(ANNOTATIONS_PATH)
+    images = coco.get("images", [])
+    annotations = coco.get("annotations", [])
+
+    img_info = next((i for i in images if i.get("file_name") == img_file), None)
+    if img_info is None:
+        raise FileNotFoundError(f"Image not found in COCO: {img_file}")
+
+    anns_full = anns_by_image(annotations).get(img_info["id"], [])
+
+    img_path = BASE_DIR / img_file
+    if not img_path.is_file():
+        raise FileNotFoundError(f"Image file missing: {img_path}")
+
+    img_rgb = np.asarray(Image.open(img_path).convert("RGB"), dtype=np.uint8)
+
+    # Must use the same crop behavior as generate_patch
+    offset_xy = (0, 0)
+    if bool(BOOLS.get("crop_black_border", True)):
+        img_rgb, offset_xy = crop_black_border_image(img_rgb, threshold=int(CROP_THRESHOLD))
+
+    # Draw full overlay (all anns) + black patch rectangle
+    mask_alpha = 80  # generate_patch default; if you used another value you must pass/store it somewhere
+    full_overlay = draw_annotations_with_transparent_mask(
+        img_rgb, anns_full, offset_xy=offset_xy, clip_rect_xyxy=None, only_ann_indices=None, line_width=1, mask_alpha=mask_alpha
+    )
+    full_img = Image.fromarray(full_overlay, mode="RGB").convert("RGBA")
+    dfull = ImageDraw.Draw(full_img, "RGBA")
+    _draw_bbox_closed(dfull, (x, y, pw, ph), outline=(0, 0, 0, 255), width=1)
+    full_overlay = np.asarray(full_img.convert("RGB"), dtype=np.uint8)
+
+    # --- Build RIGHT panel (rotated patch + rotated patch-local annotations) ---
+    anns_patch = make_patch_local_anns(anns_full, top_left=(x, y), patch_wh=(pw, ph), offset_xy=offset_xy)
+
+    # Rotate annotations in patch-local frame using a dummy image of the unrotated patch size
+    dummy = np.zeros((ph, pw, 3), dtype=np.uint8)
+
+    _mirr_dummy, mirr_anns_patch = mirror_image_and_annotations(
+        orig_img_u8=dummy,
+        anns=anns_patch,
+        mirror=mirror,
+        direction="horizontal",
+    )
+
+    _img2, rot_anns_patch = rotate_image_and_annotations(_mirr_dummy, mirr_anns_patch, angle)
+
+    rot_patch_overlay = draw_annotations_with_transparent_mask(
+        rot_patch, rot_anns_patch, offset_xy=(0, 0), clip_rect_xyxy=None, only_ann_indices=None, line_width=1, mask_alpha=mask_alpha
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 7))
+    axes[0].imshow(full_overlay)
+    axes[0].set_title("Full image (transparent mask, green outline, red bbox, black patch)")
+    axes[0].axis("off")
+
+    axes[1].imshow(rot_patch_overlay)
+    axes[1].set_title(f"Patch ({label_out}) after rotation")
+    axes[1].axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
 
 # =========================
 # Example usage
@@ -451,19 +852,23 @@ if __name__ == "__main__":
     img_file = "Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG"
     img_file = "Ignacio2017/Ignacio_GW_WV3_PS_20170220_B58.PNG"
 
+    rng_rot = np.random.default_rng(42)
+
     # mode_single options:
     #   "full"      -> only full whales
     #   "half"      -> only half whales
     #   "ocean"     -> only ocean (no whales)
     #   "full_half" -> full OR half whales
     #   "all"       -> anything
-    #
+
     # mode_multiple_allow_partial:
     #   True  -> if multiple whales, allow other partial whales in the patch
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     for _ in range(5):
-        generate_patch(
+        rotation_angle_deg = float(rng_rot.choice([0, 90, 180, -90]))
+
+        patch_bundle = generate_patch(
             mode_single="full",
             mode_multiple_allow_partial=False,
             window_size=64,
@@ -473,4 +878,11 @@ if __name__ == "__main__":
             whale_min_fraction=0.99,
             half_fraction_range=(0.20, 0.80),
             mask_alpha=80,
+            plot_patch=False,
         )
+
+        mirror = bool(rng_rot.integers(0, 2))  # or set True/False yourself
+
+        patch_bundle_rot = mirror_rotate_raw_patch_bundle(patch_bundle, rotation_angle_deg, mirror=mirror)
+        plot_patch_after_rotation(patch_bundle_rot)
+

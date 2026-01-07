@@ -25,7 +25,7 @@ anns_path = os.path.join(anns_folder, "final_annotations.json")
 
 print_values = True
 plot_3d = False
-plot_result = False
+plot_result = True
 max_glint = False
 generate_radiation = True
 generate_nadir = False

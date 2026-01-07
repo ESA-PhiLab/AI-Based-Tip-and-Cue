@@ -305,7 +305,7 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
             "pick_img_seed_i", "crop_patch_seed_i",
             "patch_name", "label_simple",
             "top_left_x", "top_left_y",
-            "offset_x", "offset_y", "rotation_angle_deg",
+            "offset_x", "offset_y", "rotation_angle_deg", "mirror_bool",
             "fracs_json",
         ])
         ws_patch.freeze_panes = "A2"
@@ -434,6 +434,7 @@ def append_run_rows(ws_patch,
     label_simple = meta.get("label_simple", "")
     offnadir_deg = meta.get("offnadir_deg", None)
     rotation_angle_deg = meta.get("rotation_angle_deg", None)
+    mirror_bool = meta.get("mirror_bool", None)
 
     if offnadir_deg is not None:
         try:
@@ -446,6 +447,12 @@ def append_run_rows(ws_patch,
             rotation_angle_deg = float(rotation_angle_deg)
         except Exception:
             rotation_angle_deg = None
+
+    if mirror_bool is not None:
+        try:
+            mirror_bool = bool(mirror_bool)
+        except Exception:
+            mirror_bool = None
 
     ws_patch.append([
         i,
@@ -461,6 +468,7 @@ def append_run_rows(ws_patch,
         offset_xy[0] if isinstance(offset_xy, list) and len(offset_xy) == 2 else None,
         offset_xy[1] if isinstance(offset_xy, list) and len(offset_xy) == 2 else None,
         rotation_angle_deg,
+        mirror_bool,
         fracs_json,
     ])
 

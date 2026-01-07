@@ -435,8 +435,8 @@ def main() -> None:
     print("[5/5] Running generate_image AFTER annotation translation...")
     sensor_characteristics = {"resolution": RENDER_RESOLUTION, "sample_count": SAMPLE_COUNT, "GSD": gsd}
 
-    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale = generate_image(
-        str(img_path),
+    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg = generate_image(
+        str(img_path), str(ANNOTATIONS_PATH),
         satellite,
         SAT_LAT, SAT_LON, SAT_ALT,
         TGT_LAT, TGT_LON, TGT_ALT,

@@ -115,13 +115,42 @@ def draw_overlay_from_polys(img: Image.Image, polys_xy: list, boxes_xywh: list) 
     return img
 
 def to_uint8_rgb(arr) -> np.ndarray:
-    """to_uint8_rgb(arr) -> np.ndarray: Clamp/cast to uint8 RGB array."""
+    """to_uint8_rgb(arr) -> np.ndarray: Convert array to uint8 RGB for display (handles 0..1 reflectance)."""
     if arr is None:
         return None
+
     a = np.asarray(arr)
+
+    # Make 3 channels
+    if a.ndim == 2:
+        a = np.stack([a, a, a], axis=-1)
+    elif a.ndim == 3 and a.shape[2] == 1:
+        a = np.repeat(a, 3, axis=2)
+
+    # If float-like, scale if it looks like 0..1 (reflectance) or any small range
+    if np.issubdtype(a.dtype, np.floating):
+        finite = a[np.isfinite(a)]
+        if finite.size == 0:
+            return np.zeros((*a.shape[:2], 3), dtype=np.uint8)
+
+        vmax = float(np.percentile(finite, 99.5))
+        vmin = float(np.percentile(finite, 0.5))
+
+        # Common case: reflectance in 0..1
+        if vmax <= 1.5:
+            a = a * 255.0
+        # If it’s still tiny dynamic range, stretch for display (debug only)
+        elif vmax - vmin > 0 and vmax < 10.0:
+            a = (a - vmin) * (255.0 / (vmax - vmin))
+
+        a = np.clip(a, 0.0, 255.0).astype(np.uint8)
+        return a
+
+    # If already integer-ish
     if a.dtype != np.uint8:
         a = np.clip(a, 0, 255).astype(np.uint8)
     return a
+
 
 
 # =========================
@@ -131,7 +160,7 @@ def render_emission_texture(dem_obj_path: str, tex_rgb01: np.ndarray, to_world_s
     """render_emission_texture(dem_obj_path,tex_rgb01,to_world_scene,to_world_sensor,fov_deg,res,spp,filter_type) -> np.ndarray."""
     tex = {
         "type": "bitmap",
-        "data": tex_rgb01,
+        "data": mi.TensorXf(np.asarray(tex_rgb01, dtype=np.float32)),
         "raw": True,
         "wrap_mode": "clamp",
         "filter_type": str(filter_type),
@@ -512,8 +541,8 @@ def main() -> None:
     print("[7/7] Running generate_image after translation...")
     sensor_characteristics = {"resolution": RENDER_RESOLUTION, "sample_count": SAMPLE_COUNT, "GSD": gsd}
 
-    DN255_offnadir, DN255_sunglint, _rad_sunglint, DN255_combined = generate_image(
-        str(img_path),
+    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg = generate_image(
+        str(img_path), str(ANNOTATIONS_PATH),
         satellite,
         SAT_LAT, SAT_LON, SAT_ALT,
         TGT_LAT, TGT_LON, TGT_ALT,
@@ -523,25 +552,55 @@ def main() -> None:
         BOOLS,
         DEM_SEED,
     )
-    if DN255_offnadir is None:
+    
+    if DN255_texture is None:
         raise RuntimeError("Renderer returned None (dark hours).")
 
-    offnadir_u8 = to_uint8_rgb(DN255_offnadir)
-    sunglint_u8 = to_uint8_rgb(DN255_sunglint)
-    combined_u8 = to_uint8_rgb(DN255_combined)
+    texture_u8 = to_uint8_rgb(DN255_texture)        # base texture (DN)
+    glint_u8   = to_uint8_rgb(DN255_glint)          # glint DN (if that’s what DN255_glint is)
+    rho_u8     = to_uint8_rgb(rho_disp)             # display reflectance (likely 0..1 -> now scaled)
 
-    off_overlay = draw_overlay_from_polys(Image.fromarray(offnadir_u8, mode="RGB").copy(), all_polys, boxes_off)
-    comb_overlay = None
-    if combined_u8 is not None:
-        comb_overlay = draw_overlay_from_polys(Image.fromarray(combined_u8, mode="RGB").copy(), all_polys, boxes_off)
+    # Overlays on correct bases
+    off_overlay_texture = draw_overlay_from_polys(Image.fromarray(texture_u8, mode="RGB").copy(), all_polys, boxes_off)
+
+    off_overlay_glint = None
+    if glint_u8 is not None:
+        off_overlay_glint = draw_overlay_from_polys(Image.fromarray(glint_u8, mode="RGB").copy(), all_polys, boxes_off)
+
+
+    off_overlay_rho = None
+    if rho_u8 is not None:
+        off_overlay_rho = draw_overlay_from_polys(Image.fromarray(rho_u8, mode="RGB").copy(), all_polys, boxes_off)
 
     fig2 = plt.figure(figsize=(18, 10))
-    fig2.add_subplot(1, 4, 1).imshow(orig_overlay); plt.axis("off"); plt.title("original + annotation")
-    fig2.add_subplot(1, 4, 2).imshow(off_overlay);  plt.axis("off"); plt.title("off-nadir + translated (per-instance)")
-    fig2.add_subplot(1, 4, 3).imshow(sunglint_u8 if sunglint_u8 is not None else np.zeros_like(offnadir_u8)); plt.axis("off"); plt.title("sun glint")
-    fig2.add_subplot(1, 4, 4).imshow(comb_overlay if comb_overlay is not None else np.zeros_like(offnadir_u8)); plt.axis("off"); plt.title("combined + translated")
+
+    ax1 = fig2.add_subplot(1, 4, 1)
+    ax1.imshow(orig_overlay); ax1.axis("off"); ax1.set_title("Original image + COCO annotations")
+
+    ax2 = fig2.add_subplot(1, 4, 2)
+    ax2.imshow(off_overlay_texture); ax2.axis("off"); ax2.set_title("Off-nadir render (DN) + translated annotations")
+
+    ax3 = fig2.add_subplot(1, 4, 3)
+    if off_overlay_glint is None:
+        ax3.imshow(np.zeros_like(texture_u8))
+        ax3.set_title("Glint/DN output (None)")
+    else:
+        ax3.imshow(off_overlay_glint)
+        ax3.set_title("Glint/DN output (DN255_glint)")
+    ax3.axis("off")
+
+    ax4 = fig2.add_subplot(1, 4, 4)
+    if off_overlay_rho is None:
+        ax4.imshow(np.zeros_like(texture_u8))
+        ax4.set_title("Reflectance display (None)")
+    else:
+        ax4.imshow(off_overlay_rho)
+        ax4.set_title("Reflectance display (rho_disp) + translated annotations")
+    ax4.axis("off")
+
     plt.tight_layout()
     plt.show()
+
 
     # ==========================================================
     # (D) Print full COCO in same format (new image + translated anns)
