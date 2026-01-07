@@ -30,6 +30,7 @@ from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footpri
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate, camera_position_xy, close_plotter_safely
 from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
 from simulation.sim_logging import init_excel_log, log_tip, log_cue, log_combined, log_img, gsd_offnadir, at_exit, Logger, compute_stats, format_hms, merge_tip_cue_combined
+from simulation.constants import R_earth
 
 from onboard_ai.onboard_ai_tip import tip_ai_decision
 from onboard_ai.onboard_ai_cue import cue_ai_decision
@@ -733,10 +734,13 @@ while elapsed_seconds <= sim_duration_seconds:
                     cue_lat, cue_lon, cue_alt = float(cue_lat), float(cue_lon), float(cue_alt)
                     dem_seed = rng_dem.randint(0, 1000)
 
+                    create_image = True
                     if create_image:
                         print("Generate image")
-                        DN255_rgb_offnadir, DN255_rgb_sunglint, radiance_sunglint, DN255_combined = generate_image(img_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1], target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
+                        DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg_new = generate_image(img_path, anns_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1], target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
 
+                        print(f"Old off nadir:{offnadir_cue_deg:.2f} deg")
+                        print(f"New off nadir:{offnadir_deg_new:.2f} deg")
                     if whale.tip_actor != None and whale.t_observed_tip != None:
                         if t_datetime <= whale.t_observed_tip + timedelta(seconds=observation_time_limit):
                             latency_observation = (whale.t_observed_cue - whale.t_observed_tip).total_seconds()

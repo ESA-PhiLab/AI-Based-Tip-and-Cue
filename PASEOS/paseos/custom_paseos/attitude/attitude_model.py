@@ -362,14 +362,16 @@ class AttitudeModel:
     # Utility functions
     # -------------------------------------------------------------------------
     @staticmethod
-    def offnadir_from_euler(eul_deg):
-        """Compute off-nadir angle [deg] given Euler angles [deg]."""
-        boresight_ref = np.array([0.0, 0.0, 1.0])
-        R = RotMat_LVLH_to_BRF_by_eul(eul_deg)
-        boresight_dir = R @ boresight_ref
-        boresight_dir /= np.linalg.norm(boresight_dir)
-        dot = np.clip(np.dot(boresight_ref, boresight_dir), -1.0, 1.0)
-        return np.degrees(np.arccos(dot)), boresight_dir
+    def offnadir_from_euler(eul_deg, boresight_brf=(0.0, 0.0, 1.0)) -> tuple[float, np.ndarray]:
+        """offnadir_from_euler(eul_deg,boresight_brf=(0,0,1)) -> tuple[float,np.ndarray]: Off-nadir [deg] between LVLH +Z and body boresight, plus boresight in LVLH."""
+        R_lvlh_to_brf = RotMat_LVLH_to_BRF_by_eul(np.asarray(eul_deg, float))
+        b_brf = np.asarray(boresight_brf, float).reshape(3)
+        b_brf /= np.linalg.norm(b_brf)
+        b_lvlh = R_lvlh_to_brf.T @ b_brf
+        b_lvlh /= np.linalg.norm(b_lvlh)
+        nadir_lvlh = np.array([0.0, 0.0, 1.0], float)
+        dot = float(np.clip(np.dot(nadir_lvlh, b_lvlh), -1.0, 1.0))
+        return float(np.degrees(np.arccos(dot))), b_lvlh
 
     @staticmethod
     def pointing_attitude_brf(pointing_vec_brf_target):

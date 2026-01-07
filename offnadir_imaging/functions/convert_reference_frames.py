@@ -1,87 +1,81 @@
-import math
 import numpy as np
+import pyproj
 
 import orekit
 from orekit.pyhelpers import setup_orekit_curdir
 from org.orekit.time import AbsoluteDate, DateComponents, TimeComponents, TimeScalesFactory
 from org.orekit.frames import FramesFactory
-from org.orekit.models.earth import ReferenceEllipsoid
-from org.orekit.bodies import CelestialBodyFactory, GeodeticPoint
-from org.orekit.utils import Constants, PVCoordinates, IERSConventions
-from org.hipparchus.geometry.euclidean.threed import Vector3D
-import pyproj
+from org.orekit.bodies import CelestialBodyFactory
+from org.orekit.utils import IERSConventions
 
-def get_ecef_from_lat_lon(satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc):
+
+# WGS84 geodetic (lat,lon,alt) <-> ECEF (x,y,z)
+_GEOD2ECEF = pyproj.Transformer.from_crs("epsg:4979", "epsg:4978", always_xy=True)
+_ECEF2GEOD = pyproj.Transformer.from_crs("epsg:4978", "epsg:4979", always_xy=True)
+
+
+def geodetic_to_ecef(lat_deg, lon_deg, alt_m) -> np.ndarray:
+    """geodetic_to_ecef(lat_deg,lon_deg,alt_m) -> np.ndarray: WGS84 geodetic -> ECEF (meters)."""
+    x, y, z = _GEOD2ECEF.transform(float(lon_deg), float(lat_deg), float(alt_m))
+    return np.array([x, y, z], dtype=float)
+
+
+def ecef_to_geodetic(ecef_xyz) -> tuple[float, float, float]:
+    """ecef_to_geodetic(ecef_xyz) -> (lat_deg,lon_deg,alt_m): ECEF (meters) -> WGS84 geodetic."""
+    x, y, z = np.asarray(ecef_xyz, float).reshape(3)
+    lon, lat, alt = _ECEF2GEOD.transform(float(x), float(y), float(z))
+    return float(lat), float(lon), float(alt)
+
+
+def get_ecef_from_lat_lon(satellite_lat, satellite_lon, satellite_alt,
+                          target_lat, target_lon, target_alt,
+                          datetime_utc,
+                          generate_nadir: bool = False):
+    """get_ecef_from_lat_lon(satellite_lat,satellite_lon,satellite_alt,target_lat,target_lon,target_alt,datetime_utc,generate_nadir=False) -> tuple: (sat_ecef,tgt_ecef,sun_ecef)."""
+    # Target ECEF (WGS84)
+    target_ecef = geodetic_to_ecef(target_lat, target_lon, target_alt)
+
+    # Satellite ECEF
+    if generate_nadir:
+        # Force geocentric nadir: sat on target's Earth-center radial line
+        rt = float(np.linalg.norm(target_ecef))
+        if rt <= 0.0:
+            raise ValueError("target_ecef is zero; cannot define radial direction")
+        u = target_ecef / rt
+        delta_h = float(satellite_alt) - float(target_alt)
+        satellite_ecef = u * (rt + delta_h)
+    else:
+        satellite_ecef = geodetic_to_ecef(satellite_lat, satellite_lon, satellite_alt)
+
+    # Sun ECEF (keep Orekit for this; still returns ECEF/ITRF)
     vm = orekit.initVM()
     setup_orekit_curdir(from_pip_library=True)
 
-    # === Orekit Time & Frames ===
     utc = TimeScalesFactory.getUTC()
     date = DateComponents(datetime_utc.year, datetime_utc.month, datetime_utc.day)
     time = TimeComponents(datetime_utc.hour, datetime_utc.minute, float(datetime_utc.second))
     abs_date = AbsoluteDate(date, time, utc)
 
     itrf = FramesFactory.getITRF(IERSConventions.IERS_2010, True)
-    icrf = FramesFactory.getICRF()
-    earth = ReferenceEllipsoid.getWgs84(itrf)
 
-    # === Compute Target in ECEF ===
-    geo_point_target = GeodeticPoint(math.radians(target_lat), math.radians(target_lon), target_alt)
-    target_ecef_vec = earth.transform(geo_point_target)
-    target_ecef = np.array([
-        target_ecef_vec.getX(),
-        target_ecef_vec.getY(),
-        target_ecef_vec.getZ()
-    ])
-
-    geo_point_satellite = GeodeticPoint(math.radians(satellite_lat), math.radians(satellite_lon), satellite_alt)
-    satellite_ecef_vec = earth.transform(geo_point_satellite)
-    satellite_ecef = np.array([
-        satellite_ecef_vec.getX(),
-        satellite_ecef_vec.getY(),
-        satellite_ecef_vec.getZ()
-    ])
-
-    # === Compute Sun in IRF, then convert to ECEF ===
     sun = CelestialBodyFactory.getSun()
-    sun_pv_irf = sun.getPVCoordinates(abs_date, FramesFactory.getICRF())
-
-    # Transform full PV from IRF to ECEF
+    sun_pv_icrf = sun.getPVCoordinates(abs_date, FramesFactory.getICRF())
     transform = FramesFactory.getICRF().getTransformTo(itrf, abs_date)
-    sun_pv_ecef = transform.transformPVCoordinates(sun_pv_irf)
+    sun_pv_ecef = transform.transformPVCoordinates(sun_pv_icrf)
 
-    # Extract just the position in ECEF
     sun_ecef = np.array([
         sun_pv_ecef.getPosition().getX(),
         sun_pv_ecef.getPosition().getY(),
         sun_pv_ecef.getPosition().getZ()
-    ])
+    ], dtype=float)
 
     return satellite_ecef, target_ecef, sun_ecef
 
+
 def get_lat_lon_alt_from_ecef(satellite_ecef):
-    # === Orekit init ===
-    vm = orekit.initVM()
-    setup_orekit_curdir(from_pip_library=True)
+    """get_lat_lon_alt_from_ecef(satellite_ecef) -> tuple: (lat_deg,lon_deg,alt_m) from ECEF."""
+    return ecef_to_geodetic(satellite_ecef)
 
-    # Use ITRF and WGS84 ellipsoid
-    itrf = FramesFactory.getITRF(IERSConventions.IERS_2010, True)
-    icrf = FramesFactory.getICRF()
-    earth = ReferenceEllipsoid.getWgs84(itrf)
-
-    # ECEF Vector3D
-    vec = Vector3D(float(satellite_ecef[0]),
-                   float(satellite_ecef[1]),
-                   float(satellite_ecef[2]))
-
-    # === Transform ECEF → Geodetic ===
-    geo_point = earth.transform(vec, earth.getBodyFrame(), None)
-
-    lat_deg = math.degrees(geo_point.getLatitude())
-    lon_deg = math.degrees(geo_point.getLongitude())
-    alt_m = geo_point.getAltitude()
-
-    return lat_deg, lon_deg, alt_m
 
 def compute_max_glint_satellite_ecef(target_ecef, sun_ecef, glint_distance_m):
     # Step 1: Sun-to-target direction vector (incoming light direction)
@@ -108,3 +102,14 @@ def compute_max_glint_satellite_ecef(target_ecef, sun_ecef, glint_distance_m):
     satellite_ecef = target_ecef + glint_dir * glint_distance_m
 
     return satellite_ecef
+
+def sat_ecef_geocentric_over_target(tgt_ecef, sat_alt_m, tgt_alt_m=0.0) -> np.ndarray:
+    """sat_ecef_geocentric_over_target(tgt_ecef,sat_alt_m,tgt_alt_m=0.0) -> np.ndarray: Satellite ECEF on Earth-center radial line for zero geocentric off-nadir."""
+    tgt = np.asarray(tgt_ecef, float).reshape(3)
+    rt = float(np.linalg.norm(tgt))
+    if rt <= 0.0:
+        raise ValueError("tgt_ecef must be non-zero")
+    u = tgt / rt
+    return u * (rt + (float(sat_alt_m) - float(tgt_alt_m)))
+
+

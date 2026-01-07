@@ -30,17 +30,13 @@ def _asvec3(a):
 # --------------------- core rotation matrices ---------------------
 
 def RotMat_IRF_to_LVLH(r, v):
-    """Rotation matrix IRF (ECI) → LVLH."""
-    r = _asvec3(r)
-    v = _asvec3(v)
-
+    """RotMat_IRF_to_LVLH(r,v) -> np.ndarray: IRF->LVLH with z=-rhat, y=-hhat, x=y×z."""
+    r = _asvec3(r); v = _asvec3(v)
     z_dir = -_normalize(r)
-    h = np.cross(r, v)
-    y_dir = -_normalize(h)
-    x_dir = _normalize(v - np.dot(v, z_dir) * z_dir)
-
-    y_dir = _normalize(np.cross(z_dir, x_dir))  # ensure orthonormal
+    y_dir = -_normalize(np.cross(r, v))
+    x_dir = _normalize(np.cross(y_dir, z_dir))
     return np.vstack((x_dir, y_dir, z_dir))
+
 
 def RotMat_LVLH_to_BRF_by_eul(eul_deg):
     """Rotation matrix LVLH → BRF from (roll, pitch, yaw) in degrees (ZYX order)."""
@@ -105,25 +101,25 @@ def rotation_matrix_to_ypr(R):
 
 # --------------------- Attitude helper utilities ---------------------
 
-def rodrigues_rotation(p, angles_deg):
-    """Rotate vector p around axis=angles/|angles| by |angles| (Rodrigues’ formula).
-    angles_deg: 3-vector, direction = axis, magnitude = rotation angle in degrees.
-    """
-    theta = np.linalg.norm(angles_deg)
+def rodrigues_rotation(p, rotvec_rad) -> np.ndarray:
+    """rodrigues_rotation_rad(p,rotvec_rad) -> np.ndarray: Rotate vector p by rotation vector (axis*angle) in radians."""
+    p = np.asarray(p, float).reshape(3)
+    w = np.asarray(rotvec_rad, float).reshape(3)
+    theta = float(np.linalg.norm(w))
     if theta == 0.0:
         return p
-    k = angles_deg / theta
-    theta_rad = np.radians(theta)
-    return (p*np.cos(theta_rad) +
-            np.cross(k, p)*np.sin(theta_rad) +
-            k*np.dot(k, p)*(1 - np.cos(theta_rad)))
+    k = w / theta
+    return (p*np.cos(theta) +
+            np.cross(k, p)*np.sin(theta) +
+            k*np.dot(k, p)*(1 - np.cos(theta)))
 
-def rotate_body_vectors(x, y, z, p, angles_deg):
-    """Rotate x,y,z,p about same rotation vector (degrees)."""
-    return (rodrigues_rotation(x, angles_deg),
-            rodrigues_rotation(y, angles_deg),
-            rodrigues_rotation(z, angles_deg),
-            rodrigues_rotation(p, angles_deg))
+def rotate_body_vectors(x, y, z, p, rotvec_rad):
+    """rotate_body_vectors_rad(x,y,z,p,rotvec_rad) -> tuple: Rotate x,y,z,p by same rotation vector in radians."""
+    return (rodrigues_rotation(x, rotvec_rad),
+            rodrigues_rotation(y, rotvec_rad),
+            rodrigues_rotation(z, rotvec_rad),
+            rodrigues_rotation(p, rotvec_rad))
+
 
 def get_rpy_angles_irf(x, y, z):
     """Roll, pitch, yaw [deg] of BRF wrt IRF."""

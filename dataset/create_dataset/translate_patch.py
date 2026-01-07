@@ -16,7 +16,7 @@ from offnadir_imaging.rendering import generate_image
 from offnadir_imaging.create_DEM.create_dummy_DEM import get_DEM
 from offnadir_imaging.create_DEM.convert_DEM import convert_DEM
 from offnadir_imaging.functions.get_satellite_data import get_satellite, get_spatial_res, get_band_data
-from offnadir_imaging.functions.convert_reference_frames import get_ecef_from_lat_lon
+from offnadir_imaging.functions.convert_reference_frames import get_ecef_from_lat_lon, sat_ecef_geocentric_over_target
 from offnadir_imaging.functions.intermediate_functions import get_scene_characteristics, is_dark_from_sun_dir
 
 
@@ -594,15 +594,15 @@ def translate_image(patch_bundle: dict,
 
     dt = datetime_utc if datetime_utc is not None else DEFAULT_DATETIME_UTC
 
-    if generate_nadir:
-        sat_lat = tgt_lat
-        sat_lon = tgt_lon
-
     satellite_ecef, target_ecef, sun_ecef = get_ecef_from_lat_lon(
         float(sat_lat), float(sat_lon), float(sat_alt),
         float(tgt_lat), float(tgt_lon), float(tgt_alt),
         dt,
     )
+
+    if generate_nadir:
+        sat_ecef = sat_ecef_geocentric_over_target(target_ecef, sat_alt, tgt_alt)
+       #  print(math.degrees(offnadir_satellite_rad(sat_ecef, tgt_ecef)))  # ~0
 
     is_dark, *_ = is_dark_from_sun_dir(
         target_ecef=target_ecef,

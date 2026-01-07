@@ -9,14 +9,19 @@ import numpy as np
 import math
 import os
 
+from offnadir_imaging.functions.get_satellite_data import get_satellite
+
 # ================================================================================
 # SIMULATION
 
-# images_folder = "dataset/whales_from_space/"
-# img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
+images_folder = "dataset/whales_from_space/"
+img_file = 'Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG'
 
-# csv_path = os.path.join(images_folder, "WhaleFromSpaceDB_Whales.csv")
-# img_path = os.path.join(images_folder, img_file)
+csv_path = os.path.join(images_folder, "WhaleFromSpaceDB_Whales.csv")
+img_path = os.path.join(images_folder, img_file)
+
+anns_folder = "dataset/create_dataset/"
+anns_path = os.path.join(anns_folder, "final_annotations.json")
 
 print_values = True
 plot_3d = False
@@ -35,7 +40,7 @@ nSats_cue = 1
 nPlanes_tip = 1
 nPlanes_cue = 1
 
-offnadir_limit = 40.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
+offnadir_limit = 5.0        # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 5*60           # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
@@ -158,7 +163,7 @@ gsd0_tip = 10.0       # m
 gsd0_cue = 0.31     # m
 
 try:
-    satellite = get_satellite(img_path, csv_path)
+    satellite = get_satellite(img_path=None, csv_path=None, fixed_sat="WV3")
 
 except:
     # print("Got default settings")
@@ -249,7 +254,6 @@ wave_properties['num_waves'] = num_waves
 wave_properties['wave_min'] = wave_min
 wave_properties['wave_max'] = wave_max
 wave_properties['specular_weight'] = 0.2
-
 
 bools = {}
 bools['plot_3d'] = plot_3d

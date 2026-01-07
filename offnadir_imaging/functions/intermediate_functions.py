@@ -22,11 +22,11 @@ def get_scene_characteristics(satellite_ecef, target_ecef, sun_ecef, img_height,
     fov_rad = 2 * np.arctan2(half_extent_nadir, altitude)
     fov_deg = math.degrees(fov_rad)
 
-    transformer = pyproj.Transformer.from_crs("epsg:4978", "epsg:4326")
-    target_lat, target_lon, target_alt = transformer.transform(target_ecef[0], target_ecef[1], target_ecef[2])
+    transformer = pyproj.Transformer.from_crs("epsg:4978", "epsg:4326", always_xy=True)
+    target_lon, target_lat, target_alt = transformer.transform(target_ecef[0], target_ecef[1], target_ecef[2])
 
-    phi = np.radians(target_lat)
-    lam = np.radians(target_lon)
+    phi = np.radians(target_lat)  # lat
+    lam = np.radians(target_lon)  # lon
 
     R = np.array([
         [-np.sin(lam), np.cos(lam), 0],
@@ -42,10 +42,34 @@ def get_scene_characteristics(satellite_ecef, target_ecef, sun_ecef, img_height,
     sun_direction = target_local - sun_local  # From sun to target
     sun_direction = normalize(sun_direction)
 
-    off_nadir_rad = np.arccos(np.dot(satellite_local/np.linalg.norm(satellite_local), np.array([0,0,1])))
+    off_nadir_rad = offnadir_satellite_rad(satellite_ecef, target_ecef)
     azimuth_rad = np.arctan2(satellite_local[0], satellite_local[1]) % (2 * np.pi)
 
     return satellite_local, target_local, sun_direction, fov_deg, off_nadir_rad, azimuth_rad
+
+
+def unit(v, eps=1e-12) -> np.ndarray:
+    """unit(v,eps=1e-12) -> np.ndarray: Normalize vector."""
+    v = np.asarray(v, float).reshape(3)
+    n = float(np.linalg.norm(v))
+    if n < eps:
+        raise ValueError("Zero (or near-zero) vector.")
+    return v / n
+
+def angle_rad(u, v) -> float:
+    """angle_rad(u,v) -> float: Angle [rad] between vectors."""
+    u = unit(u)
+    v = unit(v)
+    return float(np.arccos(np.clip(float(np.dot(u, v)), -1.0, 1.0)))
+
+def offnadir_satellite_rad(sat_ecef, tgt_ecef) -> float:
+    """offnadir_satellite_rad(sat_ecef,tgt_ecef) -> float: Geocentric satellite off-nadir [rad] (LOS vs sat->Earth-center)."""
+    sat = np.asarray(sat_ecef, float).reshape(3)
+    tgt = np.asarray(tgt_ecef, float).reshape(3)
+    los_u = unit(tgt - sat)
+    nadir_u = unit(-sat)
+    return angle_rad(los_u, nadir_u)
+
 
 
 def is_dark_from_sun_dir(target_ecef, sun_ecef, *,

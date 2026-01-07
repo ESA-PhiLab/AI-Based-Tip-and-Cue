@@ -334,11 +334,12 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
     if bools['print_values']:
         print("Convert lat lon to ecef coordinates")
 
-    if bools['generate_nadir']:
-        satellite_lat = target_lat
-        satellite_lon = target_lon
-
-    satellite_ecef, target_ecef, sun_ecef = get_ecef_from_lat_lon(satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc)
+    satellite_ecef, target_ecef, sun_ecef = get_ecef_from_lat_lon(
+        satellite_lat, satellite_lon, satellite_alt,
+        target_lat, target_lon, target_alt,
+        datetime_utc,
+        generate_nadir=bools.get("generate_nadir", False),
+    )
 
     if bools['max_glint']:
         satellite_ecef = compute_max_glint_satellite_ecef(target_ecef, sun_ecef, glint_distance_m=700 * 10**3)
@@ -447,6 +448,8 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
         if bools['print_values']:
             print(f"Generate off nadir image\n")
+
+
 
         off_nadir_image = render_projected_texture(img_lin, dem_path, satellite_local, target_local, sensor_characteristics)
 

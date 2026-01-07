@@ -225,7 +225,7 @@ def run_dataset(n_runs: int,
 
     if balanced_offnadir:
 
-        offnadir_angles = np.arange(5, 65, 5)  # 5,10,...,60
+        offnadir_angles = np.arange(5, 61, 5)  # 5,10,...,60
 
         run_idx = 0
         for img_i in range(int(n_runs)):
@@ -235,6 +235,8 @@ def run_dataset(n_runs: int,
             img_file = load_image(pick_img_seed_i, whales_root)
 
             for ang in offnadir_angles:
+                print(f"\n ====================== Start new process {run_idx} ====================== \n")
+                print(f"Image: {img_file} | Offnadir request: {ang} deg")
 
                 rotation_angle_deg = float(rng_rot.choice([0, 90, 180, -90]))
 
@@ -248,9 +250,8 @@ def run_dataset(n_runs: int,
 
                 meta_out = meta_dir / f"run_{run_idx:05d}.json"
 
-                print(f"\n ====================== Start new process {run_idx} ====================== \n")
+
                 print(f"Pose: sat=({sat_lat},{sat_lon},{sat_alt}) tgt=({tgt_lat},{tgt_lon},{tgt_alt}) dt={datetime_utc}")
-                print(f"Image: {img_file} | Offnadir request: {ang} deg")
 
                 run_one(
                     i=run_idx,
