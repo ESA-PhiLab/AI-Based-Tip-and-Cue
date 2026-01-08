@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from create_patch import WHALE_CATEGORY_ID
+
 
 main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
@@ -67,13 +69,11 @@ def _ensure_coco(split: str) -> tuple[Path, dict]:
         coco["images"] = []
         coco["annotations"] = []
 
-    # --- FIX LICENSES ---
-    # Ensure license field is removed
     coco.pop("licenses", None)
-
-    # --------------------
+    coco["categories"] = [{"id": WHALE_CATEGORY_ID, "name": "whale", "supercategory": "whale"}]
 
     return out_path, coco
+
 
 
 
@@ -408,7 +408,7 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
 
     next_ann_id = int(max([int(a.get("id", 0)) for a in anns] + [0]) + 1)
     cats = coco.get("categories", [])
-    dataset_cat_id = int(cats[0]["id"]) if isinstance(cats, list) and cats and isinstance(cats[0], dict) and "id" in cats[0] else 0
+    dataset_cat_id = int(cats[0]["id"]) if isinstance(cats, list) and cats and isinstance(cats[0], dict) and "id" in cats[0] else WHALE_CATEGORY_ID
 
     out_anns = []
     for a in anns_kept:

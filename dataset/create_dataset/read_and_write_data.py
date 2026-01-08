@@ -7,6 +7,8 @@ import random
 import shutil
 from pathlib import Path
 from typing import Any
+import numpy as np
+
 
 import openpyxl
 
@@ -281,7 +283,7 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
     else:
         wb = openpyxl.Workbook()
 
-    for name in ["settings", "patch_param", "offnadir_param", "annotations_nadir", "annotations_offnadir"]:
+    for name in ["settings", "patch_param", "offnadir_param", "annotations_nadir", "annotations_offnadir", "rad_refl_values"]:
         if name not in wb.sheetnames:
             wb.create_sheet(title=name)
 
@@ -322,6 +324,18 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
         ])
         ws_off.freeze_panes = "A2"
 
+    ws_rr = wb["rad_refl_values"]
+    if ws_rr.max_row == 1 and ws_rr.cell(1, 1).value is None:
+        ws_rr.append([
+            "i", "img_file", "patch_name",
+            "offnadir_deg",
+            "radiance_min_nadir", "radiance_max_nadir", "radiance_mean_nadir",
+            "reflectance_min_nadir", "reflectance_max_nadir", "reflectance_mean_nadir",
+            "radiance_min_offnadir", "radiance_max_offnadir", "radiance_mean_offnadir",
+            "reflectance_min_offnadir", "reflectance_max_offnadir", "reflectance_mean_offnadir",
+        ])
+        ws_rr.freeze_panes = "A2"
+
     def _init_ann_sheet(ws) -> None:
         if ws.max_row == 1 and ws.cell(1, 1).value is None:
             ws.append([
@@ -331,6 +345,9 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
                 "area", "iscrowd", "other_keys_json",
             ])
             ws.freeze_panes = "A2"
+
+
+
 
     ws_ann_nadir = wb["annotations_nadir"]
     ws_ann_off = wb["annotations_offnadir"]
@@ -413,19 +430,17 @@ def open_overview_book(xlsx_path: Path,
     ws_off = wb["offnadir_param"]
     ws_ann_nadir = wb["annotations_nadir"]
     ws_ann_off = wb["annotations_offnadir"]
+    ws_radrefl = wb["rad_refl_values"]
 
     write_settings_once(ws_settings, patch_parameters, render_resolution)
-    return wb, ws_settings, ws_patch, ws_off, ws_ann_nadir, ws_ann_off
-
-
-    write_settings_once(ws_settings, patch_parameters, render_resolution)
-    return wb, ws_settings, ws_patch, ws_off, ws_ann
+    return wb, ws_settings, ws_patch, ws_off, ws_ann_nadir, ws_ann_off, ws_radrefl
 
 
 def append_run_rows(ws_patch,
                     ws_off,
                     ws_ann_nadir,
                     ws_ann_off,
+                    ws_radrefl,
                     i: int,
                     img_file: str,
                     result_name: str,
@@ -521,4 +536,43 @@ def append_run_rows(ws_patch,
                 ws_ann_off.append(ann_row_from_dict(i, img_file, patch_name, ann))
     else:
         ws_ann_off.append([i, img_file, patch_name, None, None, None, "", "", None, None, ""])
+
+    def _get_stats(meta_key: str) -> tuple[float | None, float | None, float | None]:
+        """_get_stats(meta_key) -> (min,max,mean): Read stats dict; convert NaN to None."""
+        v = meta.get(meta_key, None)
+        if not isinstance(v, dict):
+            return None, None, None
+
+        def _clean(x: object) -> float | None:
+            if x is None:
+                return None
+            try:
+                y = float(x)
+            except Exception:
+                return None
+            return None if (not np.isfinite(y)) else y
+
+        return _clean(v.get("min")), _clean(v.get("max")), _clean(v.get("mean"))
+
+    rmin_n, rmax_n, rmean_n = _get_stats("rad_stats_nadir")
+    fmin_n, fmax_n, fmean_n = _get_stats("refl_stats_nadir")
+
+    rmin_o, rmax_o, rmean_o = _get_stats("rad_stats_offnadir")
+    fmin_o, fmax_o, fmean_o = _get_stats("refl_stats_offnadir")
+
+    # One row per image/patch
+    if any(v is not None for v in (
+            rmin_n, rmax_n, rmean_n, fmin_n, fmax_n, fmean_n,
+            rmin_o, rmax_o, rmean_o, fmin_o, fmax_o, fmean_o,
+            offnadir_deg
+    )):
+        ws_radrefl.append([
+            i, img_file, patch_name,
+            offnadir_deg,
+            rmin_n, rmax_n, rmean_n,
+            fmin_n, fmax_n, fmean_n,
+            rmin_o, rmax_o, rmean_o,
+            fmin_o, fmax_o, fmean_o,
+        ])
+
 

@@ -62,6 +62,32 @@ def parse_args() -> argparse.Namespace:
 
     return p.parse_args()
 
+def array_stats(x: object) -> dict:
+    """array_stats(x) -> dict: Return min/max/mean over finite, non-black pixels (black=0 or [0,0,0]); NaN if empty."""
+    a = np.asarray(x)
+    if a.size == 0:
+        return {"min": float("nan"), "max": float("nan"), "mean": float("nan")}
+
+    a = a.astype(np.float64, copy=False)
+
+    finite = np.isfinite(a)
+
+    # Non-black mask: exclude pixels that are exactly 0 (or [0,0,0] for RGB-like arrays)
+    if a.ndim >= 3:
+        # treat last axis as channels
+        nonblack = np.any(a != 0.0, axis=-1)
+        finite_pix = np.all(finite, axis=-1)   # pixel is finite if all channels finite
+        keep = nonblack & finite_pix
+        v = a[keep]  # flattened channels of kept pixels
+    else:
+        keep = finite & (a != 0.0)
+        v = a[keep]
+
+    if v.size == 0:
+        return {"min": float("nan"), "max": float("nan"), "mean": float("nan")}
+
+    return {"min": float(v.min()), "max": float(v.max()), "mean": float(v.mean())}
+
 
 def classify_label(fracs: list[float],
                    whale_min_fraction: float,
@@ -257,6 +283,11 @@ def main() -> int:
         )
 
         update_meta_file(args.meta_out, {
+            "rad_stats_nadir": array_stats(nadir_bundle.get("radiance", np.array([]))),
+            "refl_stats_nadir": array_stats(nadir_bundle.get("reflectance", np.array([]))),
+        })
+
+        update_meta_file(args.meta_out, {
             "anns_nadir": anns_to_rows(nadir_bundle.get("anns_patch", [])),
         })
 
@@ -265,8 +296,6 @@ def main() -> int:
         b_tex = dict(nadir_bundle)
         b_tex["patch"] = nadir_bundle["texture_u8"]
         save_patch("texture_nadir_255", b_tex)
-
-        # save radiance (float .npy)
 
         # save radiance (float .npy)
         b_rad = dict(nadir_bundle)
@@ -306,6 +335,11 @@ def main() -> int:
         rotation_angle_deg=args.rotation_angle_deg,
         mirror_bool=mirror_bool
     )
+
+    update_meta_file(args.meta_out, {
+        "rad_stats_offnadir": array_stats(off_bundle.get("radiance", np.array([]))),
+        "refl_stats_offnadir": array_stats(off_bundle.get("reflectance", np.array([]))),
+    })
 
     update_meta_file(args.meta_out, {
         "offnadir_deg": float(off_bundle.get("offnadir_deg", 0.0)) if off_bundle.get("offnadir_deg", None) is not None else None,

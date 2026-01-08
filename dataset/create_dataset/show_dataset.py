@@ -26,7 +26,7 @@ ALLOWED_modes = {
     "reflection_offnadir_npy",
 }
 
-mode = "texture_nadir_255"
+mode = "texture_offnadir_255"
 
 DATASET_PATH = Path("dataset")
 BASE_DIR = DATASET_PATH / "create_dataset" / mode

@@ -221,10 +221,9 @@ def run_dataset(n_runs: int,
     if not poses_xlsx.is_file():
         raise FileNotFoundError(f"Missing poses file: {poses_xlsx}")
 
-    wb, _, ws_patch, ws_off, ws_ann_nadir, ws_ann_off = open_overview_book(
+    wb, _, ws_patch, ws_off, ws_ann_nadir, ws_ann_off, ws_radrefl = open_overview_book(
         overview_xlsx, patch_parameters, render_resolution
     )
-
 
     meta_dir = (script_dir / "_meta").resolve()
     meta_dir.mkdir(parents=True, exist_ok=True)
@@ -304,6 +303,7 @@ def run_dataset(n_runs: int,
                             ws_off=ws_off,
                             ws_ann_nadir=ws_ann_nadir,
                             ws_ann_off=ws_ann_off,
+                            ws_radrefl=ws_radrefl,
                             i=run_idx,
                             img_file=img_file,
                             result_name=result_name,
@@ -391,7 +391,9 @@ def run_dataset(n_runs: int,
         append_run_rows(
             ws_patch=ws_patch,
             ws_off=ws_off,
-            ws_ann=ws_ann,
+            ws_ann_nadir=ws_ann_nadir,
+            ws_ann_off=ws_ann_off,
+            ws_radrefl=ws_radrefl,
             i=i,
             img_file=img_file,
             result_name=result_name,

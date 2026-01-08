@@ -14,6 +14,8 @@ from copy import deepcopy
 main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
+WHALE_CATEGORY_ID = 1
+
 
 # =========================
 # Config
@@ -45,9 +47,11 @@ def anns_by_image(anns: list) -> dict:
     return out
 
 
-def patch_category_id(fracs: list[float], nowhale_max_fraction: float) -> int:
-    """patch_category_id(fracs,nowhale_max_fraction) -> int: Return 1 if patch contains whale above threshold else 0."""
-    return 1 if (fracs and max(fracs) > float(nowhale_max_fraction)) else 0
+def patch_category_id(fracs: list[float], nowhale_max_fraction: float) -> int | None:
+    """patch_category_id(fracs,nowhale_max_fraction) -> int | None: Return 1 for whale, None for ocean."""
+    return WHALE_CATEGORY_ID if (fracs and max(fracs) > float(nowhale_max_fraction)) else None
+
+
 
 
 # =========================
@@ -411,16 +415,15 @@ def generate_patch(mode_single: str,
     patch_cat_id = patch_category_id(fracs_out, nowhale_max_fraction)
 
     # Use the dataset's single category id for all instance annotations (e.g. 0)
-    cats = coco.get("categories", [])
-    dataset_cat_id = int(cats[0]["id"]) if isinstance(cats, list) and cats and isinstance(cats[0], dict) and "id" in cats[0] else 0
+    dataset_cat_id = WHALE_CATEGORY_ID
 
     # Ocean patches: no annotations at all
-    if int(patch_cat_id) == 0:
+    if patch_cat_id is None:
         anns_out = []
     else:
         anns_out = deepcopy(anns)
         for a in anns_out:
-            a["category_id"] = dataset_cat_id
+            a["category_id"] = WHALE_CATEGORY_ID
 
     full_img = Image.fromarray(full_overlay, mode="RGB").convert("RGBA")
     dfull = ImageDraw.Draw(full_img, "RGBA")
