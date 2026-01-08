@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 
 from copy import deepcopy
 
-
 # =========================
 # Path handling
 # =========================
@@ -30,6 +29,8 @@ CROP_THRESHOLD = 1
 # =========================
 # COCO helpers
 # =========================
+
+
 def load_json(path: Path) -> dict:
     """load_json(path) -> dict: Read JSON file."""
     with path.open("r", encoding="utf-8") as f:
@@ -409,11 +410,17 @@ def generate_patch(mode_single: str,
     # Patch-level category: 1=whale (full/half/etc), 0=ocean
     patch_cat_id = patch_category_id(fracs_out, nowhale_max_fraction)
 
-    # Update annotation category_id in the returned bundle (don’t mutate original COCO list)
-    anns_out = deepcopy(anns)
-    for a in anns_out:
-        a["category_id"] = int(patch_cat_id)
+    # Use the dataset's single category id for all instance annotations (e.g. 0)
+    cats = coco.get("categories", [])
+    dataset_cat_id = int(cats[0]["id"]) if isinstance(cats, list) and cats and isinstance(cats[0], dict) and "id" in cats[0] else 0
 
+    # Ocean patches: no annotations at all
+    if int(patch_cat_id) == 0:
+        anns_out = []
+    else:
+        anns_out = deepcopy(anns)
+        for a in anns_out:
+            a["category_id"] = dataset_cat_id
 
     full_img = Image.fromarray(full_overlay, mode="RGB").convert("RGBA")
     dfull = ImageDraw.Draw(full_img, "RGBA")
@@ -456,7 +463,7 @@ def generate_patch(mode_single: str,
         "img_file": img_file,
         "img_info": img_info,
         "anns": anns_out,
-        "category_id": patch_cat_id,
+        "category_id": dataset_cat_id,
 
         "offset_xy": offset_xy,
         "fracs": fracs_out,

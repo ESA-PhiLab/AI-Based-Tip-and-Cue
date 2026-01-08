@@ -281,9 +281,10 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
     else:
         wb = openpyxl.Workbook()
 
-    for name in ["settings", "patch_param", "offnadir_param", "annotations"]:
+    for name in ["settings", "patch_param", "offnadir_param", "annotations_nadir", "annotations_offnadir"]:
         if name not in wb.sheetnames:
             wb.create_sheet(title=name)
+
 
     if "Sheet" in wb.sheetnames:
         ws0 = wb["Sheet"]
@@ -321,15 +322,21 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
         ])
         ws_off.freeze_panes = "A2"
 
-    ws_ann = wb["annotations"]
-    if ws_ann.max_row == 1 and ws_ann.cell(1, 1).value is None:
-        ws_ann.append([
-            "i", "img_file", "patch_name",
-            "image_id", "annotation_id", "category_id",
-            "bbox_json", "segmentation_json",
-            "area", "iscrowd", "other_keys_json",
-        ])
-        ws_ann.freeze_panes = "A2"
+    def _init_ann_sheet(ws) -> None:
+        if ws.max_row == 1 and ws.cell(1, 1).value is None:
+            ws.append([
+                "i", "img_file", "patch_name",
+                "image_id", "annotation_id", "category_id",
+                "bbox_json", "segmentation_json",
+                "area", "iscrowd", "other_keys_json",
+            ])
+            ws.freeze_panes = "A2"
+
+    ws_ann_nadir = wb["annotations_nadir"]
+    ws_ann_off = wb["annotations_offnadir"]
+    _init_ann_sheet(ws_ann_nadir)
+    _init_ann_sheet(ws_ann_off)
+
 
     return wb
 
@@ -375,10 +382,11 @@ def ann_row_from_dict(i_val: int, img_file: str, patch_name: str, ann: dict) -> 
     """ann_row_from_dict(i_val,img_file,patch_name,ann) -> list[object]: Build an Excel row from a normalized annotation dict."""
     bbox = ann.get("bbox", None)
     seg = ann.get("segmentation", None)
+
     other = ann.get("other", None)
 
     bbox_json = json.dumps(bbox) if bbox is not None else ""
-    seg_json = json.dumps(seg) if seg is not None else ""
+    seg_json = json.dumps(seg) if (seg is not None and seg != [] and seg != [[]]) else ""
     other_json = json.dumps(other) if other is not None else ""
 
     return [
@@ -397,13 +405,18 @@ def ann_row_from_dict(i_val: int, img_file: str, patch_name: str, ann: dict) -> 
 
 def open_overview_book(xlsx_path: Path,
                        patch_parameters: dict,
-                       render_resolution: int) -> tuple[openpyxl.Workbook, Any, Any, Any, Any]:
+                       render_resolution: int) -> tuple[openpyxl.Workbook, Any, Any, Any, Any, Any]:
     """open_overview_book(xlsx_path,patch_parameters,render_resolution) -> (wb,ws_settings,ws_patch,ws_off,ws_ann): Open workbook + ensure headers + write settings once."""
     wb = ensure_workbook(xlsx_path)
     ws_settings = wb["settings"]
     ws_patch = wb["patch_param"]
     ws_off = wb["offnadir_param"]
-    ws_ann = wb["annotations"]
+    ws_ann_nadir = wb["annotations_nadir"]
+    ws_ann_off = wb["annotations_offnadir"]
+
+    write_settings_once(ws_settings, patch_parameters, render_resolution)
+    return wb, ws_settings, ws_patch, ws_off, ws_ann_nadir, ws_ann_off
+
 
     write_settings_once(ws_settings, patch_parameters, render_resolution)
     return wb, ws_settings, ws_patch, ws_off, ws_ann
@@ -411,7 +424,8 @@ def open_overview_book(xlsx_path: Path,
 
 def append_run_rows(ws_patch,
                     ws_off,
-                    ws_ann,
+                    ws_ann_nadir,
+                    ws_ann_off,
                     i: int,
                     img_file: str,
                     result_name: str,
@@ -424,6 +438,7 @@ def append_run_rows(ws_patch,
                     tgt_lat: float, tgt_lon: float, tgt_alt: float,
                     datetime_utc: str,
                     meta: dict) -> None:
+
     """append_run_rows(...) -> None: Append patch/offnadir/annotation rows for one run."""
     top_left = meta.get("top_left", [None, None])
     offset_xy = meta.get("offset_xy", [None, None])
@@ -491,10 +506,19 @@ def append_run_rows(ws_patch,
         offnadir_deg
     ])
 
-    anns_patch = meta.get("anns_patch", [])
-    if isinstance(anns_patch, list) and anns_patch:
-        for ann in anns_patch:
+    anns_nadir = meta.get("anns_nadir", [])
+    if isinstance(anns_nadir, list) and anns_nadir:
+        for ann in anns_nadir:
             if isinstance(ann, dict):
-                ws_ann.append(ann_row_from_dict(i, img_file, patch_name, ann))
+                ws_ann_nadir.append(ann_row_from_dict(i, img_file, patch_name, ann))
     else:
-        ws_ann.append([i, img_file, patch_name, None, None, None, "", "", None, None, ""])
+        ws_ann_nadir.append([i, img_file, patch_name, None, None, None, "", "", None, None, ""])
+
+    anns_off = meta.get("anns_offnadir", [])
+    if isinstance(anns_off, list) and anns_off:
+        for ann in anns_off:
+            if isinstance(ann, dict):
+                ws_ann_off.append(ann_row_from_dict(i, img_file, patch_name, ann))
+    else:
+        ws_ann_off.append([i, img_file, patch_name, None, None, None, "", "", None, None, ""])
+

@@ -23,7 +23,7 @@ img_path = os.path.join(images_folder, img_file)
 anns_folder = "dataset/create_dataset/"
 anns_path = os.path.join(anns_folder, "final_annotations.json")
 
-print_values = True
+print_values = False
 plot_3d = False
 plot_result = True
 max_glint = False

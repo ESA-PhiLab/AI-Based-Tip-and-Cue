@@ -317,7 +317,8 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
     sky_spd = os.path.join(spd_folder, "sky_diffuse_radiance.spd")
 
     band_data = get_band_data(satellite, spd_folder)
-    if bools['print_values']:
+
+    if bools['print_values'] == True:
         print(f"Retrieved band data for {satellite} satellite\n")
 
     GSD = sensor_characteristics['GSD']
@@ -328,10 +329,10 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
     get_DEM(img_path, dem_tiff_path, GSD, wave_properties, random_seed=dem_seed, waves=True, curvature=True, plot_DEM=False)
     convert_DEM(img_path, dem_tiff_path, dem_path, GSD, scale_km=False, print_output=False, plot_DEM=False)
 
-    if bools['print_values']:
+    if bools['print_values'] == True:
         print(f"Saved synthetic DEM to {dem_path}\n")
 
-    if bools['print_values']:
+    if bools['print_values'] == True:
         print("Convert lat lon to ecef coordinates")
 
     satellite_ecef, target_ecef, sun_ecef = get_ecef_from_lat_lon(
@@ -344,7 +345,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
     if bools['max_glint']:
         satellite_ecef = compute_max_glint_satellite_ecef(target_ecef, sun_ecef, glint_distance_m=700 * 10**3)
 
-    if bools['print_values']:
+    if bools['print_values'] == True:
         print("Target ECEF:    ", np.round(target_ecef / 1000, 3), ' km')
         print("Satellite ECEF: ", np.round(satellite_ecef / 1000, 3), ' km')
         formatted = " ".join(f"{x:.2e}" for x in sun_ecef / 1000)
@@ -397,7 +398,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         target_reflectance_rgb=wave_properties.get("target_reflectance_rgb", (0.04, 0.03, 0.02))
     )
 
-    if bools['print_values']:
+    if bools['print_values'] == True:
         print("Loaded input image with shape ", img_height, "h x", img_width, " w, and DN255 min ", np.min(img_rgb), 'max ', np.max(img_rgb))
 
     satellite_local, target_local, sun_direction, fov_deg, off_nadir_rad, azimuth_rad = get_scene_characteristics(
@@ -405,10 +406,11 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
     offnadir_deg = off_nadir_rad * 180 / np.pi
 
-    if bools['print_values']:
-        print(f"\nFOV \t\t: {fov_deg:.5f} deg")
-        print(f"Off Nadir \t: {offnadir_deg:.2f} deg")
-        print(f"Azimuth \t: {azimuth_rad * 180 / np.pi:.2f} deg\n")
+
+    print(f"Off Nadir      : {offnadir_deg:.1f}               deg")
+    if bools['print_values'] == True:
+        print(f"FOV:       {fov_deg:.5f} deg")
+        print(f"Azimuth:     {azimuth_rad * 180 / np.pi:.2f} deg\n")
 
     sensor_characteristics['fov_deg'] = fov_deg
     sensor_characteristics['azimuth_rad'] = azimuth_rad
@@ -432,7 +434,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
                 plot_spd=False
             )
 
-            if bools['print_values']:
+            if bools['print_values'] == True:
                 print("UTC time:", datetime_utc.isoformat())
                 print("Target lat/lon:", target_lat, target_lon)
                 print("Sun elevation from geometry (deg):", elev_deg)
@@ -443,10 +445,10 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
                 print(f"Failed to generate sun/sky SPD: {repr(e)}")
             return None, None, None, None, None, None, None, None, offnadir_deg
 
-        if bools['print_values']:
+        if bools['print_values'] == True:
             print(f"Saved solar SPD to {sun_spd}\n")
 
-        if bools['print_values']:
+        if bools['print_values'] == True:
             print(f"Generate off nadir image\n")
 
 
@@ -519,8 +521,9 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         DN255_no_glint[~black_mask_full] = 0
         DN255_glint2[~black_mask_full] = 0
 
-        print("DN255_black min/max:", DN255_black.min(), DN255_black.max())
-        print("fraction black (raw):", np.mean(np.linalg.norm(DN255_black.astype(np.float32), axis=2) <= 2.0))
+        if bools['print_values'] == True:
+            print("DN255_black min/max:", DN255_black.min(), DN255_black.max())
+            print("fraction black (raw):", np.mean(np.linalg.norm(DN255_black.astype(np.float32), axis=2) <= 2.0))
 
         # --- TOA reflectance (compute once, independent of plotting) ---
         cos_theta_s = float(np.sin(np.deg2rad(elev_deg)))  # WV-3: cos(theta_s)=sin(sunEl)
@@ -543,7 +546,8 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
         rho_glint[~black_mask_full] = 0.0
 
-        print(f"Reflectance min: {np.min(rho_glint)}, max: {np.max(rho_glint)}")
+        print(f"Radiation   min: {np.min(radiance_glint):.1f}  | max: {np.max(radiance_glint):.1f}   W m^-2 sr^-1")
+        print(f"Reflectance min: {np.min(rho_glint):.2f} | max: {np.max(rho_glint):.2f}  ")
 
         m = black_mask_full.astype(bool)
         p = float(np.percentile(rho_glint[m], 99.5)) if np.any(m) else 1.0

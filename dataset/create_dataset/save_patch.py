@@ -60,13 +60,21 @@ def _ensure_coco(split: str) -> tuple[Path, dict]:
     """_ensure_coco(split) -> tuple[Path,dict]: Load or create split COCO JSON."""
     out_path = CREATE_DATASET_DIR / split / "final_annotations.json"
     if out_path.is_file():
-        return out_path, _load_json(out_path)
+        coco = _load_json(out_path)
+    else:
+        tmpl = _load_template_coco()
+        coco = dict(tmpl)
+        coco["images"] = []
+        coco["annotations"] = []
 
-    tmpl = _load_template_coco()
-    coco = dict(tmpl)
-    coco["images"] = []
-    coco["annotations"] = []
+    # --- FIX LICENSES ---
+    # Ensure license field is removed
+    coco.pop("licenses", None)
+
+    # --------------------
+
     return out_path, coco
+
 
 
 def _clip_poly_edge(poly: np.ndarray, inside_fn, intersect_fn) -> np.ndarray:
@@ -237,6 +245,56 @@ def _split_needs_offnadir_tag(split: str) -> bool:
     """_split_needs_offnadir_tag(split) -> bool: True for offnadir output splits."""
     return split.startswith(("texture_offnadir_", "radiance_offnadir_", "reflection_offnadir_"))
 
+def rollback_patch_outputs(img_file: str, patch_name: str) -> None:
+    """rollback_patch_outputs(img_file,patch_name) -> None: Delete files + COCO records for patch_name across all splits."""
+    img_file = str(img_file)
+    patch_name = str(patch_name)
+
+    subdir = Path(img_file).parent
+    ext = Path(img_file).suffix
+
+    # Remove both nadir filenames (no _deg tag) and any offnadir-tagged variants just in case
+    # e.g. <subdir>/<patch_name>.PNG  and  <subdir>/<patch_name>_55deg.PNG
+    def matches_patch(fn: str) -> bool:
+        p = Path(fn)
+        if p.parent.as_posix() != subdir.as_posix():
+            return False
+        s = p.stem  # without extension
+        return s == patch_name or s.startswith(patch_name + "_") and s.endswith("deg")
+
+    for split in sorted(ALLOWED_SPLITS):
+        split_dir = CREATE_DATASET_DIR / split
+        if not split_dir.exists():
+            continue
+
+        # delete files
+        for p in (split_dir / subdir).glob(f"{patch_name}*{ext}"):
+            try:
+                p.unlink()
+            except Exception:
+                pass
+        for p in (split_dir / subdir).glob(f"{patch_name}*.npy"):
+            try:
+                p.unlink()
+            except Exception:
+                pass
+
+        # scrub COCO json
+        coco_path = CREATE_DATASET_DIR / split / "final_annotations.json"
+        if not coco_path.is_file():
+            continue
+
+        coco = _load_json(coco_path)
+        images = list(coco.get("images", []))
+        anns = list(coco.get("annotations", []))
+
+        bad_img_ids = {im.get("id") for im in images if isinstance(im, dict) and matches_patch(str(im.get("file_name", "")))}
+        if bad_img_ids:
+            images = [im for im in images if im.get("id") not in bad_img_ids]
+            anns = [a for a in anns if a.get("image_id") not in bad_img_ids]
+            coco["images"] = images
+            coco["annotations"] = anns
+            _save_json(coco_path, coco)
 
 
 def save_patch(split: str, patch_bundle: dict) -> dict:
@@ -313,10 +371,12 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
 
     img_info_src = patch_bundle.get("img_info", {})
     img_rec = dict(img_info_src) if isinstance(img_info_src, dict) else {}
+    img_rec.pop("license", None)   # REMOVE license field
     img_rec["id"] = new_image_id
     img_rec["file_name"] = file_name
     img_rec["width"] = w
     img_rec["height"] = h
+
     images.append(img_rec)
 
     # Annotations:
@@ -347,11 +407,15 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
             raise ValueError(f"Expected patch-local annotations list in patch_bundle['anns_patch'] for split={split}")
 
     next_ann_id = int(max([int(a.get("id", 0)) for a in anns] + [0]) + 1)
+    cats = coco.get("categories", [])
+    dataset_cat_id = int(cats[0]["id"]) if isinstance(cats, list) and cats and isinstance(cats[0], dict) and "id" in cats[0] else 0
+
     out_anns = []
     for a in anns_kept:
         a2 = dict(a)
         a2["id"] = next_ann_id
         a2["image_id"] = new_image_id
+        a2["category_id"] = dataset_cat_id
         out_anns.append(a2)
         next_ann_id += 1
 

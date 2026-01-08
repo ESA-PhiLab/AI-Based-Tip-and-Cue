@@ -96,6 +96,17 @@ def ann_to_row_dict(ann: dict) -> dict:
         "other": other if other else None,
     }
 
+def anns_to_rows(anns: object) -> list[dict]:
+    """anns_to_rows(anns) -> list[dict]: Convert annotation list into row dicts."""
+    if not isinstance(anns, list):
+        return []
+    out = []
+    for a in anns:
+        if isinstance(a, dict):
+            out.append(ann_to_row_dict(a))
+    return out
+
+
 
 def write_meta(meta_out: str,
                patch_bundle: dict,
@@ -191,6 +202,8 @@ def main() -> int:
     half_range = (float(args.half_fraction_low), float(args.half_fraction_high))
 
     if args.stage == "nadir":
+
+        print("\nGenerate patch")
         patch_rng = np.random.default_rng(int(args.patch_seed))
 
         patch_bundle = generate_patch(
@@ -229,6 +242,7 @@ def main() -> int:
             mirror_bool=mirror_bool
         )
 
+        print("\nGenerate nadir image")
         nadir_bundle = translate_image(
             patch_bundle,
             render_resolution=int(args.render_resolution),
@@ -242,6 +256,9 @@ def main() -> int:
             mirror_bool=mirror_bool
         )
 
+        update_meta_file(args.meta_out, {
+            "anns_nadir": anns_to_rows(nadir_bundle.get("anns_patch", [])),
+        })
 
 
         # save texture
@@ -276,6 +293,7 @@ def main() -> int:
 
     patch_bundle = load_patch_bundle_from_patchraw(img_file=args.img_file, patch_name=args.patch_name)
 
+    print("\nGenerate off-nadir image")
     off_bundle = translate_image(
         patch_bundle,
         render_resolution=int(args.render_resolution),
@@ -292,6 +310,7 @@ def main() -> int:
     update_meta_file(args.meta_out, {
         "offnadir_deg": float(off_bundle.get("offnadir_deg", 0.0)) if off_bundle.get("offnadir_deg", None) is not None else None,
         "rotation_angle_deg": float(args.rotation_angle_deg),
+        "anns_offnadir": anns_to_rows(off_bundle.get("anns_patch", [])),
     })
 
     b_tex = dict(off_bundle)

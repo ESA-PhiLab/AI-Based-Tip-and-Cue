@@ -37,10 +37,10 @@ BOOLS_BASE = {
     "plot_3d": False,
     "plot_result": False,
     "max_glint": False,
-    "print_values": True,
+    "print_values": False,
     "crop_black_border": False,  # ignore cropping
     "generate_radiation": True,
-    "generate_nadir": True
+    "generate_nadir": False
 }
 
 WAVE_PROPERTIES = {"wind_speed": 10.0, "num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
@@ -696,7 +696,7 @@ def translate_image(patch_bundle: dict,
     )
 
     if generate_nadir:
-        sat_ecef = sat_ecef_geocentric_over_target(target_ecef, sat_alt, tgt_alt)
+        satellite_ecef = sat_ecef_geocentric_over_target(target_ecef, sat_alt, tgt_alt)
        #  print(math.degrees(offnadir_satellite_rad(sat_ecef, tgt_ecef)))  # ~0
 
     is_dark, *_ = is_dark_from_sun_dir(
@@ -754,7 +754,27 @@ def translate_image(patch_bundle: dict,
         mask_off_bin_hi = postprocess_binary_mask(mask_off_bin_hi, close_radius=MASK_CLOSE_RADIUS)
         mask_off_bin = downsample_binary_mask(mask_off_bin_hi, out_res=int(render_resolution))
 
-        polys_off_by_ann[ann_id] = mask_to_polygons(mask_off_bin, simplify_eps=1.5)
+        # Treat tiny/empty masks as "no segmentation"
+        min_pixels = 3
+        if int(mask_off_bin.sum()) < min_pixels:
+            polys_off_by_ann[ann_id] = []
+        else:
+            polys_off_by_ann[ann_id] = mask_to_polygons(mask_off_bin, simplify_eps=1.5)
+
+
+    had_nadir_whale = any(
+        isinstance(a, dict) and isinstance(a.get("segmentation", None), list) and len(a.get("segmentation", [])) > 0
+        for a in anns
+    )
+
+    any_offnadir_seg = any(
+        isinstance(plist, list) and len(plist) > 0
+        for plist in polys_off_by_ann.values()
+    )
+
+    if had_nadir_whale and (not any_offnadir_seg):
+        raise RuntimeError("OFFNADIR_SEGMENTATION_FAILED")
+
 
     # ==========================================================
     # (B) BBOX: ID corners at off-nadir res
@@ -773,10 +793,15 @@ def translate_image(patch_bundle: dict,
     )
 
     bbox_pos = decode_id_centroids(bbox_id_off_u8)
-    boxes_off_by_ann = rebuild_bboxes_from_id_by_ann(bbox_meta, bbox_pos)
+    boxes_off_by_ann_all = rebuild_bboxes_from_id_by_ann(bbox_meta, bbox_pos)
+
+    # Only keep boxes for anns that produced at least one valid polygon
+    has_seg = {aid for aid, polys in polys_off_by_ann.items() if isinstance(polys, list) and len(polys) > 0}
+    boxes_off_by_ann = {aid: box for aid, box in boxes_off_by_ann_all.items() if aid in has_seg}
     boxes_off = list(boxes_off_by_ann.values())
 
     all_polys = [p for plist in polys_off_by_ann.values() for p in plist]
+
     contour_dbg = Image.new("RGB", (int(render_resolution), int(render_resolution)), (0, 0, 0))
     contour_dbg = draw_overlay_from_polys(contour_dbg, all_polys, boxes_off)
 
@@ -851,13 +876,22 @@ def translate_image(patch_bundle: dict,
     for ann in anns:
         aid = int(ann.get("id", -1))
         polys = polys_off_by_ann.get(aid, [])
-        bbox = boxes_off_by_ann.get(aid, None)
+        seg_coco = polygons_to_coco_segmentation(polys)
 
-        a2 = dict(ann)  # keep everything
-        a2["segmentation"] = polygons_to_coco_segmentation(polys)
+        if not seg_coco:
+            continue
+
+        a2 = dict(ann)
+        a2["segmentation"] = seg_coco
+
+        bbox = boxes_off_by_ann.get(aid, None)
         if bbox is not None:
             a2["bbox"] = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+        else:
+            a2.pop("bbox", None)
+
         translated_anns.append(a2)
+
 
     out = dict(patch_bundle)
     out["anns_patch"] = translated_anns
