@@ -376,8 +376,6 @@ def run_dataset(n_runs: int,
     wb.save(overview_xlsx)
     wb.close()
 
-
-
 def main() -> None:
     """main() -> None: Configure and run dataset generation."""
     base = Path("dataset") / "create_dataset"
@@ -385,7 +383,7 @@ def main() -> None:
 
     render_resolution = 64 # 64 * 2
 
-    n_images = 3 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
+    n_images = 2 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
     balanced_offnadir = True  # False = random offnadir, loop by one, True = per-image angles 5..60
 
     pick_img_seed_0 = 1
@@ -408,12 +406,12 @@ def main() -> None:
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
-        "mode_single": "full",
-        "mode_multiple_allow_partial": False,
+        "mode_single": "all",
+        "mode_multiple_allow_partial": True,
         "window_size": 64,
         "nowhale_max_fraction": 0.10,
-        "whale_min_fraction": 0.99,
-        "half_fraction_range": (0.20, 0.80),
+        "whale_min_fraction": 0.95,
+        "half_fraction_range": (0.20, 0.95),
         "mask_alpha": 80,
     }
 

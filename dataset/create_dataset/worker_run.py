@@ -112,6 +112,7 @@ def write_meta(meta_out: str,
     meta = {
         "patch_name": patch_bundle.get("patch_name", ""),
         "label_simple": label_simple,
+        "category_id": patch_bundle.get("category_id", None),
         "top_left": list(patch_bundle.get("top_left", (None, None))),
         "fracs": patch_bundle.get("fracs", []),
         "offset_xy": list(patch_bundle.get("offset_xy", (None, None))),

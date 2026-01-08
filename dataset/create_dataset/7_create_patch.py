@@ -841,16 +841,13 @@ def plot_patch_after_rotation(patch_bundle: dict) -> None:
 
 
 
-
-
-
 # =========================
 # Example usage
 # =========================
 if __name__ == "__main__":
     rng = np.random.default_rng(1234)
     img_file = "Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG"
-    img_file = "Ignacio2017/Ignacio_GW_WV3_PS_20170220_B58.PNG"
+    # img_file = "Ignacio2017/Ignacio_GW_WV3_PS_20170220_B58.PNG"
 
     rng_rot = np.random.default_rng(42)
 

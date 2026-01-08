@@ -303,10 +303,10 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
         ws_patch.append([
             "i", "img_file", "result_name", "detection_id",
             "pick_img_seed_i", "crop_patch_seed_i",
-            "patch_name", "label_simple",
+            "patch_name",
             "top_left_x", "top_left_y",
             "offset_x", "offset_y", "rotation_angle_deg", "mirror_bool",
-            "fracs_json",
+            "fracs_json", "label_simple", "category_id"
         ])
         ws_patch.freeze_panes = "A2"
 
@@ -429,12 +429,15 @@ def append_run_rows(ws_patch,
     offset_xy = meta.get("offset_xy", [None, None])
     fracs = meta.get("fracs", [])
     fracs_json = json.dumps(fracs) if isinstance(fracs, list) else str(fracs)
+    fracs_json = float(fracs_json.strip("[]"))
 
     patch_name = meta.get("patch_name", "")
     label_simple = meta.get("label_simple", "")
+    category_id = meta.get("category_id", None)
     offnadir_deg = meta.get("offnadir_deg", None)
     rotation_angle_deg = meta.get("rotation_angle_deg", None)
     mirror_bool = meta.get("mirror_bool", None)
+
 
     if offnadir_deg is not None:
         try:
@@ -462,7 +465,6 @@ def append_run_rows(ws_patch,
         pick_img_seed_i,
         crop_patch_seed_i,
         patch_name,
-        label_simple,
         top_left[0] if isinstance(top_left, list) and len(top_left) == 2 else None,
         top_left[1] if isinstance(top_left, list) and len(top_left) == 2 else None,
         offset_xy[0] if isinstance(offset_xy, list) and len(offset_xy) == 2 else None,
@@ -470,6 +472,8 @@ def append_run_rows(ws_patch,
         rotation_angle_deg,
         mirror_bool,
         fracs_json,
+        label_simple,
+        category_id
     ])
 
     ws_off.append([

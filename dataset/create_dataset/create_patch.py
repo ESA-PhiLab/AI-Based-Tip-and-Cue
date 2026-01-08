@@ -6,6 +6,8 @@ import numpy as np
 from PIL import Image, ImageDraw
 import matplotlib.pyplot as plt
 
+from copy import deepcopy
+
 
 # =========================
 # Path handling
@@ -40,6 +42,11 @@ def anns_by_image(anns: list) -> dict:
     for a in anns:
         out.setdefault(a["image_id"], []).append(a)
     return out
+
+
+def patch_category_id(fracs: list[float], nowhale_max_fraction: float) -> int:
+    """patch_category_id(fracs,nowhale_max_fraction) -> int: Return 1 if patch contains whale above threshold else 0."""
+    return 1 if (fracs and max(fracs) > float(nowhale_max_fraction)) else 0
 
 
 # =========================
@@ -399,6 +406,15 @@ def generate_patch(mode_single: str,
         img_rgb, anns, offset_xy=offset_xy, clip_rect_xyxy=None, only_ann_indices=None, line_width=1, mask_alpha=mask_alpha
     )
 
+    # Patch-level category: 1=whale (full/half/etc), 0=ocean
+    patch_cat_id = patch_category_id(fracs_out, nowhale_max_fraction)
+
+    # Update annotation category_id in the returned bundle (don’t mutate original COCO list)
+    anns_out = deepcopy(anns)
+    for a in anns_out:
+        a["category_id"] = int(patch_cat_id)
+
+
     full_img = Image.fromarray(full_overlay, mode="RGB").convert("RGBA")
     dfull = ImageDraw.Draw(full_img, "RGBA")
     _draw_bbox_closed(dfull, (x, y, pw, ph), outline=(0, 0, 0, 255), width=1)
@@ -407,7 +423,7 @@ def generate_patch(mode_single: str,
     if draw_idxs:
         overlay_full = draw_annotations_with_transparent_mask(
             img_rgb,
-            anns,
+            anns_out,
             offset_xy=offset_xy,
             clip_rect_xyxy=rect_xyxy,
             only_ann_indices=draw_idxs,
@@ -439,7 +455,9 @@ def generate_patch(mode_single: str,
         "label": label_out,
         "img_file": img_file,
         "img_info": img_info,
-        "anns": anns,
+        "anns": anns_out,
+        "category_id": patch_cat_id,
+
         "offset_xy": offset_xy,
         "fracs": fracs_out,
         "settings": {

@@ -26,16 +26,15 @@ ALLOWED_modes = {
     "reflection_offnadir_npy",
 }
 
-mode = "radiance_offnadir_255"
+mode = "patch_raw_255"
 
 DATASET_PATH = Path("dataset")
-BASE_DIR = DATASET_PATH / "create_dataset" / mode
-ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / mode / "final_annotations.json"
+BASE_DIR = DATASET_PATH / "create_dataset" / "dataset_test" / mode
+ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "dataset_test" / mode / "final_annotations.json"
 
 DISPLAY_MS = 500
 DISPLAY_ZOOM = 6  # VISUAL zoom only; annotations are still drawn in original patch pixels
 WINDOW_TITLE = "Annotation Preview  |  Space: pause/resume  |  ←/→: prev/next  |  Q: quit"
-
 
 # =========================
 # Helpers
