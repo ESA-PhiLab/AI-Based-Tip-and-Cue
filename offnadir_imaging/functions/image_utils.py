@@ -108,6 +108,18 @@ def band_weighted_irradiance_integral(spd_path: str, band_rsp_path: str) -> floa
 
     return float(np.trapz(Ew * Rw, w))
 
+def spd_area_nm(spd_path: str) -> float:
+    """spd_area_nm(spd_path) -> float: Integral ∫R(λ)dλ in nm for a band SPD (wl,value)."""
+    arr = np.loadtxt(spd_path, dtype=np.float64)
+    wl = arr[:, 0]
+    y = arr[:, 1]
+    ok = np.isfinite(wl) & np.isfinite(y)
+    wl = wl[ok]
+    y = y[ok]
+    if wl.size < 2:
+        return 0.0
+    return float(np.trapezoid(y, wl))
+
 
 def radiance_to_toa_reflectance(L, E_band, cos_theta_s, d_au=1.0):
     """Convert band-weighted radiance to TOA reflectance; returns array."""

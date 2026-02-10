@@ -23,6 +23,8 @@ from .functions.mask_functions import get_whale_mask_for_image, coco_segmentatio
 
 _COCO_CACHE = {}
 
+
+
 def load_coco_index_cached(anns_path: str):
     """load_coco_index_cached(anns_path) -> tuple: Cache COCO index by path."""
     p = os.path.normpath(str(anns_path))
@@ -51,6 +53,35 @@ def resolve_coco_file_name(img_path: str, by_file: dict) -> str:
         f"{p}. Tried suffix match and basename match (matches={len(matches)})."
     )
 
+
+def load_input_reflectance(
+        img_path: str,
+        img_rgb_uint8: np.ndarray,
+        anchor_mask: np.ndarray,
+        mode: str,
+        target_reflectance_rgb=(0.09, 0.05, 0.03),      # B G R
+        scale: float = 255.0,
+        offset: float = 0.0,
+) -> np.ndarray:
+    """Return HxWx3 float32 reflectance from either proxy mapping or encoded reflectance PNG."""
+
+    if mode == "proxy":
+        return rgb_png_to_reflectance_proxy(
+            img_rgb_uint8=img_rgb_uint8,
+            anchor_mask=anchor_mask,
+            target_reflectance_rgb=target_reflectance_rgb,
+        ).astype(np.float32)
+
+    if mode == "reflectance_png":
+        arr = np.asarray(Image.open(img_path))
+        if arr.ndim == 2:
+            arr = np.repeat(arr[:, :, None], 3, axis=2)
+        arr = arr[:, :, :3]
+
+        refl = (arr.astype(np.float32) - float(offset)) / float(scale)
+        return np.clip(refl, 0.0, 2.0).astype(np.float32)
+
+    raise ValueError(f"Unknown reflectance mode: {mode!r}")
 
 
 def render_band_radiance(input_img_lin, dem_path, spd_path, sun_spd, sky_spd, satellite_local, target_local, sun_direction, sensor_characteristics, alpha, specular_weight):
@@ -368,34 +399,69 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
     img_rgb = np.asarray(Image.open(img_path).convert('RGB'))
 
+    anns_ok = False
+    if anns_path is not None:
+        try:
+            anns_ok = Path(str(anns_path)).exists()
+        except Exception:
+            anns_ok = False
+
     img_np = np.array(img_rgb)
     img_height, img_width = img_np.shape[:2]
 
     img_lin = iu.DN255_to_linear(img_rgb)
 
-    BY_FILE, ANNS_BY_IMAGE_ID, IMAGES_BY_ID = load_coco_index_cached(str(anns_path))
-    img_file_name_for_coco = resolve_coco_file_name(img_path, BY_FILE)
+    gray = img_rgb.mean(axis=2)
 
-    whale_mask = get_whale_mask_for_image(
-        img_rgb_uint8=img_rgb,
-        img_file_name=img_file_name_for_coco,
-        by_file=BY_FILE,
-        anns_by_image_id=ANNS_BY_IMAGE_ID,
-        images_by_id=IMAGES_BY_ID,
-        whale_category_id=0
-    )
+    if anns_ok and bools.get("use_annotations", True):
+        BY_FILE, ANNS_BY_IMAGE_ID, IMAGES_BY_ID = load_coco_index_cached(str(anns_path))
+        img_file_name_for_coco = resolve_coco_file_name(img_path, BY_FILE)
 
-    # Anchor region = "everything except whale"
-    anchor_mask = ~whale_mask
+        whale_mask = get_whale_mask_for_image(
+            img_rgb_uint8=img_rgb,
+            img_file_name=img_file_name_for_coco,
+            by_file=BY_FILE,
+            anns_by_image_id=ANNS_BY_IMAGE_ID,
+            images_by_id=IMAGES_BY_ID,
+            whale_category_id=0
+        )
+
+        anchor_mask = ~whale_mask
+        anchor_mask &= (gray < 220)
+
+    else:
+        # No annotations: pick a "background water" anchor automatically.
+        # Use mid-percentile gray range to avoid clouds/sun glint/foam and deep shadows.
+        lo = float(wave_properties.get("anchor_gray_p10", 10.0))
+        hi = float(wave_properties.get("anchor_gray_p90", 90.0))
+        p_lo, p_hi = np.percentile(gray, [lo, hi])
+
+        anchor_mask = (gray >= p_lo) & (gray <= p_hi)
+
+        # Optional: remove extreme bright values explicitly
+        anchor_mask &= (gray < 240)
+
+        # Optional: if anchor becomes too small, fall back to "not-too-bright"
+        min_frac = float(wave_properties.get("anchor_min_frac", 0.10))
+        if float(np.mean(anchor_mask)) < min_frac:
+            anchor_mask = (gray < 240)
 
     # Optional: also remove very bright pixels from anchor to avoid boats/foam bias
     gray = img_rgb.mean(axis=2)
     anchor_mask &= (gray < 220)
 
-    img_refl = rgb_png_to_reflectance_proxy(
+    # Optional: also remove very bright pixels from anchor to avoid boats/foam bias
+    gray = img_rgb.mean(axis=2)
+    anchor_mask &= (gray < 220)
+
+    img_refl = load_input_reflectance(
+        img_path=img_path,
         img_rgb_uint8=img_rgb,
         anchor_mask=anchor_mask,
-        target_reflectance_rgb=wave_properties.get("target_reflectance_rgb", (0.04, 0.03, 0.02))
+        mode=sensor_characteristics["refl_mode"],
+        scale=sensor_characteristics["refl_scale"],
+        offset=sensor_characteristics["refl_offset"],
+        target_reflectance_rgb=wave_properties["target_reflectance_rgb"],
     )
 
     if bools['print_values'] == True:
@@ -525,29 +591,40 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
             print("DN255_black min/max:", DN255_black.min(), DN255_black.max())
             print("fraction black (raw):", np.mean(np.linalg.norm(DN255_black.astype(np.float32), axis=2) <= 2.0))
 
-        # --- TOA reflectance (compute once, independent of plotting) ---
-        cos_theta_s = float(np.sin(np.deg2rad(elev_deg)))  # WV-3: cos(theta_s)=sin(sunEl)
+        # --- TOA reflectance (use in-band integrated convention) ---
+        cos_theta_s = float(np.sin(np.deg2rad(elev_deg)))
         d_au = 1.0
 
-        E_R = iu.band_weighted_irradiance_integral(sun_spd, band_data["red"]["spd"])
-        E_G = iu.band_weighted_irradiance_integral(sun_spd, band_data["green"]["spd"])
-        E_B = iu.band_weighted_irradiance_integral(sun_spd, band_data["blue"]["spd"])
+        band_R = band_data["red"]["spd"]
+        band_G = band_data["green"]["spd"]
+        band_B = band_data["blue"]["spd"]
 
-        if min(E_R, E_G, E_B) <= 0.0:
-            raise ValueError(f"Non-positive band irradiance integrals: E_R={E_R}, E_G={E_G}, E_B={E_B}")
+        A_R = iu.spd_area_nm(band_R)
+        A_G = iu.spd_area_nm(band_G)
+        A_B = iu.spd_area_nm(band_B)
 
-        if cos_theta_s <= 0.0:
-            rho_rgb = np.zeros_like(radiance_glint, dtype=np.float32)
-        else:
-            rho_R = iu.radiance_to_toa_reflectance(radiance_glint[..., 0], E_R, cos_theta_s, d_au)
-            rho_G = iu.radiance_to_toa_reflectance(radiance_glint[..., 1], E_G, cos_theta_s, d_au)
-            rho_B = iu.radiance_to_toa_reflectance(radiance_glint[..., 2], E_B, cos_theta_s, d_au)
-            rho_glint = np.stack([rho_R, rho_G, rho_B], axis=-1).astype(np.float32)
+        radiance_glint_nm = np.empty_like(radiance_glint, dtype=np.float32)
+        radiance_glint_nm[..., 0] = radiance_glint[..., 0] / (A_R + 1e-12)
+        radiance_glint_nm[..., 1] = radiance_glint[..., 1] / (A_G + 1e-12)
+        radiance_glint_nm[..., 2] = radiance_glint[..., 2] / (A_B + 1e-12)
+
+        E_R_inband = iu.band_weighted_irradiance_integral(sun_spd, band_R)
+        E_G_inband = iu.band_weighted_irradiance_integral(sun_spd, band_G)
+        E_B_inband = iu.band_weighted_irradiance_integral(sun_spd, band_B)
+
+        Ebar_R = E_R_inband / (A_R + 1e-12)
+        Ebar_G = E_G_inband / (A_G + 1e-12)
+        Ebar_B = E_B_inband / (A_B + 1e-12)
+
+        rho_R = iu.radiance_to_toa_reflectance(radiance_glint_nm[..., 0], Ebar_R, cos_theta_s, d_au)
+        rho_G = iu.radiance_to_toa_reflectance(radiance_glint_nm[..., 1], Ebar_G, cos_theta_s, d_au)
+        rho_B = iu.radiance_to_toa_reflectance(radiance_glint_nm[..., 2], Ebar_B, cos_theta_s, d_au)
+        rho_glint = np.stack([rho_R, rho_G, rho_B], axis=-1).astype(np.float32)
 
         rho_glint[~black_mask_full] = 0.0
 
-        print(f"Radiation   min: {np.min(radiance_glint):.1f}  | max: {np.max(radiance_glint):.1f}   W m^-2 sr^-1")
-        print(f"Reflectance min: {np.min(rho_glint):.2f} | max: {np.max(rho_glint):.2f}  ")
+
+        print(f"Reflectance min/max: {np.min(rho_glint):.3f} / {np.max(rho_glint):.3f}")
 
         m = black_mask_full.astype(bool)
         p = float(np.percentile(rho_glint[m], 99.5)) if np.any(m) else 1.0
@@ -672,7 +749,7 @@ if __name__ == "__main__":
         series=[p95_rad_lst_R, p95_rad_lst_G, p95_rad_lst_B],
         labels=["Red (p95)", "Green (p95)", "Blue (p95)"],
         styles=["r", "g", "b"],
-        ylabel=r"Radiance [W m$^{-2}$ sr$^{-1}$]",
+        ylabel=r"Radiance [W m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
         title="95th percentile band radiance (masked)",
         save_path=outdir / "radiance_timeline_rgb_p95.png"
     )
@@ -682,7 +759,7 @@ if __name__ == "__main__":
         series=[mean_rad_lst_R, mean_rad_lst_G, mean_rad_lst_B],
         labels=["Red (mean)", "Green (mean)", "Blue (mean)"],
         styles=["r--", "g--", "b--"],
-        ylabel=r"Radiance [W m$^{-2}$ sr$^{-1}$]",
+        ylabel=r"Radiance [W m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
         title="Mean band radiance (masked)",
         save_path=outdir / "radiance_timeline_rgb_mean.png"
     )
@@ -692,7 +769,7 @@ if __name__ == "__main__":
         series=[p95_abs_rad_lst, mean_abs_rad_lst],
         labels=["‖L‖ p95", "‖L‖ mean"],
         styles=["k", "k--"],
-        ylabel=r"‖Radiance‖ [W m$^{-2}$ sr$^{-1}$]",
+        ylabel=r"Radiance [W m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
         title="Absolute radiance over time (masked)",
         save_path=outdir / "radiance_timeline_abs_p95_mean.png"
     )

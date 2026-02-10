@@ -248,7 +248,7 @@ def make_rgb_uint8_from_tiff(tiff_path: Path, rgb_bands_1based: tuple[int, int, 
         b = ds.read(b_b, masked=True).astype("float32").filled(np.nan) / 10000.0
 
     rgb01 = np.dstack([stretch01_2d(r), stretch01_2d(g), stretch01_2d(b)])
-    rgb8 = np.clip(rgb01 * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    rgb8 = np.clip(rgb01 * 255.0, 0, 255).astype(np.uint8)
     return rgb8
 
 
@@ -479,3 +479,6 @@ if __name__ == "__main__":
     except Exception as e:
         print("\nCould not fetch/compute PHISAT-2 position automatically.")
         print(f"Reason: {e}")
+
+
+
