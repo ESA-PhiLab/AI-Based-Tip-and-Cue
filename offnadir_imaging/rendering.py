@@ -24,6 +24,91 @@ from .functions.mask_functions import get_whale_mask_for_image, coco_segmentatio
 _COCO_CACHE = {}
 
 
+def reflectance_stats_rgb(arr: np.ndarray, mask: np.ndarray | None = None, name: str = "") -> dict:
+    """reflectance_stats_rgb(arr,mask,name) -> dict: Per-channel stats (min/max/mean/p1/p50/p99)."""
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        raise ValueError(f"Expected HxWx3 array, got {arr.shape}")
+    m = mask.astype(bool) if mask is not None else None
+    out = {"name": name, "channels": {}}
+    for ci, ch in enumerate(["R", "G", "B"]):
+        x = arr[..., ci].astype(np.float64)
+        x = x[m] if m is not None else x.reshape(-1)
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            out["channels"][ch] = {"n": 0, "min": np.nan, "max": np.nan, "mean": np.nan, "p1": np.nan, "p50": np.nan, "p99": np.nan}
+            continue
+        p1, p50, p99 = np.percentile(x, [1, 50, 99])
+        out["channels"][ch] = {
+            "n": int(x.size),
+            "min": float(np.min(x)),
+            "max": float(np.max(x)),
+            "mean": float(np.mean(x)),
+            "p1": float(p1),
+            "p50": float(p50),
+            "p99": float(p99),
+        }
+    return out
+
+import numpy as np
+
+def radiance_rgb_to_toa_reflectance(
+    radiance_rgb,
+    band_data,
+    sun_spd_path,
+    cos_theta_s,
+    d_au=1.0,
+    eps=1e-12,
+):
+    """
+    radiance_rgb_to_toa_reflectance(radiance_rgb, band_data, sun_spd_path, cos_theta_s, d_au=1.0)
+    -> np.ndarray
+
+    Convert band-integrated RGB radiance to TOA reflectance using band SPDs.
+
+    Inputs
+    - radiance_rgb : (H,W,3) array, band-integrated radiance [W m^-2 sr^-1]
+    - band_data    : dict with keys 'red','green','blue', each containing 'spd'
+    - sun_spd_path : path to solar spectral irradiance SPD [W m^-2 nm^-1]
+    - cos_theta_s  : cos(solar zenith angle) at target
+    - d_au         : Earth–Sun distance in AU (default 1.0)
+
+    Output
+    - rho_rgb : (H,W,3) TOA reflectance
+    """
+
+    # --- band SPDs ---
+    band_R = band_data["red"]["spd"]
+    band_G = band_data["green"]["spd"]
+    band_B = band_data["blue"]["spd"]
+
+    # --- band widths (∫R(λ)dλ) ---
+    A_R = iu.spd_area_nm(band_R)
+    A_G = iu.spd_area_nm(band_G)
+    A_B = iu.spd_area_nm(band_B)
+
+    # --- convert to spectral radiance [W m^-2 sr^-1 nm^-1] ---
+    Lnm = np.empty_like(radiance_rgb, dtype=np.float32)
+    Lnm[..., 0] = radiance_rgb[..., 0] / (A_R + eps)
+    Lnm[..., 1] = radiance_rgb[..., 1] / (A_G + eps)
+    Lnm[..., 2] = radiance_rgb[..., 2] / (A_B + eps)
+
+    # --- in-band solar irradiance ---
+    E_R = iu.band_weighted_irradiance_integral(sun_spd_path, band_R)
+    E_G = iu.band_weighted_irradiance_integral(sun_spd_path, band_G)
+    E_B = iu.band_weighted_irradiance_integral(sun_spd_path, band_B)
+
+    # --- band-averaged irradiance [W m^-2 nm^-1] ---
+    Ebar_R = E_R / (A_R + eps)
+    Ebar_G = E_G / (A_G + eps)
+    Ebar_B = E_B / (A_B + eps)
+
+    # --- TOA reflectance ---
+    rho_R = iu.radiance_to_toa_reflectance(Lnm[..., 0], Ebar_R, cos_theta_s, d_au)
+    rho_G = iu.radiance_to_toa_reflectance(Lnm[..., 1], Ebar_G, cos_theta_s, d_au)
+    rho_B = iu.radiance_to_toa_reflectance(Lnm[..., 2], Ebar_B, cos_theta_s, d_au)
+
+    return np.stack([rho_R, rho_G, rho_B], axis=-1).astype(np.float32)
+
 
 def load_coco_index_cached(anns_path: str):
     """load_coco_index_cached(anns_path) -> tuple: Cache COCO index by path."""
@@ -354,7 +439,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
     GSD = sensor_characteristics['GSD']
     wind_speed = wave_properties['wind_speed']
-    sigma2 = 0.003 + 0.00512 * wind_speed
+    sigma2 = 0.003 + 0.00512 * wind_speed        # https://www.oceanopticsbook.info/view/surfaces/cox-munk-sea-surface-slope-statistics
     alpha = np.sqrt(sigma2)
 
     get_DEM(img_path, dem_tiff_path, GSD, wave_properties, random_seed=dem_seed, waves=True, curvature=True, plot_DEM=False)
@@ -454,15 +539,6 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
     gray = img_rgb.mean(axis=2)
     anchor_mask &= (gray < 220)
 
-    img_refl = load_input_reflectance(
-        img_path=img_path,
-        img_rgb_uint8=img_rgb,
-        anchor_mask=anchor_mask,
-        mode=sensor_characteristics["refl_mode"],
-        scale=sensor_characteristics["refl_scale"],
-        offset=sensor_characteristics["refl_offset"],
-        target_reflectance_rgb=wave_properties["target_reflectance_rgb"],
-    )
 
     if bools['print_values'] == True:
         print("Loaded input image with shape ", img_height, "h x", img_width, " w, and DN255 min ", np.min(img_rgb), 'max ', np.max(img_rgb))
@@ -471,6 +547,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         satellite_ecef, target_ecef, sun_ecef, img_height, img_width, GSD)
 
     offnadir_deg = off_nadir_rad * 180 / np.pi
+    cos_theta_s = float(np.sin(np.deg2rad(elev_deg)))
 
 
     print(f"Off Nadir      : {offnadir_deg:.1f}               deg")
@@ -517,8 +594,6 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         if bools['print_values'] == True:
             print(f"Generate off nadir image\n")
 
-
-
         off_nadir_image = render_projected_texture(img_lin, dem_path, satellite_local, target_local, sensor_characteristics)
 
         THIS_DIR = Path(__file__).resolve().parent  # offnadir_imaging/
@@ -534,6 +609,48 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         # off_nadir_image = np.flip(off_nadir_image, axis=0)
 
         DN255_texture = iu.linear_to_DN255(off_nadir_image)
+
+        img_refl = load_input_reflectance(
+            img_path=img_path,
+            img_rgb_uint8=img_rgb,
+            anchor_mask=anchor_mask,
+            mode=sensor_characteristics["refl_mode"],
+            scale=sensor_characteristics["refl_scale"],
+            offset=sensor_characteristics["refl_offset"],
+            target_reflectance_rgb=wave_properties["target_reflectance_rgb"],
+        )
+
+        DN255_full_glint, radiance_full_glint, scale = render_rgb_with_optional_glint(
+            img_refl=img_refl,
+            dem_path=dem_path,
+            band_data=band_data,
+            sun_spd_path=sun_spd,
+            sky_spd_path=sky_spd,
+            satellite_local=satellite_local,
+            target_local=target_local,
+            sun_direction=sun_direction,
+            sensor_characteristics=sensor_characteristics,
+            alpha=float(alpha),
+            specular_weight=1.0,
+            tonemap_percentile=float(wave_properties.get('tonemap_percentile', 99.5)),
+            return_linear=True
+        )
+
+        rho_full_glint = radiance_rgb_to_toa_reflectance(radiance_full_glint, band_data, sun_spd, cos_theta_s, d_au=1.0, eps=1e-12)
+
+        stats_out = reflectance_stats_rgb(rho_full_glint.astype(np.float32), mask=None, name=None)
+        wave_properties["target_reflectance_rgb"] = (stats_out['channels']["R"]["p50"], stats_out['channels']["G"]["p50"], stats_out['channels']["B"]["p50"])
+        print(wave_properties["target_reflectance_rgb"])
+
+        img_refl = load_input_reflectance(
+            img_path=img_path,
+            img_rgb_uint8=img_rgb,
+            anchor_mask=anchor_mask,
+            mode=sensor_characteristics["refl_mode"],
+            scale=sensor_characteristics["refl_scale"],
+            offset=sensor_characteristics["refl_offset"],
+            target_reflectance_rgb=wave_properties["target_reflectance_rgb"],
+        )
 
         # Physically consistent baseline: same sun/camera, NO glint
         DN255_no_glint, radiance_no_glint, scale = render_rgb_with_optional_glint(
@@ -564,7 +681,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
             sun_direction=sun_direction,
             sensor_characteristics=sensor_characteristics,
             alpha=float(alpha),
-            specular_weight=float(wave_properties.get('specular_weight', 0.2)),
+            specular_weight=float(wave_properties.get('specular_weight')),
             tonemap_percentile=float(wave_properties.get('tonemap_percentile', 99.5)),
             return_linear=True
         )
@@ -592,34 +709,9 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
             print("fraction black (raw):", np.mean(np.linalg.norm(DN255_black.astype(np.float32), axis=2) <= 2.0))
 
         # --- TOA reflectance (use in-band integrated convention) ---
-        cos_theta_s = float(np.sin(np.deg2rad(elev_deg)))
-        d_au = 1.0
 
-        band_R = band_data["red"]["spd"]
-        band_G = band_data["green"]["spd"]
-        band_B = band_data["blue"]["spd"]
 
-        A_R = iu.spd_area_nm(band_R)
-        A_G = iu.spd_area_nm(band_G)
-        A_B = iu.spd_area_nm(band_B)
-
-        radiance_glint_nm = np.empty_like(radiance_glint, dtype=np.float32)
-        radiance_glint_nm[..., 0] = radiance_glint[..., 0] / (A_R + 1e-12)
-        radiance_glint_nm[..., 1] = radiance_glint[..., 1] / (A_G + 1e-12)
-        radiance_glint_nm[..., 2] = radiance_glint[..., 2] / (A_B + 1e-12)
-
-        E_R_inband = iu.band_weighted_irradiance_integral(sun_spd, band_R)
-        E_G_inband = iu.band_weighted_irradiance_integral(sun_spd, band_G)
-        E_B_inband = iu.band_weighted_irradiance_integral(sun_spd, band_B)
-
-        Ebar_R = E_R_inband / (A_R + 1e-12)
-        Ebar_G = E_G_inband / (A_G + 1e-12)
-        Ebar_B = E_B_inband / (A_B + 1e-12)
-
-        rho_R = iu.radiance_to_toa_reflectance(radiance_glint_nm[..., 0], Ebar_R, cos_theta_s, d_au)
-        rho_G = iu.radiance_to_toa_reflectance(radiance_glint_nm[..., 1], Ebar_G, cos_theta_s, d_au)
-        rho_B = iu.radiance_to_toa_reflectance(radiance_glint_nm[..., 2], Ebar_B, cos_theta_s, d_au)
-        rho_glint = np.stack([rho_R, rho_G, rho_B], axis=-1).astype(np.float32)
+        rho_glint = radiance_rgb_to_toa_reflectance(radiance_glint, band_data, sun_spd, cos_theta_s,  d_au=1.0, eps=1e-12)
 
         rho_glint[~black_mask_full] = 0.0
 

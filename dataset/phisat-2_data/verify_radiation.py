@@ -171,8 +171,8 @@ if __name__ == "__main__":
 
     product_name = (
         "phisat-2_data/dataset/"
-        "offnadir_ocean/"
-        "PHISAT-2_L1_000001663_20250226115825_20250226115827_9B471855"
+        "offnadir_ocean2/"
+        "PHISAT-2_L1_000001987_20250410143947_20250410143950_B05E6C3E"
     )
 
     paths = find_product_files(ROOT, product_name)
@@ -185,6 +185,9 @@ if __name__ == "__main__":
     sensor_characteristics["reflectance_mode"] = "proxy"
     sensor_characteristics["reflectance_scale"] = 255.0
     sensor_characteristics["reflectance_offset"] = 0.0
+
+    # wave_properties['specular_weight'] = 1.0
+    wave_properties['wind_speed'] = 3.0
 
     # Time + GL
     t0, t1, tm = extract_acquisition_times_from_product_path(str(paths.product_dir))
@@ -223,7 +226,7 @@ if __name__ == "__main__":
         save_rgb_png(paths.bands_tiff, rgb_bands, phisat_png)
 
     # Crop 128x128 from the PNG (for fast rendering)
-    crop_sz = 128
+    crop_sz = 128 * 4
     img_full = np.asarray(Image.open(phisat_png).convert("RGB"))
     img_crop, (x0, y0) = center_crop_uint8(img_full, crop_sz)
 
@@ -284,13 +287,8 @@ if __name__ == "__main__":
         tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt_m=tgt_alt,
     )
 
-
-    print(f"\nSun elevation at target: {sun_elev_deg:.3f} deg")
-    print(f"cos(theta_s)           : {cos_theta_s:.6f}")
-
-    orig_refl_cos = orig_refl / max(cos_theta_s, 1e-6)
-    print_stats(orig_refl_cos, name="ORIGINAL reflectance (after /cos(theta_s))")
-    orig_stats_cos = reflectance_stats_rgb(orig_refl_cos, mask=None, name="ORIGINAL (TIFF cropped, /cos)")
+    print_stats(orig_refl, name="ORIGINAL reflectance")
+    orig_stats = reflectance_stats_rgb(orig_refl, mask=None, name="ORIGINAL (TIFF cropped)")
 
     img_path = "C:/Users/nadine/Downloads/oceanbg3.png"
 
@@ -331,4 +329,4 @@ if __name__ == "__main__":
     print_stats(rho_glint.astype(np.float32), mask=gen_mask, name="GENERATED (TOA reflectance, masked)")
     gen_stats = reflectance_stats_rgb(rho_glint.astype(np.float32), mask=gen_mask, name="GENERATED (TOA reflectance, masked)")
 
-    print_diff(orig_stats_cos, gen_stats)
+    print_diff(orig_stats, gen_stats)
