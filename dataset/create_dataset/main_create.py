@@ -378,6 +378,19 @@ def run_dataset(n_runs: int,
 
                 run_idx += 1
 
+        # count actually generated images from disk (robust against failures)
+        out_dir = script_dir / "texture_offnadir_255"
+        n_generated = 0
+        if out_dir.exists():
+            for root, _, files in os.walk(out_dir):
+                for f in files:
+                    if f.lower().endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")):
+                        n_generated += 1
+
+        print(f"\n Dataset generation completed, with {n_generated} images")
+
+        ws_settings.append(["n_images_generated", int(n_generated)])
+
         wb.save(overview_xlsx)
         wb.close()
         return
@@ -453,8 +466,22 @@ def run_dataset(n_runs: int,
         wb.save(overview_xlsx)
         time.sleep(0.1)
 
+    # count actually generated images from disk (robust against failures)
+    out_dir = script_dir / "texture_offnadir_255"
+    n_generated = 0
+    if out_dir.exists():
+        for root, _, files in os.walk(out_dir):
+            for f in files:
+                if f.lower().endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")):
+                    n_generated += 1
+
+    print(f"\n Dataset generation completed, with {n_generated} images")
+
+    ws_settings.append(["n_images_generated", int(n_generated)])
+
     wb.save(overview_xlsx)
     wb.close()
+    return
 
 def main() -> None:
     """main() -> None: Configure and run dataset generation."""
@@ -466,8 +493,8 @@ def main() -> None:
     wave_properties = {"num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
     sensor_characteristics = {"resolution": int(render_resolution), "sample_count": 512, "specular_weight": 0.2, "refl_mode": "proxy", "refl_scale": None, "refl_offset": None}
 
-    n_images =  count_images_in_subfolders(Path("dataset") / "whales_from_space")
-    balanced_offnadir = True  # True = per-image angles 5..60, False = random offnadir, loop by one,
+    n_images =  5 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
+    balanced_offnadir = False # True = per-image angles 5..60, False = random offnadir, loop by one,. For full dataset: True
 
     offnadir_angles = np.arange(5, 60 +1, 5)
 
@@ -494,7 +521,7 @@ def main() -> None:
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
-        "mode_single": "full",
+        "mode_single": "ocean",
         "mode_multiple_allow_partial": False,
         "window_size": 64,
         "nowhale_max_fraction": 0.10,
