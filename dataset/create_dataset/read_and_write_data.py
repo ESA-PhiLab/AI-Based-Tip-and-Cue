@@ -55,19 +55,33 @@ def _rmtree_force(path: Path, retries: int = 5, delay: float = 0.5) -> None:
 def cleanup_previous_outputs(base: Path) -> None:
     """cleanup_previous_outputs(base) -> None: Remove old dataset outputs before a fresh run."""
     for d in [
-    "patch_raw_255",
-    "patch_raw_rot_255",
-    "texture_nadir_255",
-    "radiance_nadir_255",
-    "radiance_nadir_npy",
-    "reflection_nadir_255",
-    "reflection_nadir_npy",
-    "texture_offnadir_255",
-    "radiance_offnadir_255",
-    "radiance_offnadir_npy",
-    "reflection_offnadir_255",
-    "reflection_offnadir_npy",
-]:
+        "patch_raw_255",
+        "patch_raw_rot_255",
+
+        "texture_nadir_255",
+        "texture_offnadir_255",
+
+        "radiance_nadir_glint_255",
+        "radiance_nadir_glint_npy",
+        "radiance_nadir_no_glint_255",
+        "radiance_nadir_no_glint_npy",
+
+        "radiance_offnadir_glint_255",
+        "radiance_offnadir_glint_npy",
+        "radiance_offnadir_no_glint_255",
+        "radiance_offnadir_no_glint_npy",
+
+        "reflection_nadir_glint_255",
+        "reflection_nadir_glint_npy",
+        "reflection_nadir_no_glint_255",
+        "reflection_nadir_no_glint_npy",
+
+        "reflection_offnadir_glint_255",
+        "reflection_offnadir_glint_npy",
+        "reflection_offnadir_no_glint_255",
+        "reflection_offnadir_no_glint_npy",
+    ]:
+
         p = base / d
         if p.exists():
             _rmtree_force(p)
@@ -107,6 +121,13 @@ def _load_excel_cache(xlsx_path: Path) -> tuple[list[str], list[list[Any]]]:
     finally:
         wb.close()
 
+
+def get_generated_root(main_path: Path) -> Path:
+    """get_generated_root(main_path) -> Path: Resolve dataset/create_dataset/<GENERATED_ROOT_REL> from env; error if missing."""
+    rel = os.environ.get("GENERATED_ROOT_REL", "").strip()
+    if not rel:
+        raise RuntimeError("GENERATED_ROOT_REL is not set in environment.")
+    return (main_path / "dataset" / "create_dataset" / rel).resolve()
 
 
 

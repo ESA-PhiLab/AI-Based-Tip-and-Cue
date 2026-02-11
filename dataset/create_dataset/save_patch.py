@@ -8,33 +8,48 @@ import numpy as np
 from PIL import Image
 
 from create_patch import WHALE_CATEGORY_ID
-
+from read_and_write_data import get_generated_root
 
 main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
 DATASET_PATH = Path("dataset")
-CREATE_DATASET_DIR = DATASET_PATH / "create_dataset"
+CREATE_DATASET_DIR = get_generated_root(main_path)
 
 TEMPLATE_JSON_CANDIDATES = [
     CREATE_DATASET_DIR / "patch_raw_255" / "final_annotations.json",
-    CREATE_DATASET_DIR / "final_annotations.json",
+    DATASET_PATH / "create_dataset" / "final_annotations.json",
 ]
+
 
 ALLOWED_SPLITS = {
     "patch_raw_255",
     "patch_raw_rot_255",
+
     "texture_nadir_255",
-    "radiance_nadir_255",
-    "radiance_nadir_npy",
-    "reflection_nadir_255",
-    "reflection_nadir_npy",
     "texture_offnadir_255",
-    "radiance_offnadir_255",
-    "radiance_offnadir_npy",
-    "reflection_offnadir_255",
-    "reflection_offnadir_npy",
+
+    "radiance_nadir_glint_255",
+    "radiance_nadir_glint_npy",
+    "radiance_nadir_no_glint_255",
+    "radiance_nadir_no_glint_npy",
+
+    "radiance_offnadir_glint_255",
+    "radiance_offnadir_glint_npy",
+    "radiance_offnadir_no_glint_255",
+    "radiance_offnadir_no_glint_npy",
+
+    "reflection_nadir_glint_255",
+    "reflection_nadir_glint_npy",
+    "reflection_nadir_no_glint_255",
+    "reflection_nadir_no_glint_npy",
+
+    "reflection_offnadir_glint_255",
+    "reflection_offnadir_glint_npy",
+    "reflection_offnadir_no_glint_255",
+    "reflection_offnadir_no_glint_npy",
 }
+
 
 
 def _load_json(path: Path) -> dict:
@@ -243,7 +258,12 @@ def _deg_tag(deg: float | int | None) -> str:
 
 def _split_needs_offnadir_tag(split: str) -> bool:
     """_split_needs_offnadir_tag(split) -> bool: True for offnadir output splits."""
-    return split.startswith(("texture_offnadir_", "radiance_offnadir_", "reflection_offnadir_"))
+    return split.startswith((
+        "texture_offnadir_",
+        "radiance_offnadir_",
+        "reflection_offnadir_",
+    ))
+
 
 def rollback_patch_outputs(img_file: str, patch_name: str) -> None:
     """rollback_patch_outputs(img_file,patch_name) -> None: Delete files + COCO records for patch_name across all splits."""

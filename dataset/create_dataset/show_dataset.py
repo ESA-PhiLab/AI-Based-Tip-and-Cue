@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageTk
 import tkinter as tk
+from read_and_write_data import get_generated_root
 
 # =========================
 # Config
@@ -14,19 +15,32 @@ os.chdir(main_path)
 ALLOWED_modes = {
     "patch_raw_255",
     "patch_raw_rot_255",
+
     "texture_nadir_255",
-    "radiance_nadir_255",
-    "radiance_nadir_npy",
-    "reflection_nadir_255",
-    "reflection_nadir_npy",
     "texture_offnadir_255",
-    "radiance_offnadir_255",
-    "radiance_offnadir_npy",
-    "reflection_offnadir_255",
-    "reflection_offnadir_npy",
+
+    "radiance_nadir_glint_255",
+    "radiance_nadir_glint_npy",
+    "radiance_nadir_no_glint_255",
+    "radiance_nadir_no_glint_npy",
+
+    "radiance_offnadir_glint_255",
+    "radiance_offnadir_glint_npy",
+    "radiance_offnadir_no_glint_255",
+    "radiance_offnadir_no_glint_npy",
+
+    "reflection_nadir_glint_255",
+    "reflection_nadir_glint_npy",
+    "reflection_nadir_no_glint_255",
+    "reflection_nadir_no_glint_npy",
+
+    "reflection_offnadir_glint_255",
+    "reflection_offnadir_glint_npy",
+    "reflection_offnadir_no_glint_255",
+    "reflection_offnadir_no_glint_npy",
 }
 
-mode = "reflection_nadir_255"
+mode = "reflection_offnadir_glint_255"
 
 DATASET_PATH = Path("dataset")
 BASE_DIR = DATASET_PATH / "create_dataset" / "0_whales" / mode

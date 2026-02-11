@@ -10,6 +10,8 @@ from matplotlib import pyplot as plt
 import tempfile
 import uuid
 
+import re
+
 import json
 
 from offnadir_imaging.rendering import generate_image
@@ -19,6 +21,7 @@ from offnadir_imaging.functions.get_satellite_data import get_satellite, get_spa
 from offnadir_imaging.functions.convert_reference_frames import get_ecef_from_lat_lon, sat_ecef_geocentric_over_target
 from offnadir_imaging.functions.intermediate_functions import get_scene_characteristics, is_dark_from_sun_dir
 
+from read_and_write_data import get_generated_root
 
 # =========================
 # Path handling (same style)
@@ -27,7 +30,7 @@ main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
 DATASET_PATH = Path("dataset")
-CREATE_DATASET_DIR = DATASET_PATH / "create_dataset"
+CREATE_DATASET_DIR = get_generated_root(main_path)
 PATCH_DIR = CREATE_DATASET_DIR / "patch_raw_255"
 CSV_PATH = DATASET_PATH / "whales_from_space" / "WhaleFromSpaceDB_Whales.csv"
 
@@ -669,11 +672,6 @@ def translate_image(patch_bundle: dict,
                     generate_nadir: bool = False,
                     rotation_angle_deg: float = 0.0,
                     mirror_bool: bool = False) -> dict:
-    """translate_image(patch_bundle,sensor_characteristics,wave_properties,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,dem_seed,show_plot,datetime_utc,generate_nadir,rotation_angle_deg,mirror_bool) -> dict: Render image + translate annotations."""
-
-    """translate_image(patch_bundle,sensor_characteristics,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,dem_seed,show_plot,datetime_utc,generate_nadir,rotation_angle_deg,mirror_bool) -> dict: Render image + translate annotations."""
-
-
     """translate_image(patch_bundle,render_resolution,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,show_plot,datetime_utc) -> dict: Render offnadir + translate anns."""
     if not isinstance(patch_bundle, dict):
         raise TypeError("translate_image expects patch_bundle as dict")
@@ -718,9 +716,21 @@ def translate_image(patch_bundle: dict,
     # from here on, use rotated anns in-memory too
     anns = rot_anns
 
-    dem_folder = main_path / "offnadir_imaging" / "create_DEM"
-    dem_tiff_path = str(dem_folder / "input_dem_WV.tiff")
-    dem_obj_path = str(dem_folder / "dem_mesh_WV.obj")
+    dem_folder = Path(os.environ.get("TEMP", str(main_path / "offnadir_imaging" / "create_DEM"))).resolve()
+    dem_folder.mkdir(parents=True, exist_ok=True)
+
+    tag = f"{patch_bundle.get('patch_name', 'patch')}_{int(dem_seed)}"
+    tag = re.sub(r"[^A-Za-z0-9_\-]+", "_", tag)
+
+    dem_tiff_path = str(dem_folder / f"input_dem_{tag}.tiff")
+    dem_obj_path = str(dem_folder / f"dem_mesh_{tag}.obj")
+
+    # If previous crashed left files behind, remove them first
+    for p in (Path(dem_tiff_path), Path(dem_obj_path)):
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     get_DEM(str(rot_img_path), dem_tiff_path, gsd, wave_properties, random_seed=int(dem_seed), waves=True, curvature=True, plot_DEM=False)
     convert_DEM(str(rot_img_path), dem_tiff_path, dem_obj_path, gsd, scale_km=False, print_output=False, plot_DEM=False)
@@ -933,7 +943,6 @@ def translate_image(patch_bundle: dict,
 
         translated_anns.append(a2)
 
-
     out = dict(patch_bundle)
     out["anns_patch"] = translated_anns
     out["resolution"] = int(sensor_characteristics["resolution"])
@@ -941,13 +950,23 @@ def translate_image(patch_bundle: dict,
     # texture (uint8 RGB)
     out["texture_u8"] = translated_u8
 
-    # radiance (float32 HxWx3) + preview (uint8 RGB)
-    out["radiance"] = radiance_final.astype(np.float32) if radiance_final is not None else None
-    out["radiance_u8"] = glint_u8  # preview (already DN255)
+    # radiance: keep BOTH
+    out["radiance_glint"] = radiance_final.astype(np.float32) if radiance_final is not None else None
+    out["radiance_no_glint"] = radiance_no_glint.astype(np.float32) if radiance_no_glint is not None else None
+    out["radiance_glint_u8"] = glint_u8
+    out["radiance_no_glint_u8"] = no_glint_u8
 
-    # reflectance (float32 HxWx3) + preview (uint8 RGB)
-    out["reflectance"] = rho_final.astype(np.float32) if rho_final is not None else None
-    out["reflectance_u8"] = rho_u8  # preview made from rho_disp_final
+    # reflectance: keep BOTH
+    out["reflectance_glint"] = rho_final.astype(np.float32) if rho_final is not None else None
+    out["reflectance_no_glint"] = rho_no_glint.astype(np.float32) if rho_no_glint is not None else None
+    out["reflectance_glint_u8"] = rho_u8
+
+    # make a no-glint reflectance preview too (same scaling style as glint preview)
+    if rho_disp_no_glint is not None:
+        out["reflectance_no_glint_u8"] = (np.clip(rho_disp_no_glint, 0.0, 1.0) * 255.0).astype(np.uint8)
+    else:
+        out["reflectance_no_glint_u8"] = np.zeros_like(translated_u8)
+
 
     out["black_mask_full"] = black_mask_full
     out["scale"] = scale

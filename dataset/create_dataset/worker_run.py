@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from create_patch import generate_patch
 from save_patch import save_patch
 from translate_patch import translate_image, mirror_rotate_patchlocal_bundle
-
+from read_and_write_data import get_generated_root
 
 def cleanup() -> None:
     """cleanup() -> None: Close figures to avoid hanging/leaks."""
@@ -185,7 +185,9 @@ def update_meta_file(meta_out: str, updates: dict) -> None:
 def load_patch_bundle_from_patchraw(img_file: str, patch_name: str) -> dict:
     """load_patch_bundle_from_patchraw(img_file,patch_name) -> dict: Build patch_bundle from patch_raw COCO json."""
     main_path = Path(__file__).resolve().parents[2]
-    coco_path = main_path / "dataset" / "create_dataset" / "patch_raw_255" / "final_annotations.json"
+    CREATE_DATASET_DIR = get_generated_root(main_path)
+    coco_path = CREATE_DATASET_DIR / "patch_raw_255" / "final_annotations.json"
+
     if not coco_path.is_file():
         raise FileNotFoundError(f"Missing patch_raw COCO json: {coco_path}")
 
@@ -320,30 +322,46 @@ def main() -> int:
         })
 
         update_meta_file(args.meta_out, {
-            "anns_nadir": anns_to_rows(nadir_bundle.get("anns_patch", [])),
+            "rad_stats_nadir": array_stats(nadir_bundle.get("radiance_glint", np.array([]))),
+            "refl_stats_nadir": array_stats(nadir_bundle.get("reflectance_glint", np.array([]))),
         })
-
 
         # save texture
         b_tex = dict(nadir_bundle)
         b_tex["patch"] = nadir_bundle["texture_u8"]
         save_patch("texture_nadir_255", b_tex)
 
-        # save radiance (float .npy)
-        b_rad = dict(nadir_bundle)
-        b_rad["patch"] = nadir_bundle["radiance"]
-        save_patch("radiance_nadir_npy", b_rad)
+        # save radiance (NO_GLINT)
+        b_rad_ng = dict(nadir_bundle)
+        b_rad_ng["patch"] = nadir_bundle.get("radiance_no_glint", None)
+        save_patch("radiance_nadir_no_glint_npy", b_rad_ng)
 
-        b_rad["patch"] = nadir_bundle["radiance_u8"]
-        save_patch("radiance_nadir_255", b_rad)
+        b_rad_ng["patch"] = nadir_bundle.get("radiance_no_glint_u8", None)
+        save_patch("radiance_nadir_no_glint_255", b_rad_ng)
 
-        # save reflectance (float .npy)
-        b_ref = dict(nadir_bundle)
-        b_ref["patch"] = nadir_bundle["reflectance"]
-        save_patch("reflection_nadir_npy", b_ref)
+        # save radiance (GLINT = final)
+        b_rad_g = dict(nadir_bundle)
+        b_rad_g["patch"] = nadir_bundle.get("radiance_glint", None)
+        save_patch("radiance_nadir_glint_npy", b_rad_g)
 
-        b_ref["patch"] = nadir_bundle["reflectance_u8"]
-        save_patch("reflection_nadir_255", b_ref)
+        b_rad_g["patch"] = nadir_bundle.get("radiance_glint_u8", None)
+        save_patch("radiance_nadir_glint_255", b_rad_g)
+
+        # save reflectance (NO_GLINT)
+        b_ref_ng = dict(nadir_bundle)
+        b_ref_ng["patch"] = nadir_bundle.get("reflectance_no_glint", None)
+        save_patch("reflection_nadir_no_glint_npy", b_ref_ng)
+
+        b_ref_ng["patch"] = nadir_bundle.get("reflectance_no_glint_u8", None)
+        save_patch("reflection_nadir_no_glint_255", b_ref_ng)
+
+        # save reflectance (GLINT = final)
+        b_ref_g = dict(nadir_bundle)
+        b_ref_g["patch"] = nadir_bundle.get("reflectance_glint", None)
+        save_patch("reflection_nadir_glint_npy", b_ref_g)
+
+        b_ref_g["patch"] = nadir_bundle.get("reflectance_glint_u8", None)
+        save_patch("reflection_nadir_glint_255", b_ref_g)
 
         cleanup()
         return 0
@@ -370,8 +388,8 @@ def main() -> int:
     )
 
     update_meta_file(args.meta_out, {
-        "rad_stats_offnadir": array_stats(off_bundle.get("radiance", np.array([]))),
-        "refl_stats_offnadir": array_stats(off_bundle.get("reflectance", np.array([]))),
+        "rad_stats_offnadir": array_stats(off_bundle.get("radiance_glint", np.array([]))),
+        "refl_stats_offnadir": array_stats(off_bundle.get("reflectance_glint", np.array([]))),
     })
 
     update_meta_file(args.meta_out, {
@@ -385,22 +403,43 @@ def main() -> int:
     b_tex["patch"] = off_bundle["texture_u8"]
     save_patch("texture_offnadir_255", b_tex)
 
-    b_rad = dict(off_bundle)
-    b_rad["offnadir_deg"] = off_bundle.get("offnadir_deg", None)
-    b_rad["patch"] = off_bundle["radiance"]
-    save_patch("radiance_offnadir_npy", b_rad)
+    off_deg = off_bundle.get("offnadir_deg", None)
 
-    b_rad["patch"] = off_bundle["radiance_u8"]
-    save_patch("radiance_offnadir_255", b_rad)
+    # save radiance (NO_GLINT)
+    b_rad_ng = dict(off_bundle)
+    b_rad_ng["offnadir_deg"] = off_deg
+    b_rad_ng["patch"] = off_bundle.get("radiance_no_glint", None)
+    save_patch("radiance_offnadir_no_glint_npy", b_rad_ng)
 
-    b_ref = dict(off_bundle)
-    b_ref["offnadir_deg"] = off_bundle.get("offnadir_deg", None)
-    b_ref["patch"] = off_bundle["reflectance"]
-    save_patch("reflection_offnadir_npy", b_ref)
+    b_rad_ng["patch"] = off_bundle.get("radiance_no_glint_u8", None)
+    save_patch("radiance_offnadir_no_glint_255", b_rad_ng)
 
-    b_ref = dict(off_bundle)
-    b_ref["patch"] = off_bundle["reflectance_u8"]
-    save_patch("reflection_offnadir_255", b_ref)
+    # save radiance (GLINT = final)
+    b_rad_g = dict(off_bundle)
+    b_rad_g["offnadir_deg"] = off_deg
+    b_rad_g["patch"] = off_bundle.get("radiance_glint", None)
+    save_patch("radiance_offnadir_glint_npy", b_rad_g)
+
+    b_rad_g["patch"] = off_bundle.get("radiance_glint_u8", None)
+    save_patch("radiance_offnadir_glint_255", b_rad_g)
+
+    # save reflectance (NO_GLINT)
+    b_ref_ng = dict(off_bundle)
+    b_ref_ng["offnadir_deg"] = off_deg
+    b_ref_ng["patch"] = off_bundle.get("reflectance_no_glint", None)
+    save_patch("reflection_offnadir_no_glint_npy", b_ref_ng)
+
+    b_ref_ng["patch"] = off_bundle.get("reflectance_no_glint_u8", None)
+    save_patch("reflection_offnadir_no_glint_255", b_ref_ng)
+
+    # save reflectance (GLINT = final)
+    b_ref_g = dict(off_bundle)
+    b_ref_g["offnadir_deg"] = off_deg
+    b_ref_g["patch"] = off_bundle.get("reflectance_glint", None)
+    save_patch("reflection_offnadir_glint_npy", b_ref_g)
+
+    b_ref_g["patch"] = off_bundle.get("reflectance_glint_u8", None)
+    save_patch("reflection_offnadir_glint_255", b_ref_g)
 
     cleanup()
     return 0

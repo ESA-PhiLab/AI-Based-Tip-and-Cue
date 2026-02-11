@@ -90,6 +90,10 @@ def _run_worker(stage: str,
     shutil.rmtree(Path.home() / "AppData/Local/Temp/drjit", ignore_errors=True)
 
     env = os.environ.copy()
+    env["GENERATED_ROOT_REL"] = os.environ.get("GENERATED_ROOT_REL", "").strip()
+    if not env["GENERATED_ROOT_REL"]:
+        raise RuntimeError("GENERATED_ROOT_REL missing in worker env.")
+
     base = Path(r"C:\drjit_temp") / f"worker_{stage}_{i}"
     tmp = base / "tmp"
     tmp.mkdir(parents=True, exist_ok=True)
@@ -506,6 +510,7 @@ def run_dataset(n_runs: int,
 
     # count actually generated images from disk (robust against failures)
     out_dir = script_dir / "texture_offnadir_255"
+
     n_generated = 0
     if out_dir.exists():
         for root, _, files in os.walk(out_dir):
@@ -523,8 +528,8 @@ def run_dataset(n_runs: int,
 
 def main() -> None:
     """main() -> None: Configure and run dataset generation."""
-    base = Path("dataset") / "create_dataset"
-    cleanup_previous_outputs(base)
+
+    GENERATED_ROOT_REL = "0_whales"
 
     render_resolution = 64  # 64 * 2
 
@@ -543,7 +548,7 @@ def main() -> None:
     img_rot_seed = 10
 
     wind_speed_seed = 123
-    wind_speed_range = (4.0, 12.0)      # normal distribution
+    wind_speed_range = (3.0, 12.0)      # normal distribution
 
     show_plot = False
 
@@ -559,7 +564,7 @@ def main() -> None:
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
-        "mode_single": "ocean",
+        "mode_single": "full",
         "mode_multiple_allow_partial": False,
         "window_size": 64,
         "nowhale_max_fraction": 0.10,
@@ -576,9 +581,15 @@ def main() -> None:
         img_rot_seed += 1
         wind_speed_seed += 1
 
+    os.environ["GENERATED_ROOT_REL"] = GENERATED_ROOT_REL  # ensure children inherit
+    GENERATED_ROOT = Path("dataset") / "create_dataset" / GENERATED_ROOT_REL
+
+    if GENERATED_ROOT.exists():
+        shutil.rmtree(GENERATED_ROOT)
+    GENERATED_ROOT.mkdir(parents=True, exist_ok=True)
 
     poses_xlsx = SCRIPT_DIR / "combined_results.xlsx"
-    overview_xlsx = SCRIPT_DIR / "dataset_overview.xlsx"
+    overview_xlsx = GENERATED_ROOT / "dataset_overview.xlsx"
 
     run_dataset(
         n_runs=n_images,
@@ -595,7 +606,7 @@ def main() -> None:
         patch_parameters=patch_parameters,
         poses_xlsx=poses_xlsx,
         overview_xlsx=overview_xlsx,
-        script_dir=SCRIPT_DIR,
+        script_dir=GENERATED_ROOT,
         balanced_offnadir=balanced_offnadir,
         offnadir_angles=offnadir_angles,
     )
