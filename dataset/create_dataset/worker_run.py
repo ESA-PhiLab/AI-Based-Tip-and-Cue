@@ -62,6 +62,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--meta_out", type=str, required=True)
     p.add_argument("--patch_name", type=str, default="")  # only used for offnadir stage
 
+    p.add_argument("--run_idx", type=int, default=-1, help="Global run index passed from main_create.py (used for unique patch/run tagging).")
+
     return p.parse_args()
 
 
@@ -262,6 +264,8 @@ def main() -> int:
             mask_alpha=int(args.mask_alpha),
             plot_patch=show_plot,
         )
+
+        patch_bundle["run_tag"] = int(getattr(args, "run_idx", -1))
 
         label_simple = classify_label(
             fracs=list(patch_bundle.get("fracs", [])) if isinstance(patch_bundle.get("fracs", []), list) else [],

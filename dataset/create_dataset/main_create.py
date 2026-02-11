@@ -85,7 +85,8 @@ def _run_worker(stage: str,
                 sensor_characteristics: dict,
                 wave_properties: dict,
                 meta_out: Path,
-                patch_name: str = "") -> None:
+                patch_name: str = "",
+                run_idx: int = 0) -> None:
     """_run_worker(stage,...) -> None: Spawn worker_run.py with a stage, passing configs as JSON."""
     shutil.rmtree(Path.home() / "AppData/Local/Temp/drjit", ignore_errors=True)
 
@@ -143,7 +144,10 @@ def _run_worker(stage: str,
         "--wave_json", wave_json,
 
         "--meta_out", str(meta_out_abs),
+
     ]
+
+    cmd += ["--run_idx", str(run_idx)]
 
     if patch_name:
         cmd += ["--patch_name", patch_name]
@@ -169,7 +173,8 @@ def run_one(i: int,
             patch_parameters: dict,
             sensor_characteristics: dict,
             wave_properties: dict,
-            meta_out: Path) -> None:
+            meta_out: Path,
+            run_idx: int = 0) -> None:
     """run_one(...) -> None: Run nadir worker then offnadir worker."""
     if meta_out.exists():
         meta_out.unlink()
@@ -190,6 +195,7 @@ def run_one(i: int,
         sensor_characteristics=sensor_characteristics,
         wave_properties=wave_properties,
         meta_out=meta_out,
+        run_idx=run_idx
     )
 
     if not meta_out.exists():
@@ -217,6 +223,7 @@ def run_one(i: int,
         wave_properties=wave_properties,
         meta_out=meta_out,
         patch_name=patch_name,
+        run_idx=run_idx
     )
 
 
@@ -335,6 +342,7 @@ def run_dataset(n_runs: int,
                             sensor_characteristics=sensor_characteristics,
                             wave_properties=wave_properties_i,
                             meta_out=meta_out,
+                            run_idx=run_idx
                         )
 
                         meta = json.loads(meta_out.read_text(encoding="utf-8"))
@@ -464,6 +472,7 @@ def run_dataset(n_runs: int,
                     sensor_characteristics=sensor_characteristics,
                     wave_properties=wave_properties_i,
                     meta_out=meta_out,
+                    run_idx=i
                 )
 
                 meta = json.loads(meta_out.read_text(encoding="utf-8"))
@@ -541,8 +550,8 @@ def main() -> None:
     wave_properties = {"num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
     sensor_characteristics = {"resolution": int(render_resolution), "sample_count": 512, "specular_weight": 0.2, "refl_mode": "proxy", "refl_scale": None, "refl_offset": None}
 
-    n_images = 5                         # count_images_in_subfolders(Path("dataset") / "whales_from_space")
-    balanced_offnadir = False            # For full dataset: True. True = per-image angles 5..60, False = random offnadir, loop by one,.
+    n_images = count_images_in_subfolders(Path("dataset") / "whales_from_space")
+    balanced_offnadir = True             # For full dataset: True. True = per-image angles 5..60, False = random offnadir, loop by one,.
 
     offnadir_angles = np.arange(5, 60 +1, 5)
 

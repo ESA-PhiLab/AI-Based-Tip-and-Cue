@@ -361,9 +361,15 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
     # Naming: only patch_raw_255 creates a new patch_name; all others reuse it
     if split == "patch_raw_255":
         base = Path(img_file).stem
-        k = _next_index_for_base(split_dir, subdir, base=base, ext=ext)
-        patch_name = f"{base}_{k}"
+
+        # Require caller to provide a unique run tag (recommended: run_idx or i)
+        run_tag = patch_bundle.get("run_tag", None)
+        if run_tag is None:
+            raise ValueError("patch_bundle['run_tag'] missing. Set it to a unique int per run (e.g., i or run_idx).")
+
+        patch_name = f"{base}_{int(run_tag):06d}"
         patch_bundle["patch_name"] = patch_name
+
     else:
         patch_name = patch_bundle.get("patch_name", None)
         if not isinstance(patch_name, str) or not patch_name:
