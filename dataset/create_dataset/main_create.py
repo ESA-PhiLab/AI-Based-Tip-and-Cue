@@ -76,16 +76,17 @@ def _run_worker(stage: str,
                 crop_patch_seed_i: int,
                 dem_seed_i: int,
                 show_plot: bool,
-                render_resolution: int,
                 rotation_angle_deg: float,
                 mirror_bool: int,
                 sat_lat: float, sat_lon: float, sat_alt: float,
                 tgt_lat: float, tgt_lon: float, tgt_alt: float,
                 datetime_utc: str,
                 patch_parameters: dict,
+                sensor_characteristics: dict,
+                wave_properties: dict,
                 meta_out: Path,
                 patch_name: str = "") -> None:
-    """_run_worker(stage,...) -> None: Spawn worker_run.py with a stage."""
+    """_run_worker(stage,...) -> None: Spawn worker_run.py with a stage, passing configs as JSON."""
     shutil.rmtree(Path.home() / "AppData/Local/Temp/drjit", ignore_errors=True)
 
     env = os.environ.copy()
@@ -99,6 +100,11 @@ def _run_worker(stage: str,
     meta_out_abs = meta_out.resolve()
     meta_out_abs.parent.mkdir(parents=True, exist_ok=True)
 
+    sensor_characteristics = dict(sensor_characteristics)
+
+    sensor_json = json.dumps(sensor_characteristics)
+    wave_json = json.dumps(wave_properties)
+
     cmd = [
         sys.executable, str(SCRIPT_DIR / "worker_run.py"),
         "--stage", stage,
@@ -106,7 +112,6 @@ def _run_worker(stage: str,
         "--patch_seed", str(crop_patch_seed_i),
         "--dem_seed", str(dem_seed_i),
         "--show_plot", "1" if show_plot else "0",
-        "--render_resolution", str(render_resolution),
 
         "--sat_lat", str(sat_lat),
         "--sat_lon", str(sat_lon),
@@ -130,6 +135,9 @@ def _run_worker(stage: str,
         "--half_fraction_high", str(float(patch_parameters["half_fraction_range"][1])),
         "--mask_alpha", str(int(patch_parameters["mask_alpha"])),
 
+        "--sensor_json", sensor_json,
+        "--wave_json", wave_json,
+
         "--meta_out", str(meta_out_abs),
     ]
 
@@ -142,18 +150,21 @@ def _run_worker(stage: str,
         shutil.rmtree(base, ignore_errors=True)
 
 
+
+
 def run_one(i: int,
             img_file: str,
             crop_patch_seed_i: int,
             dem_seed_i: int,
             show_plot: bool,
-            render_resolution: int,
             rotation_angle_deg: float,
             mirror_bool: int,
             sat_lat: float, sat_lon: float, sat_alt: float,
             tgt_lat: float, tgt_lon: float, tgt_alt: float,
             datetime_utc: str,
             patch_parameters: dict,
+            sensor_characteristics: dict,
+            wave_properties: dict,
             meta_out: Path) -> None:
     """run_one(...) -> None: Run nadir worker then offnadir worker."""
     if meta_out.exists():
@@ -166,13 +177,14 @@ def run_one(i: int,
         crop_patch_seed_i=crop_patch_seed_i,
         dem_seed_i=dem_seed_i,
         show_plot=show_plot,
-        render_resolution=render_resolution,
         rotation_angle_deg=rotation_angle_deg,
         mirror_bool=mirror_bool,
         sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
         tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
         datetime_utc=datetime_utc,
         patch_parameters=patch_parameters,
+        sensor_characteristics=sensor_characteristics,
+        wave_properties=wave_properties,
         meta_out=meta_out,
     )
 
@@ -191,45 +203,62 @@ def run_one(i: int,
         crop_patch_seed_i=crop_patch_seed_i,
         dem_seed_i=dem_seed_i,
         show_plot=show_plot,
-        render_resolution=render_resolution,
         rotation_angle_deg=rotation_angle_deg,
         mirror_bool=mirror_bool,
         sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
         tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
         datetime_utc=datetime_utc,
         patch_parameters=patch_parameters,
+        sensor_characteristics=sensor_characteristics,
+        wave_properties=wave_properties,
         meta_out=meta_out,
         patch_name=patch_name,
     )
 
 
+
+
 def run_dataset(n_runs: int,
-                render_resolution: int,
+                sensor_characteristics: dict,
+                wave_properties: dict,
                 pick_img_seed: int,
                 img_rot_seed: int,
                 crop_patch_seed: int,
                 dem_seed: int,
                 pick_pose_seed: int,
+                wind_speed_seed: int,
+                wind_speed_range: tuple[float, float],
                 show_plot: bool,
                 patch_parameters: dict,
                 poses_xlsx: Path,
                 overview_xlsx: Path,
                 script_dir: Path,
                 balanced_offnadir: bool = False,
-                offnadir_angles: np.ndarray = np.arange(5, 55 +1, 5)) -> None:
+                offnadir_angles: np.ndarray = np.arange(5, 55 + 1, 5)) -> None:
+
+
     """run_dataset(...) -> None: Run workers, read meta, append to dataset_overview.xlsx; optional balanced off-nadir sampling."""
     if not poses_xlsx.is_file():
         raise FileNotFoundError(f"Missing poses file: {poses_xlsx}")
 
-    wb, _, ws_patch, ws_off, ws_ann_nadir, ws_ann_off, ws_radrefl = open_overview_book(
-        overview_xlsx, patch_parameters, render_resolution
+    wb, ws_settings, ws_patch, ws_off, ws_ann_nadir, ws_ann_off, ws_radrefl = open_overview_book(
+        overview_xlsx, patch_parameters, sensor_characteristics
     )
+
+    # write wind settings once
+    ws_settings.append(["wind_speed_seed", wind_speed_seed])
+    ws_settings.append(["wind_speed_range_low", float(wind_speed_range[0])])
+    ws_settings.append(["wind_speed_range_high", float(wind_speed_range[1])])
 
     meta_dir = (script_dir / "_meta").resolve()
     meta_dir.mkdir(parents=True, exist_ok=True)
 
     rng_rot = np.random.default_rng(img_rot_seed)
-    rng_mirr = np.random.default_rng(img_rot_seed+1)
+    rng_mirr = np.random.default_rng(img_rot_seed + 1)
+    rng_wind = np.random.default_rng(wind_speed_seed)
+    wlo, whi = float(wind_speed_range[0]), float(wind_speed_range[1])
+    if not (np.isfinite(wlo) and np.isfinite(whi) and wlo <= whi):
+        raise ValueError("wind_speed_range must be (low, high) with low <= high")
 
     if balanced_offnadir:
 
@@ -257,6 +286,10 @@ def run_dataset(n_runs: int,
 
 
                 print(f"Pose: sat=({sat_lat},{sat_lon},{sat_alt}) tgt=({tgt_lat},{tgt_lon},{tgt_alt}) dt={datetime_utc}")
+
+                wind_speed = float(rng_wind.uniform(wlo, whi))
+                wave_properties_i = dict(wave_properties)
+                wave_properties_i["wind_speed"] = wind_speed
 
                 max_attempts = 5
                 success = False
@@ -286,13 +319,14 @@ def run_dataset(n_runs: int,
                             crop_patch_seed_i=crop_patch_seed_i_try,
                             dem_seed_i=dem_seed_i_try,
                             show_plot=show_plot,
-                            render_resolution=render_resolution,
                             rotation_angle_deg=rotation_angle_deg,
                             mirror_bool=mirror_bool,
                             sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
                             tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
                             datetime_utc=datetime_utc,
                             patch_parameters=patch_parameters,
+                            sensor_characteristics=sensor_characteristics,
+                            wave_properties=wave_properties_i,
                             meta_out=meta_out,
                         )
 
@@ -315,6 +349,7 @@ def run_dataset(n_runs: int,
                             sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
                             tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
                             datetime_utc=datetime_utc,
+                            wind_speed=wind_speed,
                             meta=meta,
                         )
 
@@ -366,9 +401,14 @@ def run_dataset(n_runs: int,
 
         meta_out = meta_dir / f"run_{i:04d}.json"
 
+        wind_speed = float(rng_wind.uniform(wlo, whi))
+        wave_properties_i = dict(wave_properties)
+        wave_properties_i["wind_speed"] = wind_speed
+
         print(f"\n ====================== Start new process {i} ====================== \n")
         print(f"Pose: sat=({sat_lat},{sat_lon},{sat_alt}) tgt=({tgt_lat},{tgt_lon},{tgt_alt}) dt={datetime_utc}")
         print(f"Image: {img_file}")
+        print(f"Wind speed: {wind_speed:.3f} m/s")
 
         run_one(
             i=i,
@@ -376,13 +416,14 @@ def run_dataset(n_runs: int,
             crop_patch_seed_i=crop_patch_seed_i,
             dem_seed_i=dem_seed_i,
             show_plot=show_plot,
-            render_resolution=render_resolution,
             rotation_angle_deg=rotation_angle_deg,
             mirror_bool=mirror_bool,
             sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
             tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
             datetime_utc=datetime_utc,
             patch_parameters=patch_parameters,
+            sensor_characteristics=sensor_characteristics,
+            wave_properties=wave_properties_i,
             meta_out=meta_out,
         )
 
@@ -405,6 +446,7 @@ def run_dataset(n_runs: int,
             sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
             tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
             datetime_utc=datetime_utc,
+            wind_speed=wind_speed,
             meta=meta,
         )
 
@@ -419,18 +461,24 @@ def main() -> None:
     base = Path("dataset") / "create_dataset"
     cleanup_previous_outputs(base)
 
-    render_resolution = 64 # 64 * 2
+    render_resolution = 64  # 64 * 2
 
-    n_images = 4 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
-    balanced_offnadir = True  # False = random offnadir, loop by one, True = per-image angles 5..60
+    wave_properties = {"num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
+    sensor_characteristics = {"resolution": int(render_resolution), "sample_count": 512, "specular_weight": 0.2, "refl_mode": "proxy", "refl_scale": None, "refl_offset": None}
 
-    offnadir_angles = np.arange(50, 60 +1, 5)
+    n_images =  count_images_in_subfolders(Path("dataset") / "whales_from_space")
+    balanced_offnadir = True  # True = per-image angles 5..60, False = random offnadir, loop by one,
+
+    offnadir_angles = np.arange(5, 60 +1, 5)
 
     pick_img_seed_0 = 1
     crop_patch_seed = 42
     dem_seed = 1
     pick_pose_seed = 17
     img_rot_seed = 10
+
+    wind_speed_seed = 123
+    wind_speed_range = (5.0, 15.0)      # normal distribution
 
     show_plot = False
 
@@ -446,12 +494,12 @@ def main() -> None:
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
-        "mode_single": "all",
-        "mode_multiple_allow_partial": True,
+        "mode_single": "full",
+        "mode_multiple_allow_partial": False,
         "window_size": 64,
         "nowhale_max_fraction": 0.10,
-        "whale_min_fraction": 0.95,
-        "half_fraction_range": (0.20, 0.95),
+        "whale_min_fraction": 0.99,
+        "half_fraction_range": (0.20, 0.8),
         "mask_alpha": 80,
     }
 
@@ -460,19 +508,22 @@ def main() -> None:
 
     run_dataset(
         n_runs=n_images,
-        render_resolution=render_resolution,
+        sensor_characteristics=sensor_characteristics,
+        wave_properties=wave_properties,
         pick_img_seed=pick_img_seed_0,
         crop_patch_seed=crop_patch_seed,
         dem_seed=dem_seed,
         img_rot_seed=img_rot_seed,
         pick_pose_seed=pick_pose_seed,
+        wind_speed_seed=wind_speed_seed,
+        wind_speed_range=wind_speed_range,
         show_plot=show_plot,
         patch_parameters=patch_parameters,
         poses_xlsx=poses_xlsx,
         overview_xlsx=overview_xlsx,
         script_dir=SCRIPT_DIR,
         balanced_offnadir=balanced_offnadir,
-        offnadir_angles=offnadir_angles
+        offnadir_angles=offnadir_angles,
     )
 
     cleanup_meta_only(base)

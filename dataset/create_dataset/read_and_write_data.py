@@ -320,8 +320,9 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
             "dem_seed_i", "pick_pose_seed_i",
             "sat_lat", "sat_lon", "sat_alt",
             "tgt_lat", "tgt_lon", "tgt_alt",
-            "datetime_utc", "offnadir_deg"
+            "datetime_utc", "wind_speed", "offnadir_deg",
         ])
+
         ws_off.freeze_panes = "A2"
 
     ws_rr = wb["rad_refl_values"]
@@ -358,7 +359,7 @@ def ensure_workbook(xlsx_path: Path) -> openpyxl.Workbook:
     return wb
 
 
-def write_settings_once(ws_settings, patch_parameters: dict, render_resolution: int) -> None:
+def write_settings_once(ws_settings, patch_parameters: dict, sensor_characteristics: dict) -> None:
     """write_settings_once(ws_settings,patch_parameters,render_resolution) -> None: Write general settings once in generate_patch order."""
     for r in range(2, ws_settings.max_row + 1):
         if ws_settings.cell(r, 1).value is not None:
@@ -392,7 +393,8 @@ def write_settings_once(ws_settings, patch_parameters: dict, render_resolution: 
         ws_settings.append([k, v])
 
     # off-nadir global setting (not part of generate_patch, but global)
-    ws_settings.append(["render_resolution", int(render_resolution)])
+    ws_settings.append(["resolution", sensor_characteristics['resolution']])
+    ws_settings.append(["specular_weight", sensor_characteristics['specular_weight']])
 
 
 def ann_row_from_dict(i_val: int, img_file: str, patch_name: str, ann: dict) -> list[object]:
@@ -422,8 +424,8 @@ def ann_row_from_dict(i_val: int, img_file: str, patch_name: str, ann: dict) -> 
 
 def open_overview_book(xlsx_path: Path,
                        patch_parameters: dict,
-                       render_resolution: int) -> tuple[openpyxl.Workbook, Any, Any, Any, Any, Any]:
-    """open_overview_book(xlsx_path,patch_parameters,render_resolution) -> (wb,ws_settings,ws_patch,ws_off,ws_ann): Open workbook + ensure headers + write settings once."""
+                       sensor_characteristics: dict) -> tuple[openpyxl.Workbook, Any, Any, Any, Any, Any]:
+    """open_overview_book(xlsx_path,patch_parameters,sensor_characteristics) -> (wb,ws_settings,ws_patch,ws_off,ws_ann): Open workbook + ensure headers + write settings once."""
     wb = ensure_workbook(xlsx_path)
     ws_settings = wb["settings"]
     ws_patch = wb["patch_param"]
@@ -432,7 +434,7 @@ def open_overview_book(xlsx_path: Path,
     ws_ann_off = wb["annotations_offnadir"]
     ws_radrefl = wb["rad_refl_values"]
 
-    write_settings_once(ws_settings, patch_parameters, render_resolution)
+    write_settings_once(ws_settings, patch_parameters, sensor_characteristics)
     return wb, ws_settings, ws_patch, ws_off, ws_ann_nadir, ws_ann_off, ws_radrefl
 
 
@@ -452,7 +454,9 @@ def append_run_rows(ws_patch,
                     sat_lat: float, sat_lon: float, sat_alt: float,
                     tgt_lat: float, tgt_lon: float, tgt_alt: float,
                     datetime_utc: str,
+                    wind_speed: float,
                     meta: dict) -> None:
+
 
     """append_run_rows(...) -> None: Append patch/offnadir/annotation rows for one run."""
     top_left = meta.get("top_left", [None, None])
@@ -518,6 +522,7 @@ def append_run_rows(ws_patch,
         tgt_lon,
         tgt_alt,
         datetime_utc,
+        float(wind_speed),
         offnadir_deg
     ])
 

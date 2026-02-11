@@ -12,6 +12,7 @@ dataset/worldmaps/*
 !dataset/worldmaps/land_mask.npy
 
 offnadir_imaging/images/*
+\offnadir_imaging/images_range/*
 !offnadir_imaging/images/.gitkeep
 
 offnadir_imaging/pySMARTS/*
@@ -43,6 +44,8 @@ dataset/create_dataset/radiance_*
 dataset/create_dataset/reflection_*
 dataset/create_dataset/texture_*
 dataset/create_dataset/_meta/*
+dataset/create_dataset/0_whales/*
+dataset/create_dataset/0_ocean/*
 dataset/create_dataset/dataset_overview.xlsx
 
 
@@ -54,3 +57,5 @@ offnadir_imaging/create_DEM/dem_mesh_PATCH.obj
 offnadir_imaging/spd_files/sky_diffuse_radiance.spd
 offnadir_imaging/spd_files/solar_direct_normal.spd
 notes.txt
+
+/dataset/phisat-2_data/dataset/*

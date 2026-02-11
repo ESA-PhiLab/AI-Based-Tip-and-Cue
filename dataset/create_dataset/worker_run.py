@@ -33,7 +33,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--patch_seed", type=int, required=True)
     p.add_argument("--dem_seed", type=int, required=True)
     p.add_argument("--show_plot", type=int, default=0)
-    p.add_argument("--render_resolution", type=int, default=124)
 
     p.add_argument("--sat_lat", type=float, required=True)
     p.add_argument("--sat_lon", type=float, required=True)
@@ -57,10 +56,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--half_fraction_high", type=float, default=0.80)
     p.add_argument("--mask_alpha", type=int, default=80)
 
+    p.add_argument("--sensor_json", type=str, required=True)
+    p.add_argument("--wave_json", type=str, required=True)
+
     p.add_argument("--meta_out", type=str, required=True)
     p.add_argument("--patch_name", type=str, default="")  # only used for offnadir stage
 
     return p.parse_args()
+
 
 def array_stats(x: object) -> dict:
     """array_stats(x) -> dict: Return min/max/mean over finite, non-black pixels (black=0 or [0,0,0]); NaN if empty."""
@@ -219,6 +222,9 @@ def main() -> int:
     show_plot = bool(int(args.show_plot))
     mirror_bool = bool(int(args.mirror_bool))
 
+    sensor_characteristics = json.loads(args.sensor_json)
+    wave_properties = json.loads(args.wave_json)
+
     dt = (
         datetime.fromisoformat(args.datetime_utc.replace("Z", "+00:00"))
         if args.datetime_utc
@@ -271,7 +277,8 @@ def main() -> int:
         print("\nGenerate nadir image")
         nadir_bundle = translate_image(
             patch_bundle,
-            render_resolution=int(args.render_resolution),
+            sensor_characteristics=sensor_characteristics,
+            wave_properties=wave_properties,
             sat_lat=args.sat_lat, sat_lon=args.sat_lon, sat_alt=args.sat_alt,
             tgt_lat=args.tgt_lat, tgt_lon=args.tgt_lon, tgt_alt=args.tgt_alt,
             dem_seed=int(args.dem_seed),
@@ -325,7 +332,8 @@ def main() -> int:
     print("\nGenerate off-nadir image")
     off_bundle = translate_image(
         patch_bundle,
-        render_resolution=int(args.render_resolution),
+        sensor_characteristics=sensor_characteristics,
+        wave_properties=wave_properties,
         sat_lat=args.sat_lat, sat_lon=args.sat_lon, sat_alt=args.sat_alt,
         tgt_lat=args.tgt_lat, tgt_lon=args.tgt_lon, tgt_alt=args.tgt_alt,
         dem_seed=int(args.dem_seed),

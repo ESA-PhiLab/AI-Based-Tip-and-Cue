@@ -43,8 +43,6 @@ BOOLS_BASE = {
     "generate_nadir": False
 }
 
-WAVE_PROPERTIES = {"wind_speed": 10.0, "num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
-SAMPLE_COUNT = 512
 
 # Segmentation translation:
 MASK_SUPERSAMPLE = 2
@@ -627,7 +625,8 @@ def mirror_rotate_patchlocal_bundle(patch_bundle: dict, rotation_angle_deg: floa
 # Public API
 # =========================
 def translate_image(patch_bundle: dict,
-                    render_resolution: int,
+                    sensor_characteristics: dict,
+                    wave_properties: dict,
                     sat_lat: float, sat_lon: float, sat_alt: float,
                     tgt_lat: float, tgt_lon: float, tgt_alt: float,
                     dem_seed: int,
@@ -636,6 +635,10 @@ def translate_image(patch_bundle: dict,
                     generate_nadir: bool = False,
                     rotation_angle_deg: float = 0.0,
                     mirror_bool: bool = False) -> dict:
+    """translate_image(patch_bundle,sensor_characteristics,wave_properties,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,dem_seed,show_plot,datetime_utc,generate_nadir,rotation_angle_deg,mirror_bool) -> dict: Render image + translate annotations."""
+
+    """translate_image(patch_bundle,sensor_characteristics,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,dem_seed,show_plot,datetime_utc,generate_nadir,rotation_angle_deg,mirror_bool) -> dict: Render image + translate annotations."""
+
 
     """translate_image(patch_bundle,render_resolution,sat_lat,sat_lon,sat_alt,tgt_lat,tgt_lon,tgt_alt,show_plot,datetime_utc) -> dict: Render offnadir + translate anns."""
     if not isinstance(patch_bundle, dict):
@@ -675,6 +678,8 @@ def translate_image(patch_bundle: dict,
     satellite = get_satellite(str(img_path), str(CSV_PATH), fixed_sat="WV3")
     gsd = get_spatial_res(str(img_path), str(CSV_PATH))
 
+    sensor_characteristics['GSD'] = gsd
+
     # from here on, use rotated anns in-memory too
     anns = rot_anns
 
@@ -682,7 +687,7 @@ def translate_image(patch_bundle: dict,
     dem_tiff_path = str(dem_folder / "input_dem_WV.tiff")
     dem_obj_path = str(dem_folder / "dem_mesh_WV.obj")
 
-    get_DEM(str(rot_img_path), dem_tiff_path, gsd, WAVE_PROPERTIES, random_seed=int(dem_seed), waves=True, curvature=True, plot_DEM=False)
+    get_DEM(str(rot_img_path), dem_tiff_path, gsd, wave_properties, random_seed=int(dem_seed), waves=True, curvature=True, plot_DEM=False)
     convert_DEM(str(rot_img_path), dem_tiff_path, dem_obj_path, gsd, scale_km=False, print_output=False, plot_DEM=False)
 
     _ = get_band_data(satellite, str(main_path / "offnadir_imaging" / "spd_files"))
@@ -729,7 +734,8 @@ def translate_image(patch_bundle: dict,
     # ==========================================================
     # (A) SEGMENTATION: per-annotation mask render (NO global mask)
     # ==========================================================
-    mask_res_hi = int(int(render_resolution) * MASK_SUPERSAMPLE)
+    res = int(sensor_characteristics["resolution"])
+    mask_res_hi = int(res * MASK_SUPERSAMPLE)
     polys_off_by_ann: dict[int, list] = {}
 
     for ann in anns:
@@ -752,7 +758,7 @@ def translate_image(patch_bundle: dict,
 
         mask_off_bin_hi = threshold_mask(mask_off_u8_hi, thr=127)
         mask_off_bin_hi = postprocess_binary_mask(mask_off_bin_hi, close_radius=MASK_CLOSE_RADIUS)
-        mask_off_bin = downsample_binary_mask(mask_off_bin_hi, out_res=int(render_resolution))
+        mask_off_bin = downsample_binary_mask(mask_off_bin_hi, out_res=res)
 
         # Treat tiny/empty masks as "no segmentation"
         min_pixels = 3
@@ -787,7 +793,7 @@ def translate_image(patch_bundle: dict,
         to_world_scene=to_world_scene,
         to_world_sensor=to_world_sensor_off,
         fov_deg=fov_deg,
-        res=int(render_resolution),
+        res=res,
         spp=ID_SPP,
         filter_type=ID_FILTER,
     )
@@ -802,7 +808,7 @@ def translate_image(patch_bundle: dict,
 
     all_polys = [p for plist in polys_off_by_ann.values() for p in plist]
 
-    contour_dbg = Image.new("RGB", (int(render_resolution), int(render_resolution)), (0, 0, 0))
+    contour_dbg = Image.new("RGB", (res, res), (0, 0, 0))
     contour_dbg = draw_overlay_from_polys(contour_dbg, all_polys, boxes_off)
 
     if show_plot:
@@ -817,7 +823,7 @@ def translate_image(patch_bundle: dict,
     # ==========================================================
     # (C) Now run generate_image and overlay (debug only)
     # ==========================================================
-    sensor_characteristics = {"resolution": int(render_resolution), "sample_count": int(SAMPLE_COUNT), "GSD": gsd}
+
     bools = dict(BOOLS_BASE)
     bools["plot_result"] = False
 
@@ -833,7 +839,7 @@ def translate_image(patch_bundle: dict,
         float(tgt_lat), float(tgt_lon), float(tgt_alt),
         dt,
         sensor_characteristics,
-        WAVE_PROPERTIES,
+        wave_properties,
         bools,
         dem_seed,
     )
@@ -895,7 +901,7 @@ def translate_image(patch_bundle: dict,
 
     out = dict(patch_bundle)
     out["anns_patch"] = translated_anns
-    out["render_resolution"] = int(render_resolution)
+    out["resolution"] = int(sensor_characteristics["resolution"])
 
     # texture (uint8 RGB)
     out["texture_u8"] = translated_u8
