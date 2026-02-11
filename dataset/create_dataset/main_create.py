@@ -559,7 +559,7 @@ def main() -> None:
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
-        "mode_single": "ocean",
+        "mode_single": "full",
         "mode_multiple_allow_partial": False,
         "window_size": 64,
         "nowhale_max_fraction": 0.10,

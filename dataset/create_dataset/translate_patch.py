@@ -355,17 +355,51 @@ def rebuild_bboxes_from_id_by_ann(meta: dict, pos: dict) -> dict:
 # Patch resolver (bundle stores no paths)
 # =========================
 def _resolve_raw_patch_path(patch_bundle: dict) -> Path:
-    """_resolve_raw_patch_path(patch_bundle) -> Path: dataset/create_dataset/patch_raw/<subdir>/<patch_name><ext>."""
+    """Resolve raw patch path from any derived name (handles _F, _F_nadir, _F_40deg)."""
     img_file = patch_bundle.get("img_file", None)
     patch_name = patch_bundle.get("patch_name", None)
+
     if not isinstance(img_file, str):
         raise ValueError("patch_bundle['img_file'] must be the original image file_name string")
     if not isinstance(patch_name, str) or not patch_name:
-        raise ValueError("patch_bundle['patch_name'] must exist (set by save_patch('patch_raw', ...))")
+        raise ValueError("patch_bundle['patch_name'] must exist")
 
     subdir = Path(img_file).parent
     ext = Path(img_file).suffix
-    return PATCH_DIR / subdir / f"{patch_name}{ext}"
+
+    stem = patch_name
+
+    # Strip known suffix patterns
+    if stem.endswith("_nadir"):
+        stem = stem[:-6]
+
+    # Remove _XXdeg
+    if stem.endswith("deg"):
+        parts = stem.rsplit("_", 1)
+        if len(parts) == 2 and parts[1].endswith("deg"):
+            stem = parts[0]
+
+    # Remove label suffix
+    for suf in ("_F", "_H", "_O"):
+        for extra in ("", "_nadir"):
+            p = PATCH_DIR / subdir / f"{stem}{suf}{extra}{ext}"
+            if p.is_file():
+                return p
+
+
+    # Try raw filename without suffix
+    base = PATCH_DIR / subdir / f"{stem}{ext}"
+    if base.is_file():
+        return base
+
+    # Try raw filename with label suffix
+    for suf in ("_F", "_H", "_O"):
+        p = PATCH_DIR / subdir / f"{stem}{suf}{ext}"
+        if p.is_file():
+            return p
+
+    raise FileNotFoundError(f"Missing patch file: {base}")
+
 
 ANNS_JSON_NAME = "final_annotations.json"
 
@@ -675,8 +709,9 @@ def translate_image(patch_bundle: dict,
     # write rotated inputs for generate_image (and for functions that read the image file)
     rot_img_path, rot_anns_path = _write_temp_rotated_inputs(rot_rgb, rot_anns, Path(anns_path))
 
-    satellite = get_satellite(str(img_path), str(CSV_PATH), fixed_sat="WV3")
-    gsd = get_spatial_res(str(img_path), str(CSV_PATH))
+    src_img_path = main_path / "dataset" / "whales_from_space" / str(patch_bundle["img_file"])
+    satellite = get_satellite(str(src_img_path), str(CSV_PATH), fixed_sat="WV3")
+    gsd = get_spatial_res(str(src_img_path), str(CSV_PATH))
 
     sensor_characteristics['GSD'] = gsd
 

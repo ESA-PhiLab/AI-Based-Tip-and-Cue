@@ -296,6 +296,19 @@ def rollback_patch_outputs(img_file: str, patch_name: str) -> None:
             coco["annotations"] = anns
             _save_json(coco_path, coco)
 
+def _label_tag(label_simple: str | None) -> str:
+    """_label_tag(label_simple) -> str: Map 'whale','whale_half','ocean' to '_F','_H','_O'."""
+    if not isinstance(label_simple, str):
+        return ""
+    label_simple = label_simple.lower().strip()
+    if label_simple == "whale":
+        return "_F"
+    if label_simple == "whale_half":
+        return "_H"
+    if label_simple == "ocean":
+        return "_O"
+    return ""
+
 
 def save_patch(split: str, patch_bundle: dict) -> dict:
     """save_patch(split,patch_bundle) -> dict: Save patch image + append COCO entry; mutates patch_bundle with patch_name."""
@@ -339,9 +352,13 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
 
     is_npy_split = split.endswith("_npy")
 
-    tag = ""
+    # Add label tag for all splits except raw rotation intermediate if desired
+    label_tag = _label_tag(patch_bundle.get("label_simple", None))
+
     if _split_needs_offnadir_tag(split):
-        tag = _deg_tag(patch_bundle.get("offnadir_deg", None))
+        tag = label_tag + _deg_tag(patch_bundle.get("offnadir_deg", None))
+    else:
+        tag = label_tag + "_nadir"
 
     out_rel = (subdir / f"{patch_name}{tag}.npy") if is_npy_split else (subdir / f"{patch_name}{tag}{ext}")
 
@@ -371,13 +388,17 @@ def save_patch(split: str, patch_bundle: dict) -> dict:
 
     img_info_src = patch_bundle.get("img_info", {})
     img_rec = dict(img_info_src) if isinstance(img_info_src, dict) else {}
-    img_rec.pop("license", None)   # REMOVE license field
+    img_rec.pop("license", None)
     img_rec["id"] = new_image_id
     img_rec["file_name"] = file_name
     img_rec["width"] = w
     img_rec["height"] = h
 
+    if "label_simple" in patch_bundle:
+        img_rec["label_simple"] = patch_bundle["label_simple"]
+
     images.append(img_rec)
+
 
     # Annotations:
     if split == "patch_raw_255":

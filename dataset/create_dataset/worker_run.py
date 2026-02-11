@@ -195,22 +195,32 @@ def load_patch_bundle_from_patchraw(img_file: str, patch_name: str) -> dict:
 
     subdir = Path(img_file).parent.as_posix()
     ext = Path(img_file).suffix
-    file_name = f"{subdir}/{patch_name}{ext}" if subdir else f"{patch_name}{ext}"
+    subdir = Path(img_file).parent.as_posix()
+    ext = Path(img_file).suffix
 
-    img_rec = None
-    for im in images:
-        if im.get("file_name") == file_name:
-            img_rec = im
-            break
+    def matches(im: dict) -> bool:
+        fn = str(im.get("file_name", ""))
+        p = Path(fn)
+        if p.suffix != ext:
+            return False
+        if subdir and p.parent.as_posix() != subdir:
+            return False
+        return p.stem == patch_name or p.stem.startswith(patch_name + "_")
+
+    img_rec = next((im for im in images if isinstance(im, dict) and matches(im)), None)
     if img_rec is None:
-        raise FileNotFoundError(f"patch_raw image record not found for file_name={file_name}")
+        raise FileNotFoundError(f"patch_raw image record not found for patch_name={patch_name} (subdir={subdir}, ext={ext})")
+
 
     image_id = img_rec.get("id")
     anns_patch = [a for a in anns if a.get("image_id") == image_id]
 
+    label_simple = img_rec.get("label_simple", None)
+
     return {
         "img_file": img_file,
         "patch_name": patch_name,
+        "label_simple": label_simple,  # add this
         "img_info": dict(img_rec),
         "anns_patch": anns_patch,
     }
@@ -251,17 +261,32 @@ def main() -> int:
             plot_patch=show_plot,
         )
 
-        save_patch("patch_raw_255", patch_bundle)
-
-        b_rot = mirror_rotate_patchlocal_bundle(patch_bundle, args.rotation_angle_deg, mirror_bool=mirror_bool)
-        save_patch("patch_raw_rot_255", b_rot)
-
         label_simple = classify_label(
             fracs=list(patch_bundle.get("fracs", [])) if isinstance(patch_bundle.get("fracs", []), list) else [],
             whale_min_fraction=float(args.whale_min_fraction),
             half_fraction_range=half_range,
             nowhale_max_fraction=float(args.nowhale_max_fraction),
         )
+        patch_bundle["label_simple"] = label_simple
+
+        save_patch("patch_raw_255", patch_bundle)
+
+        b_rot = mirror_rotate_patchlocal_bundle(patch_bundle, args.rotation_angle_deg, mirror_bool=mirror_bool)
+        save_patch("patch_raw_rot_255", b_rot)
+
+        write_meta(
+            args.meta_out,
+            patch_bundle,
+            label_simple=label_simple,
+            half_fraction_range=half_range,
+            whale_min_fraction=float(args.whale_min_fraction),
+            nowhale_max_fraction=float(args.nowhale_max_fraction),
+            rotation_angle_deg=float(args.rotation_angle_deg),
+            mirror_bool=mirror_bool
+        )
+
+
+        patch_bundle["label_simple"] = label_simple
 
         write_meta(
             args.meta_out,
