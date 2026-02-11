@@ -267,6 +267,9 @@ def run_dataset(n_runs: int,
     if balanced_offnadir:
 
         run_idx = 0
+
+        total_runs = int(n_runs) * len(offnadir_angles)
+
         for img_i in range(int(n_runs)):
             pick_img_seed_i = pick_img_seed + img_i
 
@@ -274,7 +277,7 @@ def run_dataset(n_runs: int,
             img_file = load_image(pick_img_seed_i, whales_root)
 
             for ang in offnadir_angles:
-                print(f"\n ====================== Start new process {run_idx} ====================== \n")
+                print(f"\n ====================== Start new process {run_idx+1} / {total_runs} ====================== \n")
                 print(f"Image: {img_file} | Offnadir request: {ang} deg")
 
                 rotation_angle_deg = float(rng_rot.choice([0, 90, 180, -90]))
@@ -399,6 +402,8 @@ def run_dataset(n_runs: int,
         wb.close()
         return
 
+    total_runs = int(n_runs)
+
     # Option 1: one run per iteration, images advance by i, no offnadir filtering
     for i in range(int(n_runs)):
         pick_img_seed_i = pick_img_seed + i
@@ -422,7 +427,7 @@ def run_dataset(n_runs: int,
         wave_properties_i = dict(wave_properties)
         wave_properties_i["wind_speed"] = wind_speed
 
-        print(f"\n ====================== Start new process {i} ====================== \n")
+        print(f"\n ====================== Start new process {i+1} / {total_runs} ====================== \n")
         print(f"Pose: sat=({sat_lat},{sat_lon},{sat_alt}) tgt=({tgt_lat},{tgt_lon},{tgt_alt}) dt={datetime_utc}")
         print(f"Image: {img_file}")
         print(f"Wind speed: {wind_speed:.3f} m/s")
@@ -536,8 +541,8 @@ def main() -> None:
     wave_properties = {"num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
     sensor_characteristics = {"resolution": int(render_resolution), "sample_count": 512, "specular_weight": 0.2, "refl_mode": "proxy", "refl_scale": None, "refl_offset": None}
 
-    n_images =  20 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
-    balanced_offnadir = False # True = per-image angles 5..60, False = random offnadir, loop by one,. For full dataset: True
+    n_images = 5                         # count_images_in_subfolders(Path("dataset") / "whales_from_space")
+    balanced_offnadir = False            # For full dataset: True. True = per-image angles 5..60, False = random offnadir, loop by one,.
 
     offnadir_angles = np.arange(5, 60 +1, 5)
 
@@ -548,7 +553,7 @@ def main() -> None:
     img_rot_seed = 10
 
     wind_speed_seed = 123
-    wind_speed_range = (3.0, 12.0)      # normal distribution
+    wind_speed_range = (4.0, 12.0)      # normal distribution
 
     show_plot = False
 
@@ -611,7 +616,7 @@ def main() -> None:
         offnadir_angles=offnadir_angles,
     )
 
-    cleanup_meta_only(base)
+    cleanup_meta_only(GENERATED_ROOT)
 
 
 if __name__ == "__main__":
