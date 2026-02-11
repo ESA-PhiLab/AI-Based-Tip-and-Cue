@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 import numpy as np
-
+from typing import Union, Iterable, Any
 
 import openpyxl
 
@@ -252,6 +252,45 @@ def pick_random_pose(
 
 
 
+def scalar_or_string(values: Any, fmt: str = "{:.6f}", sep: str = ", ") -> Union[float, str]:
+    """scalar_or_string(values,fmt,sep)->float|str: Return float if exactly 1 value else a string list; empty -> ''."""
+    if values is None:
+        return ""
+
+    if isinstance(values, (int, float)):
+        return float(values)
+
+    if isinstance(values, str):
+        s = values.strip()
+        if s == "":
+            return ""
+        if "," in s or s.startswith("["):
+            return s
+        return float(s)
+
+    vals = []
+    try:
+        it = iter(values)
+    except TypeError:
+        s = str(values).strip()
+        return "" if s == "" else float(s)
+
+    for v in it:
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s == "":
+            continue
+        vals.append(float(s))
+
+    if len(vals) == 0:
+        return ""
+    if len(vals) == 1:
+        return float(vals[0])
+    return sep.join(fmt.format(x) for x in vals)
+
+
+
 
 
 def count_images_in_subfolders(dataset_root: str | Path, allowed_ext: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")) -> int:
@@ -461,9 +500,9 @@ def append_run_rows(ws_patch,
     """append_run_rows(...) -> None: Append patch/offnadir/annotation rows for one run."""
     top_left = meta.get("top_left", [None, None])
     offset_xy = meta.get("offset_xy", [None, None])
-    fracs = meta.get("fracs", [])
-    fracs_json = json.dumps(fracs) if isinstance(fracs, list) else str(fracs)
-    fracs_json = float(fracs_json.strip("[]"))
+    fracs = meta.get("fracs", None)
+    fracs_value = scalar_or_string(fracs)
+
 
     patch_name = meta.get("patch_name", "")
     label_simple = meta.get("label_simple", "")
@@ -505,7 +544,7 @@ def append_run_rows(ws_patch,
         offset_xy[1] if isinstance(offset_xy, list) and len(offset_xy) == 2 else None,
         rotation_angle_deg,
         mirror_bool,
-        fracs_json,
+        fracs_value,
         label_simple,
         category_id
     ])

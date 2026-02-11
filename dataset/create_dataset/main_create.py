@@ -423,48 +423,86 @@ def run_dataset(n_runs: int,
         print(f"Image: {img_file}")
         print(f"Wind speed: {wind_speed:.3f} m/s")
 
-        run_one(
-            i=i,
-            img_file=img_file,
-            crop_patch_seed_i=crop_patch_seed_i,
-            dem_seed_i=dem_seed_i,
-            show_plot=show_plot,
-            rotation_angle_deg=rotation_angle_deg,
-            mirror_bool=mirror_bool,
-            sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
-            tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
-            datetime_utc=datetime_utc,
-            patch_parameters=patch_parameters,
-            sensor_characteristics=sensor_characteristics,
-            wave_properties=wave_properties_i,
-            meta_out=meta_out,
-        )
+        max_attempts = 5
+        success = False
 
-        meta = json.loads(meta_out.read_text(encoding="utf-8"))
+        for attempt in range(max_attempts):
+            crop_patch_seed_i_try = crop_patch_seed + i + 100000 * attempt
+            dem_seed_i_try = dem_seed + i + 100000 * attempt
+            pick_pose_seed_i_try = pick_pose_seed + i + 100000 * attempt
 
-        append_run_rows(
-            ws_patch=ws_patch,
-            ws_off=ws_off,
-            ws_ann_nadir=ws_ann_nadir,
-            ws_ann_off=ws_ann_off,
-            ws_radrefl=ws_radrefl,
-            i=i,
-            img_file=img_file,
-            result_name=result_name,
-            detection_id=detection_id,
-            pick_img_seed_i=pick_img_seed_i,
-            crop_patch_seed_i=crop_patch_seed_i,
-            dem_seed_i=dem_seed_i,
-            pick_pose_seed_i=pick_pose_seed_i,
-            sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
-            tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
-            datetime_utc=datetime_utc,
-            wind_speed=wind_speed,
-            meta=meta,
-        )
+            try:
+                result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc = pick_random_pose(
+                    poses_xlsx, pick_pose_seed=pick_pose_seed_i_try
+                )
 
-        wb.save(overview_xlsx)
-        time.sleep(0.1)
+                meta_out = meta_dir / f"run_{i:04d}.json"
+                if meta_out.exists():
+                    meta_out.unlink()
+
+                run_one(
+                    i=i,
+                    img_file=img_file,
+                    crop_patch_seed_i=crop_patch_seed_i_try,
+                    dem_seed_i=dem_seed_i_try,
+                    show_plot=show_plot,
+                    rotation_angle_deg=rotation_angle_deg,
+                    mirror_bool=mirror_bool,
+                    sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
+                    tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
+                    datetime_utc=datetime_utc,
+                    patch_parameters=patch_parameters,
+                    sensor_characteristics=sensor_characteristics,
+                    wave_properties=wave_properties_i,
+                    meta_out=meta_out,
+                )
+
+                meta = json.loads(meta_out.read_text(encoding="utf-8"))
+
+                append_run_rows(
+                    ws_patch=ws_patch,
+                    ws_off=ws_off,
+                    ws_ann_nadir=ws_ann_nadir,
+                    ws_ann_off=ws_ann_off,
+                    ws_radrefl=ws_radrefl,
+                    i=i,
+                    img_file=img_file,
+                    result_name=result_name,
+                    detection_id=detection_id,
+                    pick_img_seed_i=pick_img_seed_i,
+                    crop_patch_seed_i=crop_patch_seed_i_try,
+                    dem_seed_i=dem_seed_i_try,
+                    pick_pose_seed_i=pick_pose_seed_i_try,
+                    sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
+                    tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
+                    datetime_utc=datetime_utc,
+                    wind_speed=wind_speed,
+                    meta=meta,
+                )
+
+                wb.save(overview_xlsx)
+                time.sleep(0.1)
+
+                success = True
+                break
+
+            except Exception as e:
+                print(f"[attempt {attempt + 1}/{max_attempts}] Failed: {e}")
+
+                # rollback any partial outputs if patch_name exists
+                try:
+                    if meta_out.exists():
+                        meta_tmp = json.loads(meta_out.read_text(encoding="utf-8"))
+                        patch_name = meta_tmp.get("patch_name", "")
+                        if patch_name:
+                            from save_patch import rollback_patch_outputs
+                            rollback_patch_outputs(img_file=img_file, patch_name=patch_name)
+                except Exception:
+                    pass
+
+        if not success:
+            print(f"Giving up after {max_attempts} attempts: {img_file} (excluded)")
+            continue
 
     # count actually generated images from disk (robust against failures)
     out_dir = script_dir / "texture_offnadir_255"
@@ -493,7 +531,7 @@ def main() -> None:
     wave_properties = {"num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
     sensor_characteristics = {"resolution": int(render_resolution), "sample_count": 512, "specular_weight": 0.2, "refl_mode": "proxy", "refl_scale": None, "refl_offset": None}
 
-    n_images =  5 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
+    n_images =  20 # count_images_in_subfolders(Path("dataset") / "whales_from_space")
     balanced_offnadir = False # True = per-image angles 5..60, False = random offnadir, loop by one,. For full dataset: True
 
     offnadir_angles = np.arange(5, 60 +1, 5)
