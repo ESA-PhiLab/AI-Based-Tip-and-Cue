@@ -513,9 +513,9 @@ def main() -> None:
     # (C) Now run generate_image and overlay
     # ==========================================================
     print("[7/7] Running generate_image after translation...")
-    sensor_characteristics = {"resolution": RENDER_RESOLUTION, "sample_count": SAMPLE_COUNT, "GSD": gsd}
+    sensor_characteristics = {"resolution": RENDER_RESOLUTION, "sample_count": SAMPLE_COUNT, "GSD": gsd, "specular_weight": 0.2}
 
-    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg = generate_image(
+    texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg= generate_image(
         str(img_path), str(ANNOTATIONS_PATH),
         satellite,
         SAT_LAT, SAT_LON, SAT_ALT,
@@ -527,18 +527,18 @@ def main() -> None:
         DEM_SEED,
     )
 
-    if DN255_texture is None:
+    if texture_disp is None:
         raise RuntimeError("Renderer returned None (dark hours).")
 
-    tex_u8 = to_uint8_rgb(DN255_texture)
-    no_glint_u8 = to_uint8_rgb(DN255_no_glint) if DN255_no_glint is not None else np.zeros_like(tex_u8)
-    glint_u8 = to_uint8_rgb(DN255_glint) if DN255_glint is not None else np.zeros_like(tex_u8)
+    tex_u8 = to_uint8_rgb(texture_disp)
+    no_glint_u8 = to_uint8_rgb(radiance_disp_no_glint) if radiance_disp_no_glint is not None else np.zeros_like(tex_u8)
+    glint_u8 = to_uint8_rgb(radiance_disp_final) if radiance_disp_final is not None else np.zeros_like(tex_u8)
 
-    rho_u8 = (np.clip(rho_disp, 0.0, 1.0) * 255.0).astype(np.uint8) if rho_disp is not None else np.zeros_like(tex_u8)
+    rho_u8 = (np.clip(rho_disp_final, 0.0, 1.0) * 255.0).astype(np.uint8) if rho_disp_final is not None else np.zeros_like(tex_u8)
 
     tex_overlay = draw_overlay_from_polys(Image.fromarray(tex_u8, mode="RGB").copy(), polys_off, boxes_off)
-    glint_overlay = draw_overlay_from_polys(Image.fromarray(glint_u8, mode="RGB").copy(), polys_off, boxes_off) if DN255_glint is not None else None
-    rho_overlay = draw_overlay_from_polys(Image.fromarray(rho_u8, mode="RGB").copy(), polys_off, boxes_off) if rho_disp is not None else None
+    glint_overlay = draw_overlay_from_polys(Image.fromarray(glint_u8, mode="RGB").copy(), polys_off, boxes_off) if radiance_disp_final is not None else None
+    rho_overlay = draw_overlay_from_polys(Image.fromarray(rho_u8, mode="RGB").copy(), polys_off, boxes_off) if rho_disp_final is not None else None
 
     fig2 = plt.figure(figsize=(18, 10))
     fig2.add_subplot(1, 4, 1).imshow(orig_overlay);

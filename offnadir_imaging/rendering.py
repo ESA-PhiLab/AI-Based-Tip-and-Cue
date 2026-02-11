@@ -19,7 +19,7 @@ from .functions.get_satellite_data import get_band_data, get_satellite, get_spat
 from .functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
 from .functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation, masked_abs_radiance, masked_percentile, masked_channel_percentiles, masked_channel_means, masked_mean, plot_radiance_timeline
 from .functions import image_utils as iu
-from .functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance_proxy, compute_hit_mask_full
+from .functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance, compute_hit_mask_full
 
 _COCO_CACHE = {}
 
@@ -59,30 +59,27 @@ def load_input_reflectance(
         img_path: str,
         img_rgb_uint8: np.ndarray,
         anchor_mask: np.ndarray,
-        mode: str,
         target_reflectance_rgb=(0.09, 0.05, 0.03),      # B G R
-        scale: float = 255.0,
-        offset: float = 0.0,
 ) -> np.ndarray:
     """Return HxWx3 float32 reflectance from either proxy mapping or encoded reflectance PNG."""
 
-    if mode == "proxy":
-        return rgb_png_to_reflectance_proxy(
-            img_rgb_uint8=img_rgb_uint8,
-            anchor_mask=anchor_mask,
-            target_reflectance_rgb=target_reflectance_rgb,
-        ).astype(np.float32)
+   #  if mode == "proxy":
+    return rgb_png_to_reflectance(
+        img_rgb_uint8=img_rgb_uint8,
+        anchor_mask=anchor_mask,
+        target_reflectance_rgb=target_reflectance_rgb,
+    ).astype(np.float32)
 
-    if mode == "reflectance_png":
-        arr = np.asarray(Image.open(img_path))
-        if arr.ndim == 2:
-            arr = np.repeat(arr[:, :, None], 3, axis=2)
-        arr = arr[:, :, :3]
+ #  if mode == "reflectance_png":
+ #      arr = np.asarray(Image.open(img_path))
+ #      if arr.ndim == 2:
+ #          arr = np.repeat(arr[:, :, None], 3, axis=2)
+ #      arr = arr[:, :, :3]
 
-        refl = (arr.astype(np.float32) - float(offset)) / float(scale)
-        return np.clip(refl, 0.0, 2.0).astype(np.float32)
+ #      refl = (arr.astype(np.float32) - float(offset)) / float(scale)
+ #      return np.clip(refl, 0.0, 2.0).astype(np.float32)
 
-    raise ValueError(f"Unknown reflectance mode: {mode!r}")
+ #  raise ValueError(f"Unknown reflectance mode: {mode!r}")
 
 
 def render_band_radiance(input_img_lin, dem_path, spd_path, sun_spd, sky_spd, satellite_local, target_local, sun_direction, sensor_characteristics, alpha, specular_weight):
@@ -396,7 +393,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
     if is_dark:
         print("Dark hours, no image possible")
-        return None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None, None, None, None
 
     img_rgb = np.asarray(Image.open(img_path).convert('RGB'))
 
@@ -502,7 +499,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         except Exception as e:
             if bools.get("print_values", False):
                 print(f"Failed to generate sun/sky SPD: {repr(e)}")
-            return None, None, None, None, None, None, None, None, offnadir_deg
+            return None, None, None, None, None, None, None, None, None, None, None, offnadir_deg
 
         if bools['print_values'] == True:
             print(f"Saved solar SPD to {sun_spd}\n")
@@ -524,10 +521,10 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
         # off_nadir_image = np.flip(off_nadir_image, axis=0)
 
-        DN255_texture = iu.linear_to_DN255(off_nadir_image)
+        texture_disp = iu.linear_to_DN255(off_nadir_image)
 
-        DN255_full_glint, radiance_full_glint, scale = render_rgb_with_optional_glint(
-            img_refl=DN255_texture,
+        radiance_disp_full_glint, radiance_full_glint, scale = render_rgb_with_optional_glint(
+            img_refl=texture_disp,
             dem_path=dem_path,
             band_data=band_data,
             sun_spd_path=sun_spd,
@@ -547,18 +544,14 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         stats_out = iu.reflectance_stats_rgb(rho_full_glint.astype(np.float32), mask=None, name=None)
         wave_properties["target_reflectance_rgb"] = (stats_out['channels']["R"]["p50"], stats_out['channels']["G"]["p50"], stats_out['channels']["B"]["p50"])
 
-        img_refl = load_input_reflectance(
-            img_path=img_path,
+        img_refl = rgb_png_to_reflectance(
             img_rgb_uint8=img_rgb,
             anchor_mask=anchor_mask,
-            mode=sensor_characteristics["refl_mode"],
-            scale=sensor_characteristics["refl_scale"],
-            offset=sensor_characteristics["refl_offset"],
             target_reflectance_rgb=wave_properties["target_reflectance_rgb"],
         )
 
         # Physically consistent baseline: same sun/camera, NO glint
-        DN255_no_glint, radiance_no_glint, scale = render_rgb_with_optional_glint(
+        radiance_disp_no_glint, radiance_no_glint, scale = render_rgb_with_optional_glint(
             img_refl=img_refl,
             dem_path=dem_path,
             band_data=band_data,
@@ -575,7 +568,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         )
 
         # Physically consistent glint render: same sun/camera, glint enabled
-        DN255_glint, radiance_glint, _ = render_rgb_with_optional_glint(
+        radiance_disp_final, radiance_final, _ = render_rgb_with_optional_glint(
             img_refl=img_refl,
             dem_path=dem_path,
             band_data=band_data,
@@ -591,10 +584,6 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
             return_linear=True
         )
 
-        # Re-apply the NO-GLINT tone scale to the glint radiance for fair comparison
-        rgb_lin_glint = np.clip(radiance_glint / (scale + 1e-12), 0.0, 1.0)
-        DN255_glint2 = iu.linear_to_DN255(rgb_lin_glint)
-
         black_mask_full, black_mask_raw, y0, y1, xL, xR, dbg = compute_hit_mask_full(
             dn255_blackproj=DN255_black,
             tol=50,  # black if each channel <= 100
@@ -604,57 +593,63 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
             interval_mode="median"
         )
 
-        radiance_glint[~black_mask_full] = 0.0
-        DN255_texture[~black_mask_full] = 0
-        DN255_no_glint[~black_mask_full] = 0
-        DN255_glint2[~black_mask_full] = 0
+        radiance_no_glint[~black_mask_full] = 0.0
+        radiance_final[~black_mask_full] = 0.0
+
+        texture_disp[~black_mask_full] = 0
+        radiance_disp_no_glint[~black_mask_full] = 0
+        radiance_disp_final[~black_mask_full] = 0
 
         if bools['print_values'] == True:
             print("DN255_black min/max:", DN255_black.min(), DN255_black.max())
             print("fraction black (raw):", np.mean(np.linalg.norm(DN255_black.astype(np.float32), axis=2) <= 2.0))
 
-        # --- TOA reflectance (use in-band integrated convention) ---
+        # --- BOA reflectance (use in-band integrated convention) ---
+        rho_no_glint = iu.radiance_rgb_to_toa_reflectance(radiance_no_glint, band_data, sun_spd, cos_theta_s, d_au=1.0, eps=1e-12)
+        rho_no_glint[~black_mask_full] = 0.0
+
+        rho_final = iu.radiance_rgb_to_toa_reflectance(radiance_final, band_data, sun_spd, cos_theta_s,  d_au=1.0, eps=1e-12)
+        rho_final[~black_mask_full] = 0.0
 
 
-        rho_glint = iu.radiance_rgb_to_toa_reflectance(radiance_glint, band_data, sun_spd, cos_theta_s,  d_au=1.0, eps=1e-12)
-
-        rho_glint[~black_mask_full] = 0.0
-
-
-        print(f"Reflectance min/max: {np.min(rho_glint):.3f} / {np.max(rho_glint):.3f}")
+        print(f"Reflectance min/max: {np.min(rho_final):.3f} / {np.max(rho_final):.3f}")
 
         m = black_mask_full.astype(bool)
-        p = float(np.percentile(rho_glint[m], 99.5)) if np.any(m) else 1.0
-        rho_disp = np.clip(rho_glint / (p + 1e-12), 0.0, 1.0)
+        p = float(np.percentile(rho_final[m], 99.5)) if np.any(m) else 1.0
+        rho_disp_no_glint = np.clip(rho_no_glint / (p + 1e-12), 0.0, 1.0)
+        rho_disp_final = np.clip(rho_final / (p + 1e-12), 0.0, 1.0)
 
         if bools['plot_result'] == True:
 
             fig = plt.figure(figsize=(22, 8))
             fig.add_subplot(1, 5, 1).imshow(img_rgb);
             plt.axis('off'); plt.title('original PNG')
-            fig.add_subplot(1, 5, 2).imshow(DN255_texture); plt.axis('off'); plt.title('reproject (constant light)')
-            fig.add_subplot(1, 5, 3).imshow(DN255_no_glint); plt.axis('off'); plt.title('render (sun, no glint)')
-            fig.add_subplot(1, 5, 4).imshow(DN255_glint2); plt.axis('off'); plt.title('render (sun + glint)')
-            fig.add_subplot(1, 5, 5).imshow(rho_disp); plt.axis('off'); plt.title('TOA reflectance')
+            fig.add_subplot(1, 5, 2).imshow(texture_disp); plt.axis('off'); plt.title('reproject (constant light)')
+            fig.add_subplot(1, 5, 3).imshow(radiance_disp_final); plt.axis('off'); plt.title('Radiance (glint)')
+            fig.add_subplot(1, 5, 4).imshow(rho_disp_no_glint); plt.axis('off'); plt.title('Radiance (no glint)')
+            fig.add_subplot(1, 5, 5).imshow(rho_disp_final); plt.axis('off'); plt.title('Reflectance (glint)')
             plt.show()
 
     else:
 
         off_nadir_image = render_projected_texture(img_lin, dem_path, satellite_local, target_local, sensor_characteristics)
-        DN255_texture = iu.linear_to_DN255(off_nadir_image)
-        DN255_no_glint = None
-        DN255_glint2 = None
-        radiance_glint = None
-        rho_glint = None
-        rho_disp = None
+        texture_disp = iu.linear_to_DN255(off_nadir_image)
+        radiance_disp_final = None
+        radiance_disp_no_glint = None
+        radiance_final = None
+        radiance_no_glint = None
+        rho_no_glint = None
+        rho_disp_no_glint = None
+        rho_final = None
+        rho_disp_final = None
         black_mask_full = None
         scale = None
 
         if bools['plot_result'] == True:
             fig = plt.figure(figsize=(18,10))
             fig.add_subplot(1, 3, 1).imshow(img_rgb);plt.axis('off');plt.title('original');
-            fig.add_subplot(1, 3, 2).imshow(DN255_texture);plt.axis('off');plt.title('off-nadir');
-            fig.add_subplot(1, 3, 3).imshow(np.abs(img_rgb - DN255_texture));plt.axis('off');plt.title('difference');
+            fig.add_subplot(1, 3, 2).imshow(texture_disp);plt.axis('off');plt.title('off-nadir');
+            fig.add_subplot(1, 3, 3).imshow(np.abs(img_rgb - texture_disp));plt.axis('off');plt.title('difference');
             plt.show()
 
     gc.collect()
@@ -662,7 +657,7 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
     dr.flush_malloc_cache()
     dr.flush_kernel_cache()
 
-    return DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg
+    return texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg
 
 
 if __name__ == "__main__":
@@ -702,36 +697,36 @@ if __name__ == "__main__":
 
             dt = datetime(2025, 6, 11, int(hour), int(minute), 0, tzinfo=timezone.utc)
 
-            DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg = generate_image(
+            texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg = generate_image(
                 img_path, anns_path, satellite,
                 sat_lat, sat_lon, sat_alt,
                 tgt_lat, tgt_lon, tgt_alt,
                 dt, sensor_characteristics, wave_properties, bools, seed_dem
             )
 
-            if radiance_glint is None or DN255_glint is None or black_mask_full is None:
+            if radiance_final is None or radiance_disp_final is None or black_mask_full is None:
                 continue
 
             mask = black_mask_full.astype(bool)
             if np.count_nonzero(mask) == 0:
                 continue
 
-            abs_rad = np.sqrt(np.sum(np.square(radiance_glint.astype(np.float64)), axis=2))
+            abs_rad = np.sqrt(np.sum(np.square(radiance_final.astype(np.float64)), axis=2))
             vals = abs_rad[mask]
             if vals.size == 0 or float(np.max(vals)) <= 1e-12:
                 continue
 
             save_path_img = outdir / f"{hour}-{minute}h.png"
-            Image.fromarray(np.clip(DN255_glint, 0, 255).astype(np.uint8)).save(save_path_img)
+            Image.fromarray(np.clip(radiance_disp_final, 0, 255).astype(np.uint8)).save(save_path_img)
 
             p95_abs_rad_lst.append(masked_percentile(abs_rad, mask, 95.0))
-            p95_R, p95_G, p95_B = masked_channel_percentiles(radiance_glint, mask, 95.0)
+            p95_R, p95_G, p95_B = masked_channel_percentiles(radiance_final, mask, 95.0)
             p95_rad_lst_R.append(p95_R)
             p95_rad_lst_G.append(p95_G)
             p95_rad_lst_B.append(p95_B)
 
             mean_abs_rad_lst.append(masked_mean(abs_rad, mask))
-            mR, mG, mB = masked_channel_means(radiance_glint, mask)
+            mR, mG, mB = masked_channel_means(radiance_final, mask)
             mean_rad_lst_R.append(mR)
             mean_rad_lst_G.append(mG)
             mean_rad_lst_B.append(mB)

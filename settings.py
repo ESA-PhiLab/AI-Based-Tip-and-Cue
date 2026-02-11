@@ -286,9 +286,6 @@ sensor_characteristics['resolution'] = resolution
 sensor_characteristics['sample_count'] = sample_count
 sensor_characteristics['GSD'] = gsd0_cue
 sensor_characteristics['specular_weight'] = specular_weight
-sensor_characteristics['refl_mode'] = refl_mode
-sensor_characteristics['refl_scale'] = refl_scale
-sensor_characteristics['refl_offset'] = refl_offset
 
 whale_propagation = {}
 whale_propagation["speed_mean"] = speed_mean

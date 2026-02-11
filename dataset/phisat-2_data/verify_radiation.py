@@ -182,10 +182,6 @@ if __name__ == "__main__":
     bools["generate_radiation"] = True
     bools["plot_result"] = True
 
-    sensor_characteristics["reflectance_mode"] = "proxy"
-    sensor_characteristics["reflectance_scale"] = 255.0
-    sensor_characteristics["reflectance_offset"] = 0.0
-
     # wave_properties['specular_weight'] = 1.0
     wave_properties['wind_speed'] = 3.0
 
@@ -294,15 +290,8 @@ if __name__ == "__main__":
 
     # Render
     (
-        DN255_texture,
-        DN255_no_glint,
-        DN255_glint2,
-        radiance_glint,
-        rho_glint,
-        rho_disp,
-        black_mask_full,
-        scale,
-        offnadir_deg,
+        texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg
+
     ) = generate_image(
         img_path,
         anns_path,
@@ -322,11 +311,11 @@ if __name__ == "__main__":
 
     print(f"\noffnadir angle = {offnadir_deg:.2f} deg")
 
-    if rho_glint is None:
+    if rho_final is None:
         raise RuntimeError("rho_glint is None (SPD generation failed or generate_radiation=False).")
 
     gen_mask = black_mask_full.astype(bool) if black_mask_full is not None else None
-    print_stats(rho_glint.astype(np.float32), mask=gen_mask, name="GENERATED (TOA reflectance, masked)")
-    gen_stats = reflectance_stats_rgb(rho_glint.astype(np.float32), mask=gen_mask, name="GENERATED (TOA reflectance, masked)")
+    print_stats(rho_final.astype(np.float32), mask=gen_mask, name="GENERATED (TOA reflectance, masked)")
+    gen_stats = reflectance_stats_rgb(rho_final.astype(np.float32), mask=gen_mask, name="GENERATED (TOA reflectance, masked)")
 
     print_diff(orig_stats, gen_stats)

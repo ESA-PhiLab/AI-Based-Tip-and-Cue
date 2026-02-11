@@ -32,11 +32,11 @@ main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
 DATASET_PATH = Path("dataset")
-BASE_DIR = DATASET_PATH / "create_dataset" / 'nadir'
-ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / 'nadir' / "final_annotations.json"
+BASE_DIR = DATASET_PATH / "create_dataset" / '0_whales' / "patch_raw_255"
+ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / '0_whales' / "patch_raw_255" / "final_annotations.json"
 CSV_PATH = DATASET_PATH/ "whales_from_space" / "WhaleFromSpaceDB_Whales.csv"
 
-IMG_FILE = "Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2_1.PNG"
+IMG_FILE = "Valdes2014/Valdes_SRW_WV3_PS_20141016_B0_1_F_nadir.PNG"
 # IMG_FILE = "Ignacio2017/Ignacio_GW_WV3_PS_20170220_B58_1.PNG"
 DATETIME_UTC = datetime(2025, 6, 11, 8, 0, 0, tzinfo=timezone.utc)
 
@@ -84,6 +84,7 @@ def anns_by_image(anns: list) -> dict:
     for a in anns:
         d.setdefault(a["image_id"], []).append(a)
     return d
+
 
 
 # =========================
@@ -510,10 +511,11 @@ def main() -> None:
     # (C) Now run generate_image and overlay
     # ==========================================================
     print("[7/7] Running generate_image after translation...")
-    sensor_characteristics = {"resolution": RENDER_RESOLUTION, "sample_count": SAMPLE_COUNT, "GSD": gsd}
+    sensor_characteristics = {"resolution": RENDER_RESOLUTION, "sample_count": SAMPLE_COUNT, "GSD": gsd, "specular_weight": 0.2}
 
-    DN255_offnadir, DN255_sunglint, _rad_sunglint, DN255_combined = generate_image(
+    texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg = generate_image(
         str(img_path),
+        ANNOTATIONS_PATH,
         satellite,
         SAT_LAT, SAT_LON, SAT_ALT,
         TGT_LAT, TGT_LON, TGT_ALT,
@@ -523,12 +525,14 @@ def main() -> None:
         BOOLS,
         DEM_SEED,
     )
-    if DN255_offnadir is None:
+
+
+    if radiance_disp_final is None:
         raise RuntimeError("Renderer returned None (dark hours).")
 
-    offnadir_u8 = to_uint8_rgb(DN255_offnadir)
-    sunglint_u8 = to_uint8_rgb(DN255_sunglint)
-    combined_u8 = to_uint8_rgb(DN255_combined)
+    offnadir_u8 = to_uint8_rgb(texture_disp)
+    sunglint_u8 = to_uint8_rgb(radiance_disp_final)
+    combined_u8 = to_uint8_rgb(radiance_disp_final)
 
     off_overlay = draw_overlay_from_polys(Image.fromarray(offnadir_u8, mode="RGB").copy(), all_polys, boxes_off)
     comb_overlay = None

@@ -539,9 +539,9 @@ def main() -> None:
     # (C) Now run generate_image and overlay
     # ==========================================================
     print("[7/7] Running generate_image after translation...")
-    sensor_characteristics = {"resolution": RENDER_RESOLUTION, "sample_count": SAMPLE_COUNT, "GSD": gsd}
+    sensor_characteristics = {"resolution": RENDER_RESOLUTION, "sample_count": SAMPLE_COUNT, "GSD": gsd, "specular_weight": 0.2}
 
-    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg = generate_image(
+    texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg= generate_image(
         str(img_path), str(ANNOTATIONS_PATH),
         satellite,
         SAT_LAT, SAT_LON, SAT_ALT,
@@ -553,12 +553,12 @@ def main() -> None:
         DEM_SEED,
     )
     
-    if DN255_texture is None:
+    if texture_disp is None:
         raise RuntimeError("Renderer returned None (dark hours).")
 
-    texture_u8 = to_uint8_rgb(DN255_texture)        # base texture (DN)
-    glint_u8   = to_uint8_rgb(DN255_glint)          # glint DN (if that’s what DN255_glint is)
-    rho_u8     = to_uint8_rgb(rho_disp)             # display reflectance (likely 0..1 -> now scaled)
+    texture_u8 = to_uint8_rgb(texture_disp)        # base texture (DN)
+    glint_u8   = to_uint8_rgb(radiance_final)          # glint DN (if that’s what radiance_final is)
+    rho_u8     = to_uint8_rgb(rho_disp_final)             # display reflectance (likely 0..1 -> now scaled)
 
     # Overlays on correct bases
     off_overlay_texture = draw_overlay_from_polys(Image.fromarray(texture_u8, mode="RGB").copy(), all_polys, boxes_off)
@@ -586,7 +586,7 @@ def main() -> None:
         ax3.set_title("Glint/DN output (None)")
     else:
         ax3.imshow(off_overlay_glint)
-        ax3.set_title("Glint/DN output (DN255_glint)")
+        ax3.set_title("Glint/DN output (radiance_final)")
     ax3.axis("off")
 
     ax4 = fig2.add_subplot(1, 4, 4)
@@ -595,7 +595,7 @@ def main() -> None:
         ax4.set_title("Reflectance display (None)")
     else:
         ax4.imshow(off_overlay_rho)
-        ax4.set_title("Reflectance display (rho_disp) + translated annotations")
+        ax4.set_title("Reflectance display (rho_disp_final) + translated annotations")
     ax4.axis("off")
 
     plt.tight_layout()

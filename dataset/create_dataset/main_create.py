@@ -543,7 +543,7 @@ def main() -> None:
     img_rot_seed = 10
 
     wind_speed_seed = 123
-    wind_speed_range = (5.0, 15.0)      # normal distribution
+    wind_speed_range = (4.0, 12.0)      # normal distribution
 
     show_plot = False
 
@@ -559,7 +559,7 @@ def main() -> None:
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
-        "mode_single": "full",
+        "mode_single": "ocean",
         "mode_multiple_allow_partial": False,
         "window_size": 64,
         "nowhale_max_fraction": 0.10,
@@ -567,6 +567,15 @@ def main() -> None:
         "half_fraction_range": (0.20, 0.8),
         "mask_alpha": 80,
     }
+
+    if patch_parameters["mode_single"] == "ocean":
+        pick_img_seed_0 += 1
+        crop_patch_seed += 1
+        dem_seed += 1
+        pick_pose_seed += 1
+        img_rot_seed += 1
+        wind_speed_seed += 1
+
 
     poses_xlsx = SCRIPT_DIR / "combined_results.xlsx"
     overview_xlsx = SCRIPT_DIR / "dataset_overview.xlsx"

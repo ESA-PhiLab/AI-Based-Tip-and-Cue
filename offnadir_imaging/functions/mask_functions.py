@@ -59,7 +59,7 @@ def get_whale_mask_for_image(img_rgb_uint8: np.ndarray, img_file_name: str, by_f
     return whale_mask
 
 
-def rgb_png_to_reflectance_proxy(img_rgb_uint8: np.ndarray, anchor_mask: np.ndarray, target_reflectance_rgb: tuple[float, float, float] = (0.04, 0.03, 0.02)) -> np.ndarray:
+def rgb_png_to_reflectance(img_rgb_uint8: np.ndarray, anchor_mask: np.ndarray, target_reflectance_rgb: tuple[float, float, float] = (0.04, 0.03, 0.02)) -> np.ndarray:
     """Scale linear RGB so median(anchor_mask) matches target_reflectance_rgb; returns HxWx3 float32 in [0,1]."""
     img_lin = iu.DN255_to_linear(img_rgb_uint8).astype(np.float32)  # HxWx3
     mask = anchor_mask.astype(bool)
@@ -75,7 +75,7 @@ def rgb_png_to_reflectance_proxy(img_rgb_uint8: np.ndarray, anchor_mask: np.ndar
         s = float(tgt[c] / (med + 1e-12))
         out[:, :, c] = np.clip(img_lin[:, :, c] * s, 0.0, 1.0)
 
-    return out
+    return out.astype(np.float32)
 
 import numpy as np
 

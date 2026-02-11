@@ -46,6 +46,7 @@ dataset/create_dataset/texture_*
 dataset/create_dataset/_meta/*
 dataset/create_dataset/0_whales/*
 dataset/create_dataset/0_ocean/*
+dataset/create_dataset/0_merged/*
 dataset/create_dataset/dataset_overview.xlsx
 
 

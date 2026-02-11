@@ -867,7 +867,7 @@ def translate_image(patch_bundle: dict,
     else:
         bools['generate_nadir'] = False
 
-    DN255_texture, DN255_no_glint, DN255_glint, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg = generate_image(
+    texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg = generate_image(
         str(rot_img_path), str(rot_anns_path),
         satellite,
         float(sat_lat), float(sat_lon), float(sat_alt),
@@ -879,19 +879,19 @@ def translate_image(patch_bundle: dict,
         dem_seed,
     )
 
-    if DN255_texture is None:
+    if texture_disp is None:
         raise RuntimeError("Renderer returned None (dark hours).")
 
-    translated_u8 = to_uint8_rgb(DN255_texture)
-    no_glint_u8 = to_uint8_rgb(DN255_no_glint) if DN255_no_glint is not None else np.zeros_like(translated_u8)
-    glint_u8 = to_uint8_rgb(DN255_glint) if DN255_glint is not None else np.zeros_like(translated_u8)
+    translated_u8 = to_uint8_rgb(texture_disp)
+    no_glint_u8 = to_uint8_rgb(radiance_disp_no_glint) if radiance_disp_no_glint is not None else np.zeros_like(translated_u8)
+    glint_u8 = to_uint8_rgb(radiance_disp_final) if radiance_disp_final is not None else np.zeros_like(translated_u8)
 
     # reflectance display image is already float in [0,1]
-    rho_u8 = (np.clip(rho_disp, 0.0, 1.0) * 255.0).astype(np.uint8) if rho_disp is not None else np.zeros_like(translated_u8)
+    rho_u8 = (np.clip(rho_disp_final, 0.0, 1.0) * 255.0).astype(np.uint8) if rho_disp_final is not None else np.zeros_like(translated_u8)
 
     off_overlay = draw_overlay_from_polys(Image.fromarray(translated_u8, mode="RGB").copy(), all_polys, boxes_off)
-    glint_overlay = draw_overlay_from_polys(Image.fromarray(glint_u8, mode="RGB").copy(), all_polys, boxes_off) if DN255_glint is not None else None
-    rho_overlay = draw_overlay_from_polys(Image.fromarray(rho_u8, mode="RGB").copy(), all_polys, boxes_off) if rho_disp is not None else None
+    glint_overlay = draw_overlay_from_polys(Image.fromarray(glint_u8, mode="RGB").copy(), all_polys, boxes_off) if radiance_disp_final is not None else None
+    rho_overlay = draw_overlay_from_polys(Image.fromarray(rho_u8, mode="RGB").copy(), all_polys, boxes_off) if rho_disp_final is not None else None
 
     if show_plot:
         fig2 = plt.figure(figsize=(18, 10))
@@ -942,12 +942,12 @@ def translate_image(patch_bundle: dict,
     out["texture_u8"] = translated_u8
 
     # radiance (float32 HxWx3) + preview (uint8 RGB)
-    out["radiance"] = radiance_glint.astype(np.float32) if radiance_glint is not None else None
+    out["radiance"] = radiance_final.astype(np.float32) if radiance_final is not None else None
     out["radiance_u8"] = glint_u8  # preview (already DN255)
 
     # reflectance (float32 HxWx3) + preview (uint8 RGB)
-    out["reflectance"] = rho_glint.astype(np.float32) if rho_glint is not None else None
-    out["reflectance_u8"] = rho_u8  # preview made from rho_disp
+    out["reflectance"] = rho_final.astype(np.float32) if rho_final is not None else None
+    out["reflectance_u8"] = rho_u8  # preview made from rho_disp_final
 
     out["black_mask_full"] = black_mask_full
     out["scale"] = scale
