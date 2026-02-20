@@ -4,6 +4,11 @@ import numpy as np
 from PIL import Image, ImageDraw
 from . import image_utils as iu
 
+from pathlib import Path
+import matplotlib.pyplot as plt
+
+_COCO_CACHE = {}
+
 def load_coco_index(annotations_path: str) -> tuple[dict, dict, dict]:
     """Load COCO JSON and return (by_file, anns_by_image_id, images_by_id)."""
     with open(annotations_path, "r", encoding="utf-8") as f:
@@ -32,6 +37,108 @@ def coco_segmentation_to_mask(height: int, width: int, segmentation: list) -> np
         draw.polygon(xy, outline=1, fill=1)
 
     return np.array(mask_img, dtype=np.uint8).astype(bool)
+
+
+
+def load_coco_index_cached(anns_path: str) -> tuple[dict, dict, dict]:
+    """load_coco_index_cached(anns_path) -> tuple: Cache COCO index by path; returns (by_file, anns_by_image_id, images_by_id)."""
+    p = os.path.normpath(str(anns_path))
+    if p not in _COCO_CACHE:
+        _COCO_CACHE[p] = load_coco_index(p)
+    return _COCO_CACHE[p]
+
+
+def resolve_coco_file_name(img_path: str, by_file: dict) -> str:
+    """resolve_coco_file_name(img_path,by_file) -> str: Find COCO file_name key matching img_path via suffix or unique basename."""
+    p = Path(str(img_path)).as_posix()
+
+    # 1) Strong match: full suffix equals COCO key
+    for k in by_file.keys():
+        k_posix = Path(str(k)).as_posix()
+        if p.endswith(k_posix):
+            return str(k_posix)
+
+    # 2) Weaker match: unique basename match
+    base = Path(p).name
+    matches = [Path(str(k)).as_posix() for k in by_file.keys() if Path(str(k)).name == base]
+    if len(matches) == 1:
+        return matches[0]
+
+    raise KeyError(
+        "Image file_name not found in annotations for img_path="
+        f"{p}. Tried suffix match and basename match (matches={len(matches)})."
+    )
+
+
+def plot_whale_mask_for_img_path(img_path: str, anns_path: str, whale_category_id: int = 0, overlay: bool = True, save_path: str | None = None, show: bool = True, cache: bool = True) -> np.ndarray:
+    """plot_whale_mask_for_img_path(img_path,anns_path,whale_category_id=0,overlay=True,save_path=None,show=True,cache=True) -> np.ndarray: Load whale COCO mask for img_path and plot it; returns HxW bool mask."""
+    if anns_path is None:
+        raise ValueError("anns_path is None; cannot load COCO segmentations.")
+    if not Path(str(anns_path)).exists():
+        raise FileNotFoundError(f"COCO annotations not found: {anns_path}")
+
+    img_p = Path(str(img_path))
+    if not img_p.exists():
+        raise FileNotFoundError(f"Image not found: {img_path}")
+
+    img_rgb_uint8 = np.asarray(Image.open(img_p).convert("RGB"), dtype=np.uint8)
+
+    if cache:
+        BY_FILE, ANNS_BY_IMAGE_ID, IMAGES_BY_ID = load_coco_index_cached(str(anns_path))
+    else:
+        BY_FILE, ANNS_BY_IMAGE_ID, IMAGES_BY_ID = load_coco_index(str(anns_path))
+
+    img_file_name_for_coco = resolve_coco_file_name(str(img_path), BY_FILE)
+
+    whale_mask = get_whale_mask_for_image(
+        img_rgb_uint8=img_rgb_uint8,
+        img_file_name=img_file_name_for_coco,
+        by_file=BY_FILE,
+        anns_by_image_id=ANNS_BY_IMAGE_ID,
+        images_by_id=IMAGES_BY_ID,
+        whale_category_id=int(whale_category_id),
+    )
+
+    # Water = white (1), Whale = black (0)
+    binary_display = (~whale_mask).astype(np.uint8)
+
+    H, W = whale_mask.shape
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    # Show original image first
+    ax.imshow(img_rgb_uint8)
+
+    # Build RGBA overlay
+    overlay = np.zeros((H, W, 4), dtype=np.float32)
+
+    water_mask = ~whale_mask
+
+    # Transparent GREEN water
+    overlay[water_mask, 1] = 1.0  # Green channel
+    overlay[water_mask, 3] = 0.35  # Transparency
+
+    # Solid black whale
+    overlay[whale_mask, 0:3] = 0.0
+    overlay[whale_mask, 3] = 1.0
+
+    ax.imshow(overlay)
+
+    ax.set_title(f"Whale mask (transparent green water, black whale): {img_p.name}")
+    ax.axis("off")
+    fig.tight_layout()
+
+    if save_path is not None:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=200, bbox_inches="tight")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return whale_mask
+
 
 
 def get_whale_mask_for_image(img_rgb_uint8: np.ndarray, img_file_name: str, by_file: dict, anns_by_image_id: dict, images_by_id: dict, whale_category_id: int = 0) -> np.ndarray:
@@ -204,3 +311,18 @@ def compute_hit_mask_full(dn255_blackproj, tol=0, row_black_frac_keep=0.80, min_
         "xR_rect": xR_rect,
     }
     return mask_full, mask_raw, kept_y0, kept_y1, xL_rect, xR_rect, dbg
+
+
+
+def compute_hit_mask_old(dn255_blackproj, tol=0):
+    """Compute raw black mask from DN255 black-projection using a tolerance. Returns (mask_raw, dbg)."""
+    mask_raw = _black_mask_raw(dn255_blackproj, tol=tol)
+    H, W = mask_raw.shape
+
+    dbg = {
+        "H": H,
+        "W": W,
+        "tol": tol,
+        "black_frac": float(mask_raw.mean()) if H * W > 0 else 0.0,
+    }
+    return mask_raw, dbg

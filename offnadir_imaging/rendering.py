@@ -10,21 +10,18 @@ from PIL import Image
 from pathlib import Path
 import gc
 
-from .RTM import generate_sun_and_sky_spds
-from .create_DEM.create_dummy_DEM import get_DEM
-from .create_DEM.convert_DEM import convert_DEM
+from RTM import generate_sun_and_sky_spds
+from create_DEM.create_dummy_DEM import get_DEM
+from create_DEM.convert_DEM import convert_DEM
 
-from .functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb
-from .functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
-from .functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
-from .functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation, masked_abs_radiance, masked_percentile, masked_channel_percentiles, masked_channel_means, masked_mean, plot_radiance_timeline
-from .functions import image_utils as iu
-from .functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance, compute_hit_mask_full
+from functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb, save_off_nadir_plots, plot_radiance_timeline_show_save, run_glint_timeline, make_horizontal_timeline_image
+from functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
+from functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
+from functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation, masked_abs_radiance, masked_percentile, masked_channel_percentiles, masked_channel_means, masked_mean, plot_radiance_timeline
+from functions import image_utils as iu
+from functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance, compute_hit_mask_full, compute_hit_mask_old, plot_whale_mask_for_img_path
 
 _COCO_CACHE = {}
-
-
-
 
 def load_coco_index_cached(anns_path: str):
     """load_coco_index_cached(anns_path) -> tuple: Cache COCO index by path."""
@@ -129,7 +126,6 @@ def render_band_radiance(input_img_lin, dem_path, spd_path, sun_spd, sky_spd, sa
         "bsdf_1": specular_bsdf
     }
 
-
     to_world_sensor = mi.ScalarTransform4f().look_at(
         origin=satellite_local,
         target=target_local,
@@ -204,13 +200,14 @@ def render_projected_texture(input_img, dem_path, satellite_local, target_local,
     scene_mirror = mi.ScalarTransform4f().scale([-1, 1, 1])
     to_world_scene = scene_rotation @ scene_mirror
 
+    H, W = input_img.shape[:2]
+
     texture = {
         "type": "bitmap",
         "data": mi.TensorXf(np.asarray(input_img, dtype=np.float32)),
-
         "filter_type": "nearest",
         "wrap_mode": "clamp",
-        "raw": True
+        "raw": True,
     }
 
     brdf = {
@@ -247,7 +244,7 @@ def render_projected_texture(input_img, dem_path, satellite_local, target_local,
                 "width": sensor_characteristics['resolution'],
                 "height": sensor_characteristics['resolution'],
                 "rfilter": {"type": "box"},
-                "sample_border": False,
+                "sample_border": True,
                 "compensate": True
             },
 
@@ -327,8 +324,6 @@ def render_rgb_with_optional_glint(img_refl, dem_path, band_data, sun_spd_path, 
     DN255_rgb = iu.linear_to_DN255(rgb_lin)
 
     return (DN255_rgb, radiance_rgb if return_linear else None, scale)
-
-
 
 
 def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon, satellite_alt, target_lat, target_lon, target_alt, datetime_utc, sensor_characteristics, wave_properties, bools, dem_seed):
@@ -600,17 +595,16 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         radiance_disp_no_glint[~black_mask_full] = 0
         radiance_disp_final[~black_mask_full] = 0
 
-        if bools['print_values'] == True:
-            print("DN255_black min/max:", DN255_black.min(), DN255_black.max())
-            print("fraction black (raw):", np.mean(np.linalg.norm(DN255_black.astype(np.float32), axis=2) <= 2.0))
-
         # --- BOA reflectance (use in-band integrated convention) ---
         rho_no_glint = iu.radiance_rgb_to_toa_reflectance(radiance_no_glint, band_data, sun_spd, cos_theta_s, d_au=1.0, eps=1e-12)
         rho_no_glint[~black_mask_full] = 0.0
 
-        rho_final = iu.radiance_rgb_to_toa_reflectance(radiance_final, band_data, sun_spd, cos_theta_s,  d_au=1.0, eps=1e-12)
+        rho_final = iu.radiance_rgb_to_toa_reflectance(radiance_final, band_data, sun_spd, cos_theta_s, d_au=1.0, eps=1e-12)
         rho_final[~black_mask_full] = 0.0
 
+        if bools['print_values'] == True:
+            print("DN255_black min/max:", DN255_black.min(), DN255_black.max())
+            print("fraction black (raw):", np.mean(np.linalg.norm(DN255_black.astype(np.float32), axis=2) <= 2.0))
 
         print(f"Reflectance min/max: {np.min(rho_final):.3f} / {np.max(rho_final):.3f}")
 
@@ -620,15 +614,39 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         rho_disp_final = np.clip(rho_final / (p + 1e-12), 0.0, 1.0)
 
         if bools['plot_result'] == True:
+            _ = plot_whale_mask_for_img_path(
+                img_path=img_path,
+                anns_path=anns_path,
+                overlay=True,
+                save_path="dataset/utils_images/whale_mask_overlay.png",
+                show=True,
+                cache=True,
+            )
 
             fig = plt.figure(figsize=(22, 8))
             fig.add_subplot(1, 5, 1).imshow(img_rgb);
             plt.axis('off'); plt.title('original PNG')
             fig.add_subplot(1, 5, 2).imshow(texture_disp); plt.axis('off'); plt.title('reproject (constant light)')
             fig.add_subplot(1, 5, 3).imshow(radiance_disp_final); plt.axis('off'); plt.title('Radiance (glint)')
-            fig.add_subplot(1, 5, 4).imshow(rho_disp_no_glint); plt.axis('off'); plt.title('Radiance (no glint)')
+            fig.add_subplot(1, 5, 4).imshow(rho_disp_no_glint); plt.axis('off'); plt.title('Reflectance (no glint)')
             fig.add_subplot(1, 5, 5).imshow(rho_disp_final); plt.axis('off'); plt.title('Reflectance (glint)')
             plt.show()
+
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            output_dir = os.path.join(script_dir, "test")
+
+            save_off_nadir_plots(
+                img_rgb,
+                texture_disp,
+                radiance_disp_final,
+                rho_disp_no_glint,
+                rho_disp_final,
+                output_dir=output_dir,
+                tag=f"{offnadir_deg}deg"
+            )
+
+
+
 
     else:
 
@@ -666,6 +684,8 @@ if __name__ == "__main__":
     from settings import *
 
     bools["plot_result"] = False
+    bools["max_glint"] = True
+    bools['plot_3d'] = True
 
     THIS_DIR = Path(__file__).resolve().parent
     PROJECT_ROOT = THIS_DIR.parent
@@ -679,8 +699,8 @@ if __name__ == "__main__":
     outdir = THIS_DIR / "images"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    hour_lst = np.arange(4, 22, 1)
-    minute_lst = [0, 15, 30, 45]
+    hour_lst = np.arange(4, 22, 3)
+    minute_lst = [0]
 
     sat_lat, sat_lon, sat_alt = 58.0, 0.0, 617000.0
     tgt_lat, tgt_lon, tgt_alt = 53.0, 0.0, 0.0
@@ -690,78 +710,26 @@ if __name__ == "__main__":
     p95_abs_rad_lst, mean_abs_rad_lst = [], []
     datetime_lst = []
 
-    for hour in hour_lst:
-        for minute in minute_lst:
-
-            bools["max_glint"] = True
-
-            dt = datetime(2025, 6, 11, int(hour), int(minute), 0, tzinfo=timezone.utc)
-
-            texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg = generate_image(
-                img_path, anns_path, satellite,
-                sat_lat, sat_lon, sat_alt,
-                tgt_lat, tgt_lon, tgt_alt,
-                dt, sensor_characteristics, wave_properties, bools, seed_dem
-            )
-
-            if radiance_final is None or radiance_disp_final is None or black_mask_full is None:
-                continue
-
-            mask = black_mask_full.astype(bool)
-            if np.count_nonzero(mask) == 0:
-                continue
-
-            abs_rad = np.sqrt(np.sum(np.square(radiance_final.astype(np.float64)), axis=2))
-            vals = abs_rad[mask]
-            if vals.size == 0 or float(np.max(vals)) <= 1e-12:
-                continue
-
-            save_path_img = outdir / f"{hour}-{minute}h.png"
-            Image.fromarray(np.clip(radiance_disp_final, 0, 255).astype(np.uint8)).save(save_path_img)
-
-            p95_abs_rad_lst.append(masked_percentile(abs_rad, mask, 95.0))
-            p95_R, p95_G, p95_B = masked_channel_percentiles(radiance_final, mask, 95.0)
-            p95_rad_lst_R.append(p95_R)
-            p95_rad_lst_G.append(p95_G)
-            p95_rad_lst_B.append(p95_B)
-
-            mean_abs_rad_lst.append(masked_mean(abs_rad, mask))
-            mR, mG, mB = masked_channel_means(radiance_final, mask)
-            mean_rad_lst_R.append(mR)
-            mean_rad_lst_G.append(mG)
-            mean_rad_lst_B.append(mB)
-
-            datetime_lst.append(dt)
-
-            print(f"Saved image for {hour}:{minute:02d}h -> {save_path_img}")
-            print("Max glint (masked abs):", float(np.max(vals)))
-
-    plot_radiance_timeline(
-        datetime_lst=datetime_lst,
-        series=[p95_rad_lst_R, p95_rad_lst_G, p95_rad_lst_B],
-        labels=["Red (p95)", "Green (p95)", "Blue (p95)"],
-        styles=["r", "g", "b"],
-        ylabel=r"Radiance [W m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
-        title="95th percentile band radiance (masked)",
-        save_path=outdir / "radiance_timeline_rgb_p95.png"
-    )
-
-    plot_radiance_timeline(
-        datetime_lst=datetime_lst,
-        series=[mean_rad_lst_R, mean_rad_lst_G, mean_rad_lst_B],
-        labels=["Red (mean)", "Green (mean)", "Blue (mean)"],
-        styles=["r--", "g--", "b--"],
-        ylabel=r"Radiance [W m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
-        title="Mean band radiance (masked)",
-        save_path=outdir / "radiance_timeline_rgb_mean.png"
-    )
-
-    plot_radiance_timeline(
-        datetime_lst=datetime_lst,
-        series=[p95_abs_rad_lst, mean_abs_rad_lst],
-        labels=["‖L‖ p95", "‖L‖ mean"],
-        styles=["k", "k--"],
-        ylabel=r"Radiance [W m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
-        title="Absolute radiance over time (masked)",
-        save_path=outdir / "radiance_timeline_abs_p95_mean.png"
+    results = run_glint_timeline(
+        img_path=img_path,
+        anns_path=anns_path,
+        satellite=satellite,
+        sat_lat=sat_lat, sat_lon=sat_lon, sat_alt=sat_alt,
+        tgt_lat=tgt_lat, tgt_lon=tgt_lon, tgt_alt=tgt_alt,
+        sensor_characteristics=sensor_characteristics,
+        wave_properties=wave_properties,
+        bools=bools,
+        seed_dem=seed_dem,
+        outdir=outdir,
+        hours=hour_lst,
+        minutes=minute_lst,
+        generate_image_fn=generate_image,
+        masked_percentile_fn=masked_percentile,
+        masked_channel_percentiles_fn=masked_channel_percentiles,
+        masked_mean_fn=masked_mean,
+        masked_channel_means_fn=masked_channel_means,
+        image_prefix="",
+        save_images=True,
+        show=True,
+        date_ymd=(2025, 6, 21),
     )

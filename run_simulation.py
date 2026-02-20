@@ -57,7 +57,7 @@ verbose = False
 if real_run:
     show_constellation = False
     show_orbits = False
-    plot_propagation, uhd = True, True
+    plot_propagation, uhd = False, False
     plot_footprints = True
     plot_whale_trajectories = False
 
@@ -679,7 +679,8 @@ while elapsed_seconds <= sim_duration_seconds:
                     if np.allclose(att_models_dict[actor.name]._actor_attitude_deg,  att_models_dict[actor.name]._target_attitude_deg,  atol=0.1) and np.any(np.abs(att_models_dict[actor.name]._actor_angular_velocity)) <= 0.01 and np.any(np.abs(att_models_dict[actor.name]._actor_angular_acceleration) <= 0.01):
                         att_models_dict[actor.name].slew_active = False
                         current_eul = att_models_dict[actor.name]._actor_attitude_deg
-                        print(f"!! {actor.name}: Completed move to roll, pitch, yaw {current_eul[0]:.1f}, {current_eul[1]:.1f}, {current_eul[2]:.1f} deg")
+                        offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(current_eul)
+                        print(f"!! {actor.name}: Completed move to roll, pitch, yaw {current_eul[0]:.1f}, {current_eul[1]:.1f}, {current_eul[2]:.1f} deg | Off-nadir {offnadir_cue_current:.2f} deg")
 
 
                         eo_tools_dict[actor.name].slew_stab_time = att_models_dict[actor.name].delay_slew_stab
@@ -720,7 +721,17 @@ while elapsed_seconds <= sim_duration_seconds:
                 # CUE OBSERVATION
                 if in_footprint and whale.state_observing != 2 and offnadir_cue_deg <= (offnadir_limit + offnadir_margin):
 
-                    print(f"!! {actor.name}: Observed Target {whale_idx} at off-nadir {offnadir_cue_deg:.1f} deg")
+                    print(f"!! {actor.name}: Observed Target {whale_idx} at off-nadir {offnadir_cue_deg:.2f} deg")
+
+                    # at observation time t_datetime
+                    eul = att_models_dict[actor.name]._actor_attitude_deg
+                    off_bore, bore_lvlh = att_models_dict[actor.name].offnadir_from_euler(eul)
+
+                    los_lvlh, off_los = eo_tools_dict[actor.name].point_to_target_unbounded(r_vec, v_vec, target_coord, t_datetime, frame="LVLH")
+
+                    mispoint_deg = np.degrees(np.arccos(np.clip(np.dot(bore_lvlh, los_lvlh), -1.0, 1.0)))
+
+                    print(f"Boresight off-nadir: {off_bore:.2f} deg | Target LOS off-nadir: {off_los:.2f} deg | Mispoint: {mispoint_deg:.2f} deg")
 
                     whale.cue_actor = actor.name
                     whale.t_observed_cue = t_datetime
@@ -753,7 +764,7 @@ while elapsed_seconds <= sim_duration_seconds:
                     if create_image:
 
                         print("Generate image")
-                        DN255_texture, DN255_no_glint, DN255_glint2, radiance_glint, rho_glint, rho_disp, black_mask_full, scale, offnadir_deg_new = generate_image(img_path, anns_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1], target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
+                        texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg_new = generate_image(img_path, anns_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1], target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
 
                         print(f"Old off nadir:{offnadir_cue_deg:.2f} deg")
                         print(f"New off nadir:{offnadir_deg_new:.2f} deg")
@@ -834,8 +845,6 @@ while elapsed_seconds <= sim_duration_seconds:
 
                         else:
                             latency_confirmation = None
-
-
 
                         print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted} (actual={whale.ai_class_true})")
 

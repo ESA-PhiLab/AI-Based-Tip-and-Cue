@@ -112,9 +112,9 @@ def generate_sun_and_sky_spds(datetime_utc: datetime,
 
     if plot_spd:
         plt.figure(figsize=(8, 5))
-        plt.plot(wl / 1000.0, e_dif_h, label="Diffuse horizontal irradiance (E_dif, sky)")
-        plt.plot(wl / 1000.0, e_dir, label="Direct normal irradiance (E_dir,n, sun)")
-        plt.xlabel("Wavelength [µm]")
+        plt.plot(wl, e_dif_h, label="Diffuse horizontal irradiance (E_dif, sky)")
+        plt.plot(wl, e_dir, label="Direct normal irradiance (E_dir,n, sun)")
+        plt.xlabel("Wavelength [nm]")
         plt.ylabel("Spectral Irradiance [W m⁻² nm⁻¹]")
         plt.grid(True)
         plt.legend()
@@ -143,7 +143,7 @@ if __name__ == "__main__":
             target_alt_m=alt_m,
             out_sun_spd=sun_spd,
             out_sky_spd=sky_spd,
-            wavelength_range=(250.0, 1000.0),
+            wavelength_range=(250.0, 2000.0),
             timezone_offset=0,
             material="Water",
             plot_spd=True
@@ -154,3 +154,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"SMARTS failed: {repr(e)}")
         print("Deleted any pre-existing SPD outputs to avoid stale spectra.")
+
+
+
+    # https://www.imgonline.com.ua/eng/cut-photo-into-pieces.php

@@ -543,7 +543,7 @@ def run_dataset(n_runs: int,
 def main() -> None:
     """main() -> None: Configure and run dataset generation."""
 
-    GENERATED_ROOT_REL = "0_whales"
+    GENERATED_ROOT_REL = "test"
 
     render_resolution = 64  # 64 * 2
 
@@ -578,7 +578,7 @@ def main() -> None:
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
-        "mode_single": "full",
+        "mode_single": "ocean",
         "mode_multiple_allow_partial": False,
         "window_size": 64,
         "nowhale_max_fraction": 0.10,

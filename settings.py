@@ -235,14 +235,13 @@ wind_speed = 7.5  # m/s
 num_waves = 50
 
 
-
 if flat_dem:
     wave_min = 0.0  # m
     wave_max = 0.0  # m
 
 else:
     wave_min = 0.05  # m
-    wave_max = 0.5  # m
+    wave_max = 0.5 # m
 
 # ================================================================================
 # DICTIONARIES

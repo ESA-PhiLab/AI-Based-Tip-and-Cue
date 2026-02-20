@@ -19,7 +19,7 @@ def make_waves(X, Y, num_waves=50, wave_min=0.05, wave_max=0.3):
         ky = np.sin(angle) * 2 * np.pi / wavelength
         phase = np.random.uniform(0, 2 * np.pi)
 
-        Z += amplitude * np.sin(kx * X + ky * Y + phase)
+        Z += amplitude * np.cos(kx * X + ky * Y + phase)
 
     # Normalize to [0, 1] and rescale
     Z = Z - Z.min()
@@ -102,17 +102,20 @@ def get_DEM(input_path, output_path, GSD, wave_properties, random_seed, waves, c
 
 if __name__ == "__main__":
 
-    random_seed = 42
+    random_seed = 10
 
     GSD = 0.37  # m/pixel
 
     from settings import wave_properties
+    wave_properties['plot_DEM'] = True
 
     waves = True
     curvature = True
 
     img_path = "input_img_WV.PNG"
     dem_path = "input_dem_WV_new.tiff"
+
+
 
     get_DEM(img_path, dem_path, GSD, wave_properties, random_seed=random_seed, waves=True, curvature=True, plot_DEM=True)
     print(f"Saved synthetic DEM to {dem_path}\n")

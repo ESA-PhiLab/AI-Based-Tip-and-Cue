@@ -72,6 +72,9 @@ def offnadir_satellite_rad(sat_ecef, tgt_ecef) -> float:
 
 
 
+
+
+
 def is_dark_from_sun_dir(target_ecef, sun_ecef, *,
                      threshold_deg=-18.0,   # apparent horizon (~sunrise/sunset)
                      model="spherical",      # "spherical" or "wgs84"

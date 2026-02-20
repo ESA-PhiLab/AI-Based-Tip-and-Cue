@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 
 # ----------- USER SETTINGS -----------
 TABLE_IMAGE = None  # e.g., r"C:\path\to\WV3_table.png"  (set to None to skip OCR and use fallback)
-OUTPUT_DIR = r"./wv3_spd_output"
+OUTPUT_DIR = r"./generated_output"
 CURVE_SHAPE = "hann"   # one of: "triangle", "hann", "gaussian"
 POINTS_PER_BAND = 1500  # output density per band (>=100 is fine; 1000+ captures subtle shape)
 RGB_ONLY = False        # True -> only make Blue/Green/Red .spd files

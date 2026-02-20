@@ -126,9 +126,9 @@ def convert_DEM(img_path, dem_path, obj_output_path, GSD, scale_km = True, print
 if __name__ == "__main__":
 
     # === CONFIGURATION ===
-    dem_path = 'input_dem_WV.tiff'
+    dem_path = 'input_dem_WV_new.tiff'
     img_path = 'input_img_WV.PNG'
-    obj_path = "dem_mesh_WV.obj"
+    obj_path = "dem_mesh_WV_new.obj"
 
     GSD = 0.37  # meters per pixel
 
