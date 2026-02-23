@@ -7,21 +7,19 @@ from typing import Any, List, Tuple
 
 from PIL import Image, ImageDraw
 
-
 # =======================
-# CONFIG – EDIT THESE
+# CONFIG
 # =======================
-
-RESULTS_DIR = Path("results/default_model_S")
-IMG_ROOT = Path("data/0_merged/reflection_offnadir_glint_255")
 
 MODEL = "final"          # "final" or "fold1"
 SPLIT = "validation"     # "validation" or "test"
-IMAGE_ID = 12
 
-SCORE_THRESHOLD = 0.3
+SCORE_THRESHOLD = 0.4
 MAX_PREDS = 50
 IOU_THRESHOLD = 0.5
+
+USE_OVERVIEW_PREDICTIONS = False
+OVERVIEW_TAG = "FINAL"
 
 # =======================
 
@@ -33,138 +31,176 @@ def read_json(path: Path) -> Any:
 
 def xywh_to_xyxy(b: List[float]) -> Tuple[float, float, float, float]:
     """xywh_to_xyxy(b) -> (x1,y1,x2,y2)."""
-    x, y, w, h = b
+    x, y, w, h = [float(v) for v in b]
     return x, y, x + w, y + h
 
 
-def iou(boxA, boxB) -> float:
-    """iou(boxA, boxB) -> float: IoU of two xyxy boxes."""
-    xA = max(boxA[0], boxB[0])
-    yA = max(boxA[1], boxB[1])
-    xB = min(boxA[2], boxB[2])
-    yB = min(boxA[3], boxB[3])
+def iou(a, b) -> float:
+    """iou(a, b) -> float: IoU of two xyxy boxes."""
+    x1 = max(a[0], b[0])
+    y1 = max(a[1], b[1])
+    x2 = min(a[2], b[2])
+    y2 = min(a[3], b[3])
+    iw = max(0.0, x2 - x1)
+    ih = max(0.0, y2 - y1)
+    inter = iw * ih
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    union = area_a + area_b - inter
+    return (inter / union) if union > 0 else 0.0
 
-    interW = max(0, xB - xA)
-    interH = max(0, yB - yA)
-    interArea = interW * interH
 
-    areaA = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
-    areaB = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+def draw_box(draw: ImageDraw.ImageDraw, box, color, width: int) -> None:
+    """draw_box(draw, box, color, width) -> None."""
+    x1, y1, x2, y2 = box
+    for i in range(int(width)):
+        draw.rectangle([x1 - i, y1 - i, x2 + i, y2 + i], outline=color)
 
-    union = areaA + areaB - interArea
-    if union <= 0:
-        return 0.0
-    return interArea / union
+
+def resolve_repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def resolve_results_dir(repo_root: Path) -> Path:
+    p = repo_root / "results" / "default_model_S"
+    if not p.exists():
+        raise RuntimeError(f"RESULTS_DIR not found: {p}")
+    return p
+
+
+def resolve_img_root(repo_root: Path) -> Path:
+    p = repo_root / "data" / "0_merged" / "reflection_offnadir_glint_255"
+    if not p.exists():
+        raise RuntimeError(f"IMG_ROOT not found: {p}")
+    return p
 
 
 def resolve_model_dir(results_dir: Path, model: str) -> Path:
-    """Resolve final_location_holdout or foldX directory."""
-    if model == "final":
-        return results_dir / "final_location_holdout"
-    return results_dir / "cross_validation" / model
-
-
-def resolve_pred_path(model_dir: Path, split: str) -> Path:
-    """Find predictions_coco.json."""
-    p = model_dir / "metrics" / split / "predictions_coco.json"
-    if p.exists():
-        return p
-
-    # fallback rank0
-    p = model_dir / "metrics" / split / "predictions_coco.json.rank0.json"
-    if p.exists():
-        return p
-
-    raise RuntimeError("predictions file not found")
+    if model.lower() == "final":
+        p = results_dir / "final_location_holdout"
+    else:
+        p = results_dir / "cross_validation" / model
+    if not p.exists():
+        raise RuntimeError(f"model dir not found: {p}")
+    return p
 
 
 def resolve_ann_path(results_dir: Path, model_dir: Path, split: str) -> Path:
-    """Find correct annotation JSON."""
     if split == "validation":
-        return model_dir / "splits" / "instances_val.json"
-
+        p = model_dir / "splits" / "instances_val.json"
+        if p.exists():
+            return p
     if split == "test":
         p = results_dir / "test_holdout_only.json"
         if p.exists():
             return p
-
-    raise RuntimeError("annotation file not found")
-
-
-def draw_box(draw: ImageDraw.ImageDraw, box, color, width=3):
-    """Draw rectangle."""
-    x1, y1, x2, y2 = box
-    for i in range(width):
-        draw.rectangle([x1 - i, y1 - i, x2 + i, y2 + i], outline=color)
+    raise RuntimeError("Annotation file not found.")
 
 
-def main():
-    results_dir = RESULTS_DIR.resolve()
-    img_root = IMG_ROOT.resolve()
+def resolve_pred_path(results_dir: Path, model_dir: Path, split: str) -> Path:
+    if USE_OVERVIEW_PREDICTIONS:
+        p = results_dir / "overview" / split / "predictions" / f"{OVERVIEW_TAG}_predictions_coco.json"
+        if p.exists():
+            return p
+
+    p = model_dir / "metrics" / split / "predictions_coco.json"
+    if p.exists():
+        return p
+
+    eval_dir = model_dir / ("eval_val" if split == "validation" else "eval_test") / "eval_data"
+    p2 = eval_dir / "predictions_coco.json"
+    if p2.exists():
+        return p2
+
+    raise RuntimeError("predictions file not found")
+
+
+def figures_dir() -> Path:
+    base = Path(__file__).resolve().parent / "figures"
+    out = base / f"{MODEL}_{SPLIT}"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def main() -> None:
+    repo_root = resolve_repo_root()
+    results_dir = resolve_results_dir(repo_root)
+    img_root = resolve_img_root(repo_root)
 
     model_dir = resolve_model_dir(results_dir, MODEL)
-    pred_path = resolve_pred_path(model_dir, SPLIT)
     ann_path = resolve_ann_path(results_dir, model_dir, SPLIT)
+    pred_path = resolve_pred_path(results_dir, model_dir, SPLIT)
 
     coco = read_json(ann_path)
     preds = read_json(pred_path)
 
-    id_to_file = {int(im["id"]): im["file_name"] for im in coco["images"]}
-    file_name = id_to_file.get(int(IMAGE_ID))
-    if not file_name:
-        raise RuntimeError("image_id not found")
+    images = coco.get("images", [])
+    annotations = coco.get("annotations", [])
 
-    img_path = img_root / file_name
-    image = Image.open(img_path).convert("RGB")
-    draw = ImageDraw.Draw(image)
+    id_to_file = {int(im["id"]): im["file_name"] for im in images}
 
-    # Collect GT
-    gt_boxes = []
-    for a in coco["annotations"]:
-        if int(a["image_id"]) == IMAGE_ID:
-            gt_boxes.append(xywh_to_xyxy(a["bbox"]))
+    out_dir = figures_dir()
 
-    # Collect predictions
-    pred_boxes = []
-    for p in preds:
-        if int(p["image_id"]) == IMAGE_ID and p["score"] >= SCORE_THRESHOLD:
-            pred_boxes.append((p["score"], xywh_to_xyxy(p["bbox"])))
+    print(f"Processing {len(images)} images...")
 
-    pred_boxes.sort(key=lambda x: x[0], reverse=True)
-    pred_boxes = pred_boxes[:MAX_PREDS]
+    for idx, im_info in enumerate(images):
+        image_id = int(im_info["id"])
+        file_name = im_info["file_name"]
+        img_path = img_root / file_name
 
-    # IoU matching (greedy)
-    matched_gt = set()
+        if not img_path.exists():
+            print(f"[{idx}] Missing image file: {img_path}")
+            continue
 
-    for score, pb in pred_boxes:
-        best_iou = 0.0
-        best_gt_idx = -1
+        gt_boxes = [
+            xywh_to_xyxy(a["bbox"])
+            for a in annotations
+            if int(a.get("image_id")) == image_id
+        ]
 
-        for i, gb in enumerate(gt_boxes):
-            if i in matched_gt:
-                continue
-            v = iou(pb, gb)
-            if v > best_iou:
-                best_iou = v
-                best_gt_idx = i
+        pred_boxes = []
+        for p in preds:
+            if int(p.get("image_id")) == image_id:
+                sc = float(p.get("score", 0.0))
+                if sc >= SCORE_THRESHOLD:
+                    pred_boxes.append((sc, xywh_to_xyxy(p["bbox"])))
 
-        if best_iou >= IOU_THRESHOLD:
-            matched_gt.add(best_gt_idx)
-            draw_box(draw, pb, "blue", width=3)   # TP
-        else:
-            draw_box(draw, pb, "red", width=2)    # FP
+        pred_boxes.sort(key=lambda t: t[0], reverse=True)
+        pred_boxes = pred_boxes[:MAX_PREDS]
 
-        x1, y1, _, _ = pb
-        draw.text((x1 + 2, y1 + 2), f"{score:.2f}", fill="white")
+        im = Image.open(img_path).convert("RGB")
+        draw = ImageDraw.Draw(im)
 
-    # Draw GT
-    for gb in gt_boxes:
-        draw_box(draw, gb, "green", width=4)
+        matched_gt = set()
 
-    out_path = pred_path.parent / f"overlay_{MODEL}_{SPLIT}_image{IMAGE_ID}.png"
-    image.save(out_path)
+        # 1) Draw all ground truth first (background layer)
+        for gb in gt_boxes:
+            draw_box(draw, gb, "green", 4)
 
-    print("WROTE:", out_path)
+        # 2) Then draw predictions on top
+        for sc, pb in pred_boxes:
+            best_i = -1
+            best = 0.0
+            for i, gb in enumerate(gt_boxes):
+                if i in matched_gt:
+                    continue
+                v = iou(pb, gb)
+                if v > best:
+                    best = v
+                    best_i = i
+
+            if best >= IOU_THRESHOLD and best_i >= 0:
+                matched_gt.add(best_i)
+                draw_box(draw, pb, "blue", 2)  # TP on top
+            else:
+                draw_box(draw, pb, "red", 2)  # FP on top
+
+        out_path = out_dir / f"image_{image_id}.png"
+        im.save(out_path)
+
+        print(f"[{idx+1}/{len(images)}] saved: {out_path.name}")
+
+    print("Done.")
 
 
 if __name__ == "__main__":

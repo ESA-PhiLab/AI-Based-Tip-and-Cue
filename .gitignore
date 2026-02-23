@@ -69,7 +69,8 @@ notes.txt
 # Ignore full DEIM repository
 # --------------------------------------------------
 onboard_ai/DEIMv2-main/*
-onboard_ai/DEIMv2-main/engine/
+!onboard_ai/DEIMv2-main/engine/
+onboard_ai/DEIMv2-main/engine/*
 !onboard_ai/DEIMv2-main/tools/
 onboard_ai/DEIMv2-main/tools/*
 
@@ -85,3 +86,6 @@ onboard_ai/DEIMv2-main/tools/*
 !onboard_ai/DEIMv2-main/tools/visualize_result.py
 !onboard_ai/DEIMv2-main/tools/main
 !onboard_ai/DEIMv2-main/tools/main_local
+
+!onboard_ai/DEIMv2-main/engine/solver/det_solver.py
+!onboard_ai/DEIMv2-main/engine/solver/det_solver.py
