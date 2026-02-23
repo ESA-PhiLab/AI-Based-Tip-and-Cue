@@ -193,7 +193,7 @@ def load_band_center_wavelengths(metadata_json: Path) -> dict[str, float]:
 
 def choose_rgb_bands_from_wavelengths(center_wavelengths_nm: dict[str, float], tiff_band_count: int) -> tuple[int, int, int]:
     """Choose (R,G,B) 1-based band indices by nearest wavelength to 665/560/490 nm."""
-    targets = {"B": 490.0, "G": 560.0, "R": 665.0}
+    targets = {"B": 481.9, "G": 547.1, "R": 660.1}
 
     entries: list[tuple[int, float]] = []
     for name, wl in center_wavelengths_nm.items():

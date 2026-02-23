@@ -254,16 +254,19 @@ class AttitudeModel:
     # Initialization helpers
     # -------------------------------------------------------------------------
     def _update_initial_vectors(self):
+        """Initialize derived vectors in IRF consistently from BRF state."""
         t = self._actor.local_time
-        r = np.array(self._actor.get_position(t))
-        v = np.array(self._actor.get_position_velocity(t)[1])
+        r = np.asarray(self._actor.get_position(t), float).reshape(3)
+        v = np.asarray(self._actor.get_position_velocity(t)[1], float).reshape(3)
+        eul = np.asarray(self._actor_attitude_deg, float).reshape(3)
 
-        self._actor_pointing_vector_eci = LVLH2IRF(
-            self._actor_pointing_vector_body, r, v
-        )
-        self._actor_angular_velocity_eci = LVLH2IRF(
-            self._actor_angular_velocity, r, v
-        )
+        # Pointing vector is defined in BRF -> convert to IRF using current attitude
+        self._actor_pointing_vector_eci = BRF2IRF_eul(self._actor_pointing_vector_body, r, v, eul)
+
+        # Angular velocity is stored in BRF (consistent with rigid-body dynamics)
+        self._actor_angular_velocity_eci = BRF2IRF_eul(self._actor_angular_velocity, r, v, eul)
+
+
 
     # -------------------------------------------------------------------------
     # Disturbances
@@ -320,30 +323,58 @@ class AttitudeModel:
         p = BRF2IRF_eul(self._actor_pointing_vector_body, r, v, [roll, pitch, yaw])
         return x, y, z, p
 
+    def _body_axes_in_irf(self):
+        """Return BRF axes expressed in IRF (columns of BRF->IRF rotation)."""
+        roll, pitch, yaw = self._actor_attitude_deg
+        t = self._actor.local_time
+        r = np.asarray(self._actor.get_position(t), float).reshape(3)
+        v = np.asarray(self._actor.get_position_velocity(t)[1], float).reshape(3)
+        eul = np.asarray([roll, pitch, yaw], float)
+
+        x_irf = BRF2IRF_eul([1.0, 0.0, 0.0], r, v, eul)
+        y_irf = BRF2IRF_eul([0.0, 1.0, 0.0], r, v, eul)
+        z_irf = BRF2IRF_eul([0.0, 0.0, 1.0], r, v, eul)
+        p_irf = BRF2IRF_eul(self._actor_pointing_vector_body, r, v, eul)
+        return x_irf, y_irf, z_irf, p_irf
+
+
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
     def update_attitude(self, dt):
-        """Advance the attitude by dt seconds under disturbance torques."""
+        """Advance attitude by dt seconds under disturbance torques (rigid-body in BRF, attitude in IRF)."""
         t = self._actor.local_time
-        r = np.array(self._actor.get_position(t))
-        r_next = np.array(self._actor.get_position(pk.epoch(t.mjd2000 + dt * pk.SEC2DAY, "mjd2000")))
-        v = np.array(self._actor.get_position_velocity(t)[1])
+        r = np.asarray(self._actor.get_position(t), float).reshape(3)
+        v = np.asarray(self._actor.get_position_velocity(t)[1], float).reshape(3)
 
-        xb, yb, zb, pb = self._body_axes_in_lvlh()
+        # Next orbit state (for Euler extraction relative to LVLH at t+dt)
+        t_next = pk.epoch(t.mjd2000 + float(dt) * pk.SEC2DAY, "mjd2000")
+        r_next = np.asarray(self._actor.get_position(t_next), float).reshape(3)
+        v_next = np.asarray(self._actor.get_position_velocity(t)[1], float).reshape(3)  # keep consistent with your actor API
 
-        theta_frame = self._frame_rotation(r, r_next, v)
-        theta_body = self._body_rotation(dt)
+        # BRF axes in IRF at current time
+        xb, yb, zb, pb = self._body_axes_in_irf()
 
-        xb, yb, zb, pb = rotate_body_vectors(xb, yb, zb, pb, theta_frame)
-        theta_body = rodrigues_rotation(theta_body, theta_frame)
-        xb, yb, zb, pb = rotate_body_vectors(xb, yb, zb, pb, theta_body)
+        # --- Rigid-body dynamics in BRF ---
+        self._calculate_angular_acceleration()
+        self._actor_angular_velocity = self._actor_angular_velocity + self._actor_angular_acceleration * float(dt)  # BRF components
 
-        # Extract updated Euler angles (deg)
-        self._actor_attitude_deg = get_rpy_angles_brf(xb, yb, zb, r_next, v)
+        # Convert incremental rotation (BRF components) to IRF rotation vector:
+        # omega_irf = xb*wx + yb*wy + zb*wz
+        w_brf = np.asarray(self._actor_angular_velocity, float).reshape(3)
+        omega_irf = xb * w_brf[0] + yb * w_brf[1] + zb * w_brf[2]
+        theta_body_irf = omega_irf * float(dt)  # axis*angle (small-angle integration)
 
-        self._actor_angular_velocity_eci = LVLH2IRF(self._actor_angular_velocity, r_next, v)
-        self._actor_pointing_vector_eci = LVLH2IRF(pb, r_next, v)
+        # Rotate body axes and pointing vector in IRF
+        xb, yb, zb, pb = rotate_body_vectors(xb, yb, zb, pb, theta_body_irf)
+
+        # Extract updated Euler angles for LVLH->BRF at t+dt
+        self._actor_attitude_deg = get_rpy_angles_brf(xb, yb, zb, r_next, v_next)
+
+        # Update derived vectors in IRF
+        eul_next = np.asarray(self._actor_attitude_deg, float).reshape(3)
+        self._actor_angular_velocity_eci = BRF2IRF_eul(self._actor_angular_velocity, r_next, v_next, eul_next)
+        self._actor_pointing_vector_eci = pb
 
     def set_target_euler(self, target_eul_deg):
         """Set desired Euler angles [deg]."""

@@ -5,9 +5,13 @@ import numpy as np
 from PIL import Image
 import rasterio
 
+
+
 from settings import *
 from offnadir_imaging.rendering import generate_image
 from offnadir_imaging.functions.get_satellite_data import get_band_data
+
+from read_image_L1_gamma import plot_and_save_all
 
 from read_image_L1_full import (
     find_product_files,
@@ -145,6 +149,29 @@ def print_diff(a: dict, b: dict) -> None:
         parts = [f"Δ{k}={db[k]-da[k]:+.4f}" for k in keys]
         print(f"{ch}: " + "  ".join(parts))
 
+def print_factor(a: dict, b: dict) -> None:
+    """print_factor(a,b) -> None: Print (generated / original) multiplicative factors for key stats."""
+    keys = ["min", "max", "mean", "p1", "p50", "p99"]
+    print("\n--- Factor (generated / original) ---")
+
+    for ch in ["R", "G", "B"]:
+        da = a["channels"][ch]  # original
+        db = b["channels"][ch]  # generated
+
+        parts = []
+        for k in keys:
+            orig = da[k]
+            gen = db[k]
+
+            if orig == 0 or not np.isfinite(orig):
+                factor = np.nan
+            else:
+                factor = gen / orig
+
+            parts.append(f"{k}×={factor:.4f}" if np.isfinite(factor) else f"{k}×=nan")
+
+        print(f"{ch}: " + "  ".join(parts))
+
 
 def read_reflectance_rgb_from_tiff_crop(tiff_path: Path, rgb_bands_1based: tuple[int, int, int], x0: int, y0: int, crop: int) -> np.ndarray:
     """read_reflectance_rgb_from_tiff_crop(tiff_path,rgb_bands_1based,x0,y0,crop) -> np.ndarray: Read DN/10000 reflectance RGB from multiband TIFF window."""
@@ -157,6 +184,134 @@ def read_reflectance_rgb_from_tiff_crop(tiff_path: Path, rgb_bands_1based: tuple
     rgb = np.stack([r, g, b], axis=-1)
     rgb[~np.isfinite(rgb)] = 0.0
     return np.clip(rgb, 0.0, 1.5).astype(np.float32)
+
+def split_product_name(product_name: str) -> tuple[str, str]:
+    """split_product_name(product_name) -> (clean_name, product_id): Remove trailing _XXXXXXX and return it separately."""
+    base = Path(product_name).name
+    parts = base.split("_")
+    if len(parts) >= 2 and len(parts[-1]) == 8:
+        product_id = parts[-1]
+        clean = "_".join(parts[:-1])
+    else:
+        product_id = "NOID"
+        clean = base
+    return clean, product_id
+
+def print_raw_minmax(tiff_path: Path, rgb_bands_1based: tuple[int,int,int], x0:int, y0:int, crop:int):
+    """Print raw DN min/max (no scaling) for selected bands and crop window."""
+    win = rasterio.windows.Window(col_off=x0, row_off=y0, width=crop, height=crop)
+
+    with rasterio.open(tiff_path) as ds:
+        for idx, name in zip(rgb_bands_1based, ["R","G","B"]):
+            arr = ds.read(idx, window=win, masked=True)
+            data = arr.compressed().astype(np.float64)
+
+            if data.size == 0:
+                print(f"{name}: no valid pixels")
+                continue
+
+            print(
+                f"{name} RAW: "
+                f"min={data.min():.3f}  "
+                f"max={data.max():.3f}  "
+                f"mean={data.mean():.3f}"
+            )
+
+
+
+def spd_effective_bandwidth_nm(spd_path: str) -> float:
+    """spd_effective_bandwidth_nm(spd_path)->float: Effective bandwidth Δλ = ∫R(λ)dλ / max(R) (nm)."""
+    arr = np.loadtxt(spd_path, dtype=np.float64)
+    if arr.ndim != 2 or arr.shape[1] < 2:
+        raise ValueError(f"Bad SPD format: {spd_path}")
+    wl = arr[:, 0]
+    r = arr[:, 1]
+    ok = np.isfinite(wl) & np.isfinite(r)
+    wl = wl[ok]
+    r = r[ok]
+    if wl.size < 2:
+        return 0.0
+    rmax = float(np.max(r))
+    if not np.isfinite(rmax) or rmax <= 0:
+        return 0.0
+    area = float(np.trapezoid(r, wl))
+    return area / rmax
+
+
+
+def convert_generated_to_phisat_units(gen: np.ndarray, delta_nm: tuple[float, float, float], orig: np.ndarray, mask: np.ndarray | None) -> tuple[np.ndarray, dict]:
+    """convert_generated_to_phisat_units(gen,(dR,dG,dB),orig,mask)->(gen_conv,info): Pick best unit conversion so gen matches orig scale."""
+    d_nm = np.array(delta_nm, dtype=np.float64)
+    d_um = np.maximum(1e-12, d_nm / 1000.0).astype(np.float64)
+
+    # Hypothesis A: gen is band-integrated radiance (W/m^2/sr). Convert to spectral per um by dividing Δλ_um.
+    gen_A = gen.astype(np.float64) / d_um.reshape(1, 1, 3)
+
+    # Hypothesis B: gen is spectral per nm (W/m^2/sr/nm). Convert to per um by multiplying 1000.
+    gen_B = gen.astype(np.float64) * 1000.0
+
+    # Hypothesis C: already per um (no change)
+    gen_C = gen.astype(np.float64)
+
+    def score(candidate: np.ndarray) -> float:
+        m = mask.astype(bool) if mask is not None else None
+        s = 0.0
+        for i in range(3):
+            a = orig[..., i].astype(np.float64)
+            b = candidate[..., i].astype(np.float64)
+            if m is not None:
+                a = a[m]
+                b = b[m]
+            ok = np.isfinite(a) & np.isfinite(b)
+            a = a[ok]
+            b = b[ok]
+            if a.size < 100:
+                continue
+            ra = np.percentile(a, 50)
+            rb = np.percentile(b, 50)
+            if ra <= 0 or rb <= 0:
+                continue
+            ratio = rb / ra
+            s += abs(math.log(ratio))
+        return float(s)
+
+    scores = {"divide_by_dlambda_um": score(gen_A), "times_1000_nm_to_um": score(gen_B), "no_change": score(gen_C)}
+    best_key = min(scores, key=scores.get)
+    best = {"divide_by_dlambda_um": gen_A, "times_1000_nm_to_um": gen_B, "no_change": gen_C}[best_key]
+
+    info = {"chosen": best_key, "scores": scores, "delta_nm": delta_nm, "delta_um": (float(d_um[0]), float(d_um[1]), float(d_um[2]))}
+    return best.astype(np.float32), info
+
+
+def read_radiance_rgb_from_tiff_crop(tiff_path: Path, rgb_bands_1based: tuple[int, int, int], x0: int, y0: int, crop: int) -> np.ndarray:
+    """read_radiance_rgb_from_tiff_crop(tiff_path,(r,g,b),x0,y0,crop)->HxWx3: Read 3 bands from multiband TIFF window."""
+    r_b, g_b, b_b = rgb_bands_1based
+    win = rasterio.windows.Window(col_off=int(x0), row_off=int(y0), width=int(crop), height=int(crop))
+    with rasterio.open(tiff_path) as ds:
+        r = read_band_phys(ds, r_b, win)
+        g = read_band_phys(ds, g_b, win)
+        b = read_band_phys(ds, b_b, win)
+    return np.stack([r, g, b], axis=-1).astype(np.float32)
+
+
+def read_band_phys(ds: rasterio.io.DatasetReader, b: int, win: rasterio.windows.Window) -> np.ndarray:
+    """read_band_phys(ds,b,win)->array: Read band window and apply rasterio scales/offsets if present."""
+    arr = ds.read(b, window=win, masked=True).astype(np.float32).filled(np.nan)
+
+    scale = 1.0
+    offset = 0.0
+    try:
+        if ds.scales and len(ds.scales) >= b and ds.scales[b - 1] not in (None, 0):
+            scale = float(ds.scales[b - 1])
+        if ds.offsets and len(ds.offsets) >= b and ds.offsets[b - 1] is not None:
+            offset = float(ds.offsets[b - 1])
+    except Exception:
+        pass
+
+    out = arr * scale + offset
+    out[~np.isfinite(out)] = np.nan
+    return out.astype(np.float32)
+
 
 
 if __name__ == "__main__":
@@ -183,7 +338,7 @@ if __name__ == "__main__":
     bools["plot_result"] = True
 
     # wave_properties['specular_weight'] = 1.0
-    wave_properties['wind_speed'] = 3.0
+    wave_properties['wind_speed'] = 2.75
 
     # Time + GL
     t0, t1, tm = extract_acquisition_times_from_product_path(str(paths.product_dir))
@@ -206,7 +361,7 @@ if __name__ == "__main__":
             tgt_alt = 0.0
 
     # Choose PHISAT RGB bands
-    rgb_bands = (3, 2, 1)
+    rgb_bands = (3,2,1)
     if paths.metadata_json is not None:
         try:
             wl = load_band_center_wavelengths(paths.metadata_json)
@@ -245,8 +400,17 @@ if __name__ == "__main__":
     sensor_phisat = dict(sensor_characteristics)
     sensor_phisat["resolution"] = int(crop_sz)
     sensor_phisat["GSD"] = float(gsd_from_gl(extracted, gl_size=gl_size))
+    extension = split_product_name(product_name)
+
+    print("\n--- RAW INPUT VALUES (no scaling) ---")
+    print_raw_minmax(paths.bands_tiff, rgb_bands, x0, y0, crop_sz)
+
 
     print("\n--- Geometry used ---")
+    print(f"extension    : _{extension[-1]}")
+    print(f"v_wind       : {wave_properties['wind_speed']} m/s\n")
+
+
     print(f"dt           : {dt.isoformat()}")
     print(f"sat_lat/lon  : {sat_lat:.6f}, {sat_lon:.6f}")
     print(f"sat_alt (m)  : {sat_alt:.1f}")
@@ -286,7 +450,8 @@ if __name__ == "__main__":
     print_stats(orig_refl, name="ORIGINAL reflectance")
     orig_stats = reflectance_stats_rgb(orig_refl, mask=None, name="ORIGINAL (TIFF cropped)")
 
-    img_path = "C:/Users/nadine/Downloads/oceanbg3.png"
+    img_folder =    ROOT / "dataset" / "phisat-2_data"
+    img_path = os.path.join(img_folder, "Auckland_SRW_WV2_PS_20110827_B26_002042_O_nadir.PNG")
 
     # Render
     (
@@ -316,6 +481,37 @@ if __name__ == "__main__":
 
     gen_mask = black_mask_full.astype(bool) if black_mask_full is not None else None
     print_stats(rho_final.astype(np.float32), mask=gen_mask, name="GENERATED (TOA reflectance, masked)")
+
+    print_stats(radiance_final.astype(np.float32), mask=gen_mask, name="GENERATED (radiance, masked)")
+
+
+    # Build sensor dict used by your generator
+    spd_folder = ROOT / "offnadir_imaging" / "spd_files"
+    band_data = get_band_data(satellite, str(spd_folder))
+
+    delta_R = spd_effective_bandwidth_nm(band_data["red"]["spd"])
+    delta_G = spd_effective_bandwidth_nm(band_data["green"]["spd"])
+    delta_B = spd_effective_bandwidth_nm(band_data["blue"]["spd"])
+
+    # Convert generated units to best match PHI-SAT convention
+    orig = read_radiance_rgb_from_tiff_crop(paths.bands_tiff, rgb_bands, x0, y0, crop_sz)
+    radiance_conv, info = convert_generated_to_phisat_units(radiance_final.astype(np.float32), (delta_R, delta_G, delta_B), orig, gen_mask)
+
+    print_stats(radiance_conv, mask=gen_mask, name="GENERATED (radiance conv, masked)")
+
+
     gen_stats = reflectance_stats_rgb(rho_final.astype(np.float32), mask=gen_mask, name="GENERATED (TOA reflectance, masked)")
 
     print_diff(orig_stats, gen_stats)
+
+    print_factor(orig_stats, gen_stats)
+
+    # Save in script directory (where this .py file lives)
+    script_dir = Path(__file__).resolve().parent
+    output_dir = script_dir / "rgb_outputs"
+
+    print(f"Saving outputs to: {output_dir.resolve()}")
+
+
+
+    plot_and_save_all(paths.bands_tiff, rgb_bands, output_dir, extension[-1])

@@ -55,8 +55,33 @@ offnadir_imaging/create_DEM/input_dem_WV.tiff
 offnadir_imaging/create_DEM/dem_mesh_WV.obj
 offnadir_imaging/create_DEM/input_dem_PATCH.tiff
 offnadir_imaging/create_DEM/dem_mesh_PATCH.obj
-offnadir_imaging/spd_files/sky_diffuse_radiance.spd
 offnadir_imaging/spd_files/solar_direct_normal.spd
+offnadir_imaging/spd_files/sky_diffuse_radiance.spd
+offnadir_imaging/spd_files_new/*
 notes.txt
 
 /dataset/phisat-2_data/dataset/*
+/dataset/phisat-2_data/rgb_outputs/*
+
+
+
+# --------------------------------------------------
+# Ignore full DEIM repository
+# --------------------------------------------------
+onboard_ai/DEIMv2-main/*
+onboard_ai/DEIMv2-main/engine/
+!onboard_ai/DEIMv2-main/tools/
+onboard_ai/DEIMv2-main/tools/*
+
+!onboard_ai/DEIMv2-main/tools/coco_eval_predictions.py
+!onboard_ai/DEIMv2-main/tools/dump_predictions_all.py
+!onboard_ai/DEIMv2-main/tools/eval_one_deimv2.py
+!onboard_ai/DEIMv2-main/tools/eval_utils.py
+!onboard_ai/DEIMv2-main/tools/evaluate_models.py
+!onboard_ai/DEIMv2-main/tools/extra_detection_metrics.py
+!onboard_ai/DEIMv2-main/tools/train_crossval_deimv2.py
+!onboard_ai/DEIMv2-main/tools/train_final.py
+!onboard_ai/DEIMv2-main/tools/train_utils.py
+!onboard_ai/DEIMv2-main/tools/visualize_result.py
+!onboard_ai/DEIMv2-main/tools/main
+!onboard_ai/DEIMv2-main/tools/main_local

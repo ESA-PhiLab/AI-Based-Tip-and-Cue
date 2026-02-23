@@ -231,9 +231,8 @@ land_avoid_max_tries = 12
 # WAVES
 
 seed_dem = 42
-wind_speed = 7.5  # m/s
+wind_speed = 10.0  # m/s
 num_waves = 50
-
 
 if flat_dem:
     wave_min = 0.0  # m

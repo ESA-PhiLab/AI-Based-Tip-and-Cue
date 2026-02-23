@@ -2,6 +2,11 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
+
+
+os.chdir("generated_output")
+
+
 def parse_spd(path):
     wavelengths = []
     values = []

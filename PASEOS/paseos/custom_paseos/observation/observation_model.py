@@ -57,7 +57,6 @@ class EOTools:
         self.slew_stab_time = None
         self.move_set = False
 
-
         # -------------------------------------------------------------------------
     # Link to attitude model
     # -------------------------------------------------------------------------
@@ -241,7 +240,7 @@ class EOTools:
             offnadir_deg_target = float(offnadir_unbound)
             time_to_sight = 0.0
 
-        return pointing_vec_lvlh_target, float(offnadir_deg_target), float(offnadir_unbound), time_to_sight
+        return pointing_vec_lvlh_target, offnadir_deg_target, offnadir_unbound, time_to_sight
 
     # -------------------------------------------------------------------------
     # Visibility
@@ -377,14 +376,10 @@ class EOTools:
         return P[:2, :].T
 
     def get_CenterRay_Intersection(self, r_vec, v_vec, t_datetime):
-        sat_lat, sat_lon, _ = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
-        a, b = 6378137.0, 6356752.314245
-        x0, y0, z0 = pm.geodetic2ecef(sat_lat, sat_lon, 0.0)
-        n_ecef = np.array([x0/(a*a), y0/(a*a), z0/(b*b)], float)
-        n_ecef /= np.linalg.norm(n_ecef)
-        nx, ny, nz = pm.ecef2eci(-n_ecef[0], -n_ecef[1], -n_ecef[2], t_datetime)
-        ray_brf = IRF2LVLH([nx, ny, nz], r_vec, v_vec)
-        return self._find_intersection_in_Geodetic([ray_brf], t_datetime, r_vec, v_vec)
+        """Intersection of the nadir ray with the reference ellipsoid (sub-satellite point)."""
+        # Sub-satellite point is simply geodetic projection of the spacecraft position.
+        lat, lon, _alt = Point_ECI2Geodetic(r_vec[0], r_vec[1], r_vec[2], t_datetime).flatten()
+        return np.array([[lat], [lon], [0.0]], float)
 
     def get_CenterRay_Intersection_Attitude(self, r_vec, v_vec, t_datetime):
         if self.att_model is None:

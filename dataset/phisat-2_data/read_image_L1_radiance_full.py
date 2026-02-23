@@ -12,10 +12,6 @@ import matplotlib.pyplot as plt
 import requests
 
 
-# ----------------------------
-# Product paths / parsing
-# ----------------------------
-
 @dataclass(frozen=True)
 class ProductPaths:
     product_dir: Path
@@ -27,7 +23,7 @@ class ProductPaths:
 
 
 def extract_acquisition_times_from_product_path(any_path_in_product: str) -> tuple[datetime, datetime, datetime]:
-    """Parse start/end UTC timestamps from PHISAT-2 product folder name and return (start, end, midpoint)."""
+    """extract_acquisition_times_from_product_path(any_path_in_product) -> tuple[datetime,datetime,datetime]: Parse UTC start/end from product folder; return (start,end,mid)."""
     parts = os.path.normpath(any_path_in_product).split(os.sep)
     product = next((p for p in parts if p.startswith("PHISAT-2_") and ("_L1_" in p or "_L2_" in p)), "")
     m = re.search(r"_([0-9]{14})_([0-9]{14})_", product)
@@ -38,22 +34,15 @@ def extract_acquisition_times_from_product_path(any_path_in_product: str) -> tup
     tm = t0 + (t1 - t0) / 2
     return t0, t1, tm
 
+def save_rgb_png(tiff_path: Path, rgb_bands_1based: tuple[int, int, int], out_path: Path) -> Path:
+    """Save RGB reflectance composite as 8-bit PNG and return output path."""
+    rgb8 = make_rgb_uint8_from_tiff(tiff_path, rgb_bands_1based)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.imsave(out_path.as_posix(), rgb8)
+    return out_path
 
-from dataclasses import dataclass
-from pathlib import Path
-import rasterio
-
-@dataclass(frozen=True)
-class ProductPaths:
-    product_dir: Path
-    bands_dir: Path
-    geoloc_dir: Path
-    bands_tiff: Path
-    geoloc_json: Path
-    metadata_json: Path | None
-
-def find_product_files(base_dir: Path, product_name: str) -> ProductPaths:
-    """find_product_files(base_dir,product_name) -> ProductPaths: Robust BC multiband TIFF selection."""
+def find_product_files(base_dir: Path, product_name: str, prefer_level: str = "auto") -> ProductPaths:
+    """find_product_files(base_dir,product_name,prefer_level='auto') -> ProductPaths: Select best multiband TIFF by product level (BC/AC/RR/auto) + GL_scene + metadata."""
     product_dir = (base_dir / "dataset" / product_name).resolve()
     if not product_dir.exists():
         raise FileNotFoundError(f"Product folder not found: {product_dir}")
@@ -65,12 +54,12 @@ def find_product_files(base_dir: Path, product_name: str) -> ProductPaths:
     if not geoloc_dir.exists():
         raise FileNotFoundError(f"'geolocation' folder not found: {geoloc_dir}")
 
-    # Collect TIFFs (avoid overlapping globs that double-count .tiff on Windows)
+    # Collect TIFFs
     tiffs = list(bands_dir.glob("*.tif")) + list(bands_dir.glob("*.tiff"))
     if not tiffs:
         raise FileNotFoundError(f"No TIFFs found in: {bands_dir}")
 
-    # Deduplicate robustly (same file can appear twice via different patterns/paths)
+    # Deduplicate robustly
     uniq: dict[Path, Path] = {}
     for p in tiffs:
         try:
@@ -80,14 +69,41 @@ def find_product_files(base_dir: Path, product_name: str) -> ProductPaths:
         uniq[rp] = rp
     tiffs = sorted(uniq.values(), key=lambda p: p.name.lower())
 
-    def is_bc(p: Path) -> bool:
+    def has_level_token(p: Path, token: str) -> bool:
         s = p.stem.lower()
-        return ("_bc_" in s) or s.endswith("_bc") or s.startswith("bc_") or ("_bc" in s) or ("bc_" in s)
+        tok = token.lower()
+        # Accept common naming patterns: *_bc_*, *_bc, bc_*, etc.
+        return (f"_{tok}_" in s) or s.endswith(f"_{tok}") or s.startswith(f"{tok}_") or (f"_{tok}" in s) or (f"{tok}_" in s)
 
-    bc = [p for p in tiffs if is_bc(p)]
-    if not bc:
+    prefer = (prefer_level or "auto").strip().upper()
+    if prefer not in {"AUTO", "BC", "AC", "RR"}:
+        raise ValueError(f"prefer_level must be one of: auto, BC, AC, RR (got {prefer_level!r})")
+
+    # Priority order by intent:
+    # - For radiance: prefer BC (coregistered radiance), then AC (radiance)
+    # - For reflectance: prefer RR
+    if prefer == "AUTO":
+        priority = ["BC", "AC", "RR"]
+    elif prefer == "BC":
+        priority = ["BC", "AC", "RR"]
+    elif prefer == "AC":
+        priority = ["AC", "BC", "RR"]
+    else:  # prefer == "RR"
+        priority = ["RR", "BC", "AC"]
+
+    # Filter candidates by the first available token in priority
+    chosen_level = None
+    candidates: list[Path] = []
+    for lvl in priority:
+        lvl_matches = [p for p in tiffs if has_level_token(p, lvl)]
+        if lvl_matches:
+            chosen_level = lvl
+            candidates = lvl_matches
+            break
+
+    if not candidates:
         names = "\n  - " + "\n  - ".join([p.name for p in tiffs])
-        raise FileNotFoundError(f"No BC TIFF found in {bands_dir}. Found:{names}")
+        raise FileNotFoundError(f"No BC/AC/RR TIFF found in {bands_dir}. Found:{names}")
 
     def band_count(p: Path) -> int:
         try:
@@ -110,16 +126,17 @@ def find_product_files(base_dir: Path, product_name: str) -> ProductPaths:
         sz = file_size(p)
         return (is_multi, nb, sz, p.name.lower())
 
-    ranked = sorted(bc, key=score, reverse=True)
+    ranked = sorted(candidates, key=score, reverse=True)
     best = ranked[0]
 
-    # If "ties" remain, they are real different files; print a warning but pick best deterministically.
     best_score = score(best)
     ties = [p for p in ranked if score(p)[:3] == best_score[:3]]
     ties = list({p.resolve() if p.exists() else p: p for p in ties}.values())
     if len(ties) > 1:
         names = "\n  - " + "\n  - ".join([f"{p.name} (bands={band_count(p)}, size={file_size(p)})" for p in ties])
-        print(f"WARNING: Multiple BC TIFFs look equivalent; using: {best.name}\nCandidates:{names}")
+        print(f"WARNING: Multiple {chosen_level} TIFFs look equivalent; using: {best.name}\nCandidates:{names}")
+    else:
+        print(f"Selected level: {chosen_level}  TIFF: {best.name}")
 
     gl_scene = geoloc_dir / "GL_scene_0.json"
     if not gl_scene.exists():
@@ -132,46 +149,13 @@ def find_product_files(base_dir: Path, product_name: str) -> ProductPaths:
     return ProductPaths(product_dir, bands_dir, geoloc_dir, best, gl_scene, metadata_json)
 
 
-# ----------------------------
-# Stats + geolocation
-# ----------------------------
-
-def print_band_stats(tiff_path: Path) -> None:
-    """Print per-band reflectance stats assuming values are reflectance*10000."""
-    with rasterio.open(tiff_path) as ds:
-        print(f"\nFile: {tiff_path}")
-        print(f"Size: {ds.width} x {ds.height}")
-        print(f"Bands: {ds.count}")
-        print(f"Dtype: {ds.dtypes}")
-        print(f"NoData (dataset): {ds.nodata}")
-        print(f"NoData (per-band): {ds.nodatavals}")
-        print(f"Has internal mask: {ds.mask_flag_enums}")
-
-        for b in range(1, ds.count + 1):
-            arr = ds.read(b, masked=True)
-            if arr.mask.all():
-                print(f"Band {b}: no valid data (all masked)")
-                continue
-            data = arr.compressed().astype(np.float64)
-            mn = data.min()
-            mx = data.max()
-            dm = data.mean()
-            p1, p50, p99 = np.percentile(data, [1, 50, 99])
-            print(
-                f"Band {b}: min={mn/10000:.3f},\t max={mx/10000:.3f},\t mean={dm/10000:.3f},\t "
-                f"p1={p1/10000:.3f},\t p50={p50/10000:.3f},\t p99={p99/10000:.3f},\t "
-                f"valid_pixels={data.size}"
-            )
-
-
 def extract_corners_and_center(gl_scene_json_path: Path, size: int = 4096) -> tuple[dict, tuple[float, float]]:
-    """Extract corner and center lat/lon from a GL_scene geolocation JSON; return extracted dict and (lat, lon) center."""
+    """extract_corners_and_center(gl_scene_json_path,size=4096) -> tuple[dict,tuple[float,float]]: Extract corner+center lat/lon from GL_scene."""
     with open(gl_scene_json_path, "r", encoding="utf-8") as f:
         gl = json.load(f)
 
     pts = gl["Geolocated_Points"]
     idx = {(p["X_coordinate"], p["Y_coordinate"]): p for p in pts}
-
     mid = size // 2
     points = {
         "top_left": (0, 0),
@@ -181,52 +165,20 @@ def extract_corners_and_center(gl_scene_json_path: Path, size: int = 4096) -> tu
         "center": (mid, mid),
     }
 
-    print("\nExtracted points (lat, lon):")
     extracted: dict[str, dict] = {}
-
     for name, (x, y) in points.items():
         p = idx.get((x, y))
-        if p is None:
-            print(f"{name}: missing (X={x}, Y={y})")
-            continue
-        extracted[name] = p
-        print(f"{name}: X={x}, Y={y}, lat={p['Lat']}, lon={p['Lon']}, alt={p.get('Alt')}")
-
-    tl = extracted.get("top_left")
-    tr = extracted.get("top_right")
-    br = extracted.get("bottom_right")
-    bl = extracted.get("bottom_left")
-
-    if tl and tr and br and bl:
-        print("\nWKT footprint (lon lat):")
-        print(
-            "POLYGON(("
-            f"{tl['Lon']} {tl['Lat']}, "
-            f"{tr['Lon']} {tr['Lat']}, "
-            f"{br['Lon']} {br['Lat']}, "
-            f"{bl['Lon']} {bl['Lat']}, "
-            f"{tl['Lon']} {tl['Lat']}"
-            "))"
-        )
+        if p is not None:
+            extracted[name] = p
 
     ctr = extracted.get("center")
     if ctr is not None:
-        lat_center, lon_center = float(ctr["Lat"]), float(ctr["Lon"])
-        label = "center (from GL grid)"
-    else:
-        lat_center, lon_center = float("nan"), float("nan")
-        label = "center (unavailable)"
+        return extracted, (float(ctr["Lat"]), float(ctr["Lon"]))
+    return extracted, (float("nan"), float("nan"))
 
-    print(f"\n{label}: lat={lat_center}, lon={lon_center}")
-    return extracted, (lat_center, lon_center)
-
-
-# ----------------------------
-# Band wavelengths -> RGB selection
-# ----------------------------
 
 def load_band_center_wavelengths(metadata_json: Path) -> dict[str, float]:
-    """Load band center wavelengths (nm) from session metadata JSON."""
+    """load_band_center_wavelengths(metadata_json) -> dict[str,float]: Read BandCentreWavelength (nm) from session metadata JSON."""
     with open(metadata_json, "r", encoding="utf-8") as f:
         meta = json.load(f)
     if not isinstance(meta, dict) or len(meta) == 0:
@@ -246,10 +198,10 @@ def load_band_center_wavelengths(metadata_json: Path) -> dict[str, float]:
 
 
 def choose_rgb_bands_from_wavelengths(center_wavelengths_nm: dict[str, float], tiff_band_count: int) -> tuple[int, int, int]:
-    """Choose (R,G,B) 1-based band indices by nearest wavelength to 665/560/490 nm."""
+    """choose_rgb_bands_from_wavelengths(center_wavelengths_nm,tiff_band_count) -> tuple[int,int,int]: Choose 1-based (R,G,B) nearest to 665/560/490 nm."""
     targets = {"B": 490.0, "G": 560.0, "R": 665.0}
-
     entries: list[tuple[int, float]] = []
+
     for name, wl in center_wavelengths_nm.items():
         m = re.search(r"(\d+)", name)
         if not m:
@@ -266,71 +218,128 @@ def choose_rgb_bands_from_wavelengths(center_wavelengths_nm: dict[str, float], t
             raise RuntimeError(f"RGB selection out-of-range: {idx_1based} (TIFF bands={tiff_band_count})")
         return idx_1based
 
-    r = nearest(targets["R"])
-    g = nearest(targets["G"])
-    b = nearest(targets["B"])
-    return (r, g, b)
+    return (nearest(targets["R"]), nearest(targets["G"]), nearest(targets["B"]))
 
 
-# ----------------------------
-# RGB display + SAVE
-# ----------------------------
+def read_band_phys(ds: rasterio.io.DatasetReader, b: int, window: rasterio.windows.Window | None = None) -> np.ndarray:
+    """read_band_phys(ds,b,window=None) -> np.ndarray: Read band and apply per-band scale/offset if present; returns float32 with NaNs."""
+    arr = ds.read(b, window=window, masked=True).astype(np.float32).filled(np.nan)
+
+    scale = None
+    offset = None
+
+    try:
+        if ds.scales and len(ds.scales) >= b and ds.scales[b - 1] not in (None, 0):
+            scale = float(ds.scales[b - 1])
+        if ds.offsets and len(ds.offsets) >= b and ds.offsets[b - 1] is not None:
+            offset = float(ds.offsets[b - 1])
+    except Exception:
+        pass
+
+    if scale is None or offset is None:
+        tags = ds.tags(b)
+        if scale is None:
+            for k in ("scale", "Scale", "scale_factor", "SCALING_FACTOR", "GAIN"):
+                if k in tags:
+                    try:
+                        scale = float(tags[k])
+                        break
+                    except Exception:
+                        pass
+        if offset is None:
+            for k in ("offset", "Offset", "add_offset", "ADD_OFFSET", "BIAS"):
+                if k in tags:
+                    try:
+                        offset = float(tags[k])
+                        break
+                    except Exception:
+                        pass
+
+    if scale is None:
+        scale = 1.0
+    if offset is None:
+        offset = 0.0
+
+    out = arr * scale + offset
+    out[~np.isfinite(out)] = np.nan
+    return out.astype(np.float32)
+
+
+def print_radiance_band_stats(tiff_path: Path) -> None:
+    """print_radiance_band_stats(tiff_path) -> None: Print per-band stats in physical units using scale/offset."""
+    with rasterio.open(tiff_path) as ds:
+        print(f"\nFile: {tiff_path}")
+        print(f"Size: {ds.width} x {ds.height}")
+        print(f"Bands: {ds.count}")
+        print(f"Dtype: {ds.dtypes}")
+        print(f"Units: {ds.units}")
+        print(f"Scales: {ds.scales}")
+        print(f"Offsets: {ds.offsets}")
+        print(f"NoData (dataset): {ds.nodata}")
+        print(f"NoData (per-band): {ds.nodatavals}")
+
+        for b in range(1, ds.count + 1):
+            x = read_band_phys(ds, b, window=None)
+            finite = x[np.isfinite(x)]
+            if finite.size == 0:
+                print(f"Band {b}: no valid data")
+                continue
+            mn, mx, mean = float(np.min(finite)), float(np.max(finite)), float(np.mean(finite))
+            p1, p50, p99 = np.percentile(finite, [1, 50, 99])
+            print(f"Band {b}: min={mn:.6g}  max={mx:.6g}  mean={mean:.6g}  p1={p1:.6g}  p50={p50:.6g}  p99={p99:.6g}  n={finite.size}")
+
 
 def stretch01_2d(band: np.ndarray, p_low: float = 2.0, p_high: float = 98.0) -> np.ndarray:
-    """Percentile stretch a 2D array with NaNs to [0,1]."""
+    """stretch01_2d(band,p_low=2,p_high=98) -> np.ndarray: Percentile stretch 2D array with NaNs to [0,1]."""
     finite = band[np.isfinite(band)]
     if finite.size == 0:
         return np.zeros_like(band, dtype=np.float32)
     lo = np.percentile(finite, p_low)
     hi = np.percentile(finite, p_high)
     if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        out = np.clip(band, 0.0, 1.0)
+        out = band.copy()
         out[~np.isfinite(out)] = 0.0
-        return out.astype(np.float32)
+        out = out - np.nanmin(out)
+        denom = np.nanmax(out)
+        return (out / denom).astype(np.float32) if denom > 0 else np.zeros_like(out, dtype=np.float32)
     out = (band - lo) / (hi - lo)
     out = np.clip(out, 0.0, 1.0)
     out[~np.isfinite(out)] = 0.0
     return out.astype(np.float32)
 
 
-def make_rgb_uint8_from_tiff(tiff_path: Path, rgb_bands_1based: tuple[int, int, int]) -> np.ndarray:
-    """Read reflectance RGB (DN/10000), stretch, and return uint8 RGB image (H,W,3)."""
+def make_rgb_uint8_from_radiance_tiff(tiff_path: Path, rgb_bands_1based: tuple[int, int, int]) -> np.ndarray:
+    """make_rgb_uint8_from_radiance_tiff(tiff_path,rgb_bands_1based) -> np.ndarray: Read radiance RGB (scaled), stretch, return uint8 RGB."""
     r_b, g_b, b_b = rgb_bands_1based
     with rasterio.open(tiff_path) as ds:
-        r = ds.read(r_b, masked=True).astype("float32").filled(np.nan) / 10000.0
-        g = ds.read(g_b, masked=True).astype("float32").filled(np.nan) / 10000.0
-        b = ds.read(b_b, masked=True).astype("float32").filled(np.nan) / 10000.0
-
+        r = read_band_phys(ds, r_b)
+        g = read_band_phys(ds, g_b)
+        b = read_band_phys(ds, b_b)
     rgb01 = np.dstack([stretch01_2d(r), stretch01_2d(g), stretch01_2d(b)])
-    rgb8 = np.clip(rgb01 * 255.0, 0, 255).astype(np.uint8)
-    return rgb8
+    return np.clip(rgb01 * 255.0, 0, 255).astype(np.uint8)
 
 
-def show_rgb_reflectance(tiff_path: Path, rgb_bands_1based: tuple[int, int, int]) -> None:
-    """Display an RGB composite in reflectance from a multiband TIFF (reflectance = DN/10000)."""
-    rgb8 = make_rgb_uint8_from_tiff(tiff_path, rgb_bands_1based)
+def show_rgb_radiance(tiff_path: Path, rgb_bands_1based: tuple[int, int, int]) -> None:
+    """show_rgb_radiance(tiff_path,rgb_bands_1based) -> None: Display RGB composite made from radiance bands."""
+    rgb8 = make_rgb_uint8_from_radiance_tiff(tiff_path, rgb_bands_1based)
+    r_b, g_b, b_b = rgb_bands_1based
     plt.figure(figsize=(7, 7))
     plt.imshow(rgb8)
-    r_b, g_b, b_b = rgb_bands_1based
-    plt.title(f"PHI-SAT-2 RGB reflectance (R,G,B bands = {r_b},{g_b},{b_b})")
+    plt.title(f"PHI-SAT-2 RGB radiance (R,G,B bands = {r_b},{g_b},{b_b})")
     plt.axis("off")
     plt.show()
 
 
-def save_rgb_png(tiff_path: Path, rgb_bands_1based: tuple[int, int, int], out_path: Path) -> Path:
-    """Save RGB reflectance composite as 8-bit PNG and return output path."""
-    rgb8 = make_rgb_uint8_from_tiff(tiff_path, rgb_bands_1based)
+def save_rgb_png_radiance(tiff_path: Path, rgb_bands_1based: tuple[int, int, int], out_path: Path) -> Path:
+    """save_rgb_png_radiance(tiff_path,rgb_bands_1based,out_path) -> Path: Save radiance RGB composite as 8-bit PNG."""
+    rgb8 = make_rgb_uint8_from_radiance_tiff(tiff_path, rgb_bands_1based)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.imsave(out_path.as_posix(), rgb8)
     return out_path
 
 
-# ----------------------------
-# Time -> Julian Date
-# ----------------------------
-
 def datetime_to_jd(dt_utc: datetime) -> float:
-    """Convert timezone-aware UTC datetime to Julian Date."""
+    """datetime_to_jd(dt_utc) -> float: Convert timezone-aware UTC datetime to Julian Date."""
     if dt_utc.tzinfo is None:
         raise ValueError("dt_utc must be timezone-aware")
     dt_utc = dt_utc.astimezone(timezone.utc)
@@ -352,12 +361,8 @@ def datetime_to_jd(dt_utc: datetime) -> float:
     return jd0 + frac
 
 
-# ----------------------------
-# Fetch TLE automatically (SatChecker)
-# ----------------------------
-
 def fetch_nearest_tle_from_satchecker(norad_id: int, jd_epoch: float, data_source: str | None = None) -> tuple[str, str, str]:
-    """Fetch nearest TLE lines (and TLE epoch) for a NORAD ID near a Julian Date using SatChecker."""
+    """fetch_nearest_tle_from_satchecker(norad_id,jd_epoch,data_source=None) -> tuple[str,str,str]: Fetch nearest TLE lines and epoch string from SatChecker."""
     url = "https://satchecker.cps.iau.org/tools/get-nearest-tle/"
     params = {"id": str(norad_id), "id_type": "catalog", "epoch": str(jd_epoch)}
     if data_source:
@@ -375,15 +380,8 @@ def fetch_nearest_tle_from_satchecker(norad_id: int, jd_epoch: float, data_sourc
         raise RuntimeError(f"No TLE returned for NORAD {norad_id} at JD {jd_epoch}")
 
     item = tle_data[0]
-    tle1 = item["tle_line1"]
-    tle2 = item["tle_line2"]
-    tle_epoch = item.get("epoch", "unknown")
-    return tle1, tle2, tle_epoch
+    return item["tle_line1"], item["tle_line2"], item.get("epoch", "unknown")
 
-
-# ----------------------------
-# SGP4 -> LLA (needs pip install sgp4)
-# ----------------------------
 
 @dataclass(frozen=True)
 class SatLLA:
@@ -393,7 +391,7 @@ class SatLLA:
 
 
 def _gmst_rad(dt_utc: datetime) -> float:
-    """GMST angle in radians (approx)."""
+    """_gmst_rad(dt_utc) -> float: Approx GMST angle in radians."""
     jd = datetime_to_jd(dt_utc)
     t = (jd - 2451545.0) / 36525.0
     gmst_sec = 67310.54841 + (876600.0 * 3600 + 8640184.812866) * t + 0.093104 * t * t - 6.2e-6 * t * t * t
@@ -401,7 +399,7 @@ def _gmst_rad(dt_utc: datetime) -> float:
 
 
 def _ecef_from_teme_km(r_teme_km: tuple[float, float, float], dt_utc: datetime) -> tuple[float, float, float]:
-    """Approx TEME->ECEF via GMST rotation."""
+    """_ecef_from_teme_km(r_teme_km,dt_utc) -> tuple[float,float,float]: Approx TEME->ECEF rotation via GMST."""
     x, y, z = r_teme_km
     th = _gmst_rad(dt_utc)
     c, s = math.cos(th), math.sin(th)
@@ -409,7 +407,7 @@ def _ecef_from_teme_km(r_teme_km: tuple[float, float, float], dt_utc: datetime) 
 
 
 def _lla_from_ecef_km(x_km: float, y_km: float, z_km: float) -> SatLLA:
-    """ECEF (km) -> geodetic lat/lon/alt (km), WGS84."""
+    """_lla_from_ecef_km(x_km,y_km,z_km) -> SatLLA: ECEF (km) -> geodetic lat/lon/alt (km), WGS84."""
     a = 6378.137
     f = 1.0 / 298.257223563
     e2 = f * (2 - f)
@@ -433,7 +431,7 @@ def _lla_from_ecef_km(x_km: float, y_km: float, z_km: float) -> SatLLA:
 
 
 def sat_lla_from_tle_at_time(tle1: str, tle2: str, dt_utc: datetime) -> SatLLA:
-    """Compute satellite geodetic lat/lon/alt at dt_utc given a 2-line TLE."""
+    """sat_lla_from_tle_at_time(tle1,tle2,dt_utc) -> SatLLA: Compute satellite lat/lon/alt from TLE at dt_utc."""
     from sgp4.api import Satrec
 
     if dt_utc.tzinfo is None:
@@ -453,20 +451,19 @@ def sat_lla_from_tle_at_time(tle1: str, tle2: str, dt_utc: datetime) -> SatLLA:
     return _lla_from_ecef_km(x_ecef, y_ecef, z_ecef)
 
 
-# ----------------------------
-# Main
-# ----------------------------
-
 if __name__ == "__main__":
     base_dir = Path.cwd()
 
-    product_name = "offnadir_ocean2/PHISAT-2_L1_000001987_20250410143947_20250410143950_B05E6C3E"
-    paths = find_product_files(base_dir, product_name)
+    # Point this to your product (relative to base_dir/dataset/)
+    product_name = "phisat-2_data/dataset/PHISAT-2_L1_000004559_20260202210025_20260202210029_C9E695C7"
+
+    # Prefer BC (coregistered radiance); fall back to AC (radiance) if BC not found
+    paths = find_product_files(base_dir, product_name, prefer="BC")
 
     print("Resolved paths:")
-    print(f"  product_dir : {paths.product_dir}")
-    print(f"  bands_tiff  : {paths.bands_tiff.name}")
-    print(f"  geoloc_json : {paths.geoloc_json.name}")
+    print(f"  product_dir  : {paths.product_dir}")
+    print(f"  bands_tiff   : {paths.bands_tiff.name}")
+    print(f"  geoloc_json  : {paths.geoloc_json.name}")
     print(f"  metadata_json: {paths.metadata_json.name if paths.metadata_json else '(none found)'}")
 
     t0, t1, tm = extract_acquisition_times_from_product_path(str(paths.product_dir))
@@ -475,64 +472,24 @@ if __name__ == "__main__":
     print(f"  end     : {t1.isoformat()}")
     print(f"  midpoint: {tm.isoformat()}")
 
-    print_band_stats(paths.bands_tiff)
-    extracted, (tgt_lat, tgt_lon) = extract_corners_and_center(paths.geoloc_json, size=4096)
+    with rasterio.open(paths.bands_tiff) as ds:
+        size = int(max(ds.width, ds.height))
+
+    extracted, (tgt_lat, tgt_lon) = extract_corners_and_center(paths.geoloc_json, size=size)
+    print(f"\nScene center from GL: lat={tgt_lat:.6f}, lon={tgt_lon:.6f}")
+
+    print_radiance_band_stats(paths.bands_tiff)
 
     rgb_bands = (3, 2, 1)
     if paths.metadata_json is not None:
         wl = load_band_center_wavelengths(paths.metadata_json)
         if wl:
-            print("\nBand center wavelengths from metadata (nm):")
-            def _band_sort_key(s: str) -> int:
-                m = re.search(r"(\d+)", s)
-                return int(m.group(1)) if m else 999
-            for k in sorted(wl.keys(), key=_band_sort_key):
-                print(f"  {k}: {wl[k]}")
             with rasterio.open(paths.bands_tiff) as ds:
                 rgb_bands = choose_rgb_bands_from_wavelengths(wl, ds.count)
-            print(f"\nSelected RGB from wavelengths (nearest to 665/560/490 nm): R,G,B = {rgb_bands}")
-        else:
-            print("\nNo BandCentreWavelength found in metadata; using fallback RGB = (3,2,1).")
-    else:
-        print("\nNo metadata JSON found; using fallback RGB = (3,2,1).")
 
-    show_rgb_reflectance(paths.bands_tiff, rgb_bands)
+    show_rgb_radiance(paths.bands_tiff, rgb_bands)
 
-    # Save RGB PNG next to product folder
     r_b, g_b, b_b = rgb_bands
-    out_png = paths.product_dir / f"rgb_reflectance_R{r_b}_G{g_b}_B{b_b}.png"
-    saved = save_rgb_png(paths.bands_tiff, rgb_bands, out_png)
-    print(f"\nSaved RGB PNG: {saved}")
-
-    # ---- Automatically fetch nearest TLE and compute satellite LLA at midpoint ----
-    norad_id = 60470  # PHISAT-2
-    jd_mid = datetime_to_jd(tm)
-
-    try:
-        tle1, tle2, tle_epoch = fetch_nearest_tle_from_satchecker(norad_id, jd_mid, data_source=None)
-        lla = sat_lla_from_tle_at_time(tle1, tle2, tm)
-
-        print("\nPHISAT-2 nearest TLE (SatChecker):")
-        print(f"  requested JD : {jd_mid:.6f}")
-        print(f"  TLE epoch    : {tle_epoch}")
-        print(f"  line1        : {tle1}")
-        print(f"  line2        : {tle2}")
-
-        print("\nPHISAT-2 position at midpoint (SGP4 from nearest TLE):")
-        print(f"  sat_lat = {lla.lat_deg:.6f} deg")
-        print(f"  sat_lon = {lla.lon_deg:.6f} deg")
-        print(f"  sat_alt = {lla.alt_km:.3f} km")
-
-        print("\nTarget position (scene center from GL grid):")
-        print(f"  tgt_lat = {tgt_lat:.6f} deg")
-        print(f"  tgt_lon = {tgt_lon:.6f} deg")
-        print(f"  tgt_alt = {0.000:.3f} km")
-
-        print(f"\nmidpoint time = {tm.isoformat()}")
-
-    except Exception as e:
-        print("\nCould not fetch/compute PHISAT-2 position automatically.")
-        print(f"Reason: {e}")
-
-
-
+    out_png = paths.product_dir / f"rgb_radiance_R{r_b}_G{g_b}_B{b_b}.png"
+    saved = save_rgb_png_radiance(paths.bands_tiff, rgb_bands, out_png)
+    print(f"\nSaved radiance RGB PNG: {saved}")

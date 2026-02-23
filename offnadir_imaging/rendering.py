@@ -10,16 +10,16 @@ from PIL import Image
 from pathlib import Path
 import gc
 
-from RTM import generate_sun_and_sky_spds
-from create_DEM.create_dummy_DEM import get_DEM
-from create_DEM.convert_DEM import convert_DEM
+from .RTM import generate_sun_and_sky_spds
+from .create_DEM.create_dummy_DEM import get_DEM
+from .create_DEM.convert_DEM import convert_DEM
 
-from functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb, save_off_nadir_plots, plot_radiance_timeline_show_save, run_glint_timeline, make_horizontal_timeline_image
-from functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
-from functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
-from functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation, masked_abs_radiance, masked_percentile, masked_channel_percentiles, masked_channel_means, masked_mean, plot_radiance_timeline
-from functions import image_utils as iu
-from functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance, compute_hit_mask_full, compute_hit_mask_old, plot_whale_mask_for_img_path
+from .functions.plotfunctions import plot_earth_with_pyvista, plot_earth_slice_with_sun, plot_target_perspective, get_rgb, save_off_nadir_plots, plot_radiance_timeline_show_save, run_glint_timeline, make_horizontal_timeline_image
+from .functions.get_satellite_data import get_band_data, get_satellite, get_spatial_res
+from .functions.convert_reference_frames import get_lat_lon_alt_from_ecef, get_ecef_from_lat_lon, compute_max_glint_satellite_ecef
+from .functions.intermediate_functions import rmse, normalize, get_scene_characteristics, is_dark_from_sun_dir, dbg_sun_elevation, masked_abs_radiance, masked_percentile, masked_channel_percentiles, masked_channel_means, masked_mean, plot_radiance_timeline
+from .functions import image_utils as iu
+from .functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance, compute_hit_mask_full, compute_hit_mask_old, plot_whale_mask_for_img_path
 
 _COCO_CACHE = {}
 
@@ -614,14 +614,14 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
         rho_disp_final = np.clip(rho_final / (p + 1e-12), 0.0, 1.0)
 
         if bools['plot_result'] == True:
-            _ = plot_whale_mask_for_img_path(
-                img_path=img_path,
-                anns_path=anns_path,
-                overlay=True,
-                save_path="dataset/utils_images/whale_mask_overlay.png",
-                show=True,
-                cache=True,
-            )
+           #  _ = plot_whale_mask_for_img_path(
+           #      img_path=img_path,
+           #      anns_path=anns_path,
+           #      overlay=True,
+           #      save_path="dataset/utils_images/whale_mask_overlay.png",
+           #      show=True,
+           #      cache=True,
+           #  )
 
             fig = plt.figure(figsize=(22, 8))
             fig.add_subplot(1, 5, 1).imshow(img_rgb);
@@ -684,8 +684,8 @@ if __name__ == "__main__":
     from settings import *
 
     bools["plot_result"] = False
-    bools["max_glint"] = True
-    bools['plot_3d'] = True
+    bools["max_glint"] = False
+    bools['plot_3d'] = False
 
     THIS_DIR = Path(__file__).resolve().parent
     PROJECT_ROOT = THIS_DIR.parent
@@ -699,8 +699,8 @@ if __name__ == "__main__":
     outdir = THIS_DIR / "images"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    hour_lst = np.arange(4, 22, 3)
-    minute_lst = [0]
+    hour_lst = np.arange(4, 22, 1)
+    minute_lst = [0, 15, 30, 45]
 
     sat_lat, sat_lon, sat_alt = 58.0, 0.0, 617000.0
     tgt_lat, tgt_lon, tgt_alt = 53.0, 0.0, 0.0

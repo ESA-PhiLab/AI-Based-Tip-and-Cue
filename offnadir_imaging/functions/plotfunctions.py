@@ -374,7 +374,8 @@ def run_glint_timeline(img_path, anns_path, satellite, sat_lat, sat_lon, sat_alt
     mean_rad_lst_R, mean_rad_lst_G, mean_rad_lst_B = [], [], []
     p95_abs_rad_lst, mean_abs_rad_lst = [], []
     datetime_lst = []
-    saved_images = []
+    saved_images_rad = []
+    saved_images_refl = []
 
     Y, M, D = int(date_ymd[0]), int(date_ymd[1]), int(date_ymd[2])
     solar_sza_deg_lst = []
@@ -408,9 +409,17 @@ def run_glint_timeline(img_path, anns_path, satellite, sat_lat, sat_lon, sat_alt
                 continue
 
             if save_images:
-                save_path_img = outdir / f"{image_prefix}_{hour:02d}-{minute:02d}h.png"
-                Image.fromarray(np.clip(radiance_disp_final, 0, 255).astype(np.uint8)).save(save_path_img)
-                saved_images.append(save_path_img)
+
+                save_path_img_refl = outdir / "reflection" / f"{image_prefix}_{hour:02d}-{minute:02d}h.png"
+                save_path_img_refl.parent.mkdir(parents=True, exist_ok=True)
+                img_refl = (rho_disp_final * 255).clip(0, 255).astype(np.uint8)
+                Image.fromarray(img_refl).save(save_path_img_refl)
+                saved_images_refl.append(save_path_img_refl)
+
+                save_path_img_rad = outdir / "radiance" / f"{image_prefix}_{hour:02d}-{minute:02d}h.png"
+                save_path_img_rad.parent.mkdir(parents=True, exist_ok=True)
+                Image.fromarray(np.clip(radiance_disp_final, 0, 255).astype(np.uint8)).save(save_path_img_rad)
+                saved_images_rad.append(save_path_img_rad)
 
             p95_abs_rad_lst.append(masked_percentile_fn(abs_rad, mask, 95.0))
             p95_R, p95_G, p95_B = masked_channel_percentiles_fn(radiance_final, mask, 95.0)
@@ -437,7 +446,6 @@ def run_glint_timeline(img_path, anns_path, satellite, sat_lat, sat_lon, sat_alt
             solar_sza_deg_lst.append(sza)
             cos_sza_lst.append(cos_sza)
             datetime_lst.append(dt)
-
 
     # Save + (optionally) display timelines
     plot_radiance_timeline_show_save(
@@ -500,11 +508,24 @@ def run_glint_timeline(img_path, anns_path, satellite, sat_lat, sat_lon, sat_alt
 
 
     timeline_strip_path = None
-    if save_images and len(saved_images) > 0:
-        timeline_strip_path = make_horizontal_timeline_image(
-            image_paths=saved_images,
+    if save_images and len(saved_images_rad) > 0:
+        timeline_strip_path_rad = make_horizontal_timeline_image(
+            image_paths=saved_images_rad,
             datetimes=datetime_lst,
-            save_path=outdir / f"{image_prefix}_timeline_strip.png",
+            save_path=outdir / "radiance" / f"{image_prefix}_timeline_strip_rad.png",
+            target_height=256,
+            pad=6,
+            bg_rgb=(0, 0, 0),
+            label_every=4,
+            time_fmt="%H:%M",
+            label_margin_px=80,
+            font_size=48  # <-- bigger
+        )
+
+        timeline_strip_path_refl = make_horizontal_timeline_image(
+            image_paths=saved_images_refl,
+            datetimes=datetime_lst,
+            save_path=outdir / "reflection"/ f"{image_prefix}_timeline_strip_refl.png",
             target_height=256,
             pad=6,
             bg_rgb=(0, 0, 0),
@@ -518,7 +539,15 @@ def run_glint_timeline(img_path, anns_path, satellite, sat_lat, sat_lon, sat_alt
             try:
                 import matplotlib.pyplot as plt
                 import numpy as np
-                strip = np.asarray(Image.open(timeline_strip_path))
+                strip = np.asarray(Image.open(timeline_strip_path_rad))
+                plt.figure(figsize=(16, 4))
+                plt.imshow(strip)
+                plt.axis("off")
+                plt.title("Horizontal timeline strip")
+                plt.show()
+                plt.close()
+
+                strip = np.asarray(Image.open(timeline_strip_path_refl))
                 plt.figure(figsize=(16, 4))
                 plt.imshow(strip)
                 plt.axis("off")
@@ -534,7 +563,8 @@ def run_glint_timeline(img_path, anns_path, satellite, sat_lat, sat_lon, sat_alt
         "mean_rgb": (mean_rad_lst_R, mean_rad_lst_G, mean_rad_lst_B),
         "p95_abs": p95_abs_rad_lst,
         "mean_abs": mean_abs_rad_lst,
-        "saved_images": saved_images,
+        "saved_images_rad": saved_images_rad,
+        "saved_images_refl": saved_images_rad,
         "timeline_strip_path": timeline_strip_path,
         "outdir": outdir,
     }
