@@ -161,6 +161,12 @@ Run the file: run_simulation.py
 **Full release is expected around March 2026.**
 
 ## Usage
+When running from PyCharm, launch from Anaconda prompt (given orekit dependencies). 
+
+```bash
+conda activate tipandcue
+pycharm64
+```
 
 ```bash
 to be completed.
