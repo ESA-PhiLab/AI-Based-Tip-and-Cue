@@ -89,3 +89,5 @@ onboard_ai/DEIMv2-main/tools/*
 
 !onboard_ai/DEIMv2-main/engine/solver/det_solver.py
 !onboard_ai/DEIMv2-main/engine/solver/det_solver.py
+onboard_ai/figures/deimv2_coco_AP_vs_GFLOPs.png
+onboard_ai/figures/deimv2_coco_AP_vs_Params.png

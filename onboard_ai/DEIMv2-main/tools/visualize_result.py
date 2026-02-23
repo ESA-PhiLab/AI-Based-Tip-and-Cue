@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any, List, Tuple
@@ -8,11 +9,12 @@ from typing import Any, List, Tuple
 from PIL import Image, ImageDraw
 
 # =======================
-# CONFIG
+# DEFAULTS (override via CLI)
 # =======================
 
-MODEL = "final"          # "final" or "fold1"
-SPLIT = "validation"     # "validation" or "test"
+DEFAULT_RESULTS_FOLDER = "default_model_S"
+DEFAULT_MODEL = "final"          # "final" or "fold1"
+DEFAULT_SPLIT = "test"           # "validation" or "test"
 
 SCORE_THRESHOLD = 0.4
 MAX_PREDS = 50
@@ -58,17 +60,20 @@ def draw_box(draw: ImageDraw.ImageDraw, box, color, width: int) -> None:
 
 
 def resolve_repo_root() -> Path:
+    """resolve_repo_root() -> Path: Infer repo root as parent of tools/."""
     return Path(__file__).resolve().parents[1]
 
 
-def resolve_results_dir(repo_root: Path) -> Path:
-    p = repo_root / "results" / "default_model_S"
+def resolve_results_dir(repo_root: Path, results_folder: str) -> Path:
+    """resolve_results_dir(repo_root, results_folder) -> Path: results/<results_folder>."""
+    p = repo_root / "results" / results_folder
     if not p.exists():
         raise RuntimeError(f"RESULTS_DIR not found: {p}")
     return p
 
 
 def resolve_img_root(repo_root: Path) -> Path:
+    """resolve_img_root(repo_root) -> Path: data/0_merged/... under repo root."""
     p = repo_root / "data" / "0_merged" / "reflection_offnadir_glint_255"
     if not p.exists():
         raise RuntimeError(f"IMG_ROOT not found: {p}")
@@ -76,6 +81,7 @@ def resolve_img_root(repo_root: Path) -> Path:
 
 
 def resolve_model_dir(results_dir: Path, model: str) -> Path:
+    """resolve_model_dir(results_dir, model) -> Path."""
     if model.lower() == "final":
         p = results_dir / "final_location_holdout"
     else:
@@ -86,22 +92,29 @@ def resolve_model_dir(results_dir: Path, model: str) -> Path:
 
 
 def resolve_ann_path(results_dir: Path, model_dir: Path, split: str) -> Path:
+    """resolve_ann_path(results_dir, model_dir, split) -> Path."""
     if split == "validation":
         p = model_dir / "splits" / "instances_val.json"
         if p.exists():
             return p
+        raise RuntimeError(f"validation annotations not found: {p}")
+
     if split == "test":
         p = results_dir / "test_holdout_only.json"
         if p.exists():
             return p
-    raise RuntimeError("Annotation file not found.")
+        raise RuntimeError(f"test annotations not found: {p}")
+
+    raise RuntimeError("split must be validation or test")
 
 
-def resolve_pred_path(results_dir: Path, model_dir: Path, split: str) -> Path:
+def resolve_pred_path(results_dir: Path, model_dir: Path, split: str, model: str) -> Path:
+    """resolve_pred_path(results_dir, model_dir, split, model) -> Path."""
     if USE_OVERVIEW_PREDICTIONS:
         p = results_dir / "overview" / split / "predictions" / f"{OVERVIEW_TAG}_predictions_coco.json"
         if p.exists():
             return p
+        raise RuntimeError(f"overview predictions not found: {p}")
 
     p = model_dir / "metrics" / split / "predictions_coco.json"
     if p.exists():
@@ -112,44 +125,59 @@ def resolve_pred_path(results_dir: Path, model_dir: Path, split: str) -> Path:
     if p2.exists():
         return p2
 
-    raise RuntimeError("predictions file not found")
+    p3 = results_dir / "overview" / split / "predictions" / f"{('FINAL' if model == 'final' else model)}_predictions_coco.json"
+    if p3.exists():
+        return p3
+
+    raise RuntimeError("predictions file not found (checked metrics/, eval_data/, overview/)")
 
 
-def figures_dir() -> Path:
-    base = Path(__file__).resolve().parent / "figures"
-    out = base / f"{MODEL}_{SPLIT}"
+def figures_dir(repo_root: Path, results_folder: str, model: str, split: str) -> Path:
+    base = repo_root / "figures"
+    out = base / results_folder / f"{model}_{split}"
     out.mkdir(parents=True, exist_ok=True)
     return out
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--results", type=str, default=DEFAULT_RESULTS_FOLDER, help="results folder, e.g. default_model_S")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help='model dir: "final" or "fold1" etc')
+    parser.add_argument("--split", type=str, default=DEFAULT_SPLIT, choices=["validation", "test"], help="split")
+    args = parser.parse_args()
+
     repo_root = resolve_repo_root()
-    results_dir = resolve_results_dir(repo_root)
+    results_dir = resolve_results_dir(repo_root, args.results)
     img_root = resolve_img_root(repo_root)
 
-    model_dir = resolve_model_dir(results_dir, MODEL)
-    ann_path = resolve_ann_path(results_dir, model_dir, SPLIT)
-    pred_path = resolve_pred_path(results_dir, model_dir, SPLIT)
+    model_dir = resolve_model_dir(results_dir, args.model)
+    ann_path = resolve_ann_path(results_dir, model_dir, args.split)
+    pred_path = resolve_pred_path(results_dir, model_dir, args.split, args.model)
 
     coco = read_json(ann_path)
     preds = read_json(pred_path)
+    if not isinstance(preds, list):
+        raise RuntimeError(f"predictions must be a list, got {type(preds)} from {pred_path}")
 
     images = coco.get("images", [])
     annotations = coco.get("annotations", [])
+    if not images:
+        raise RuntimeError(f'No "images" in annotations file: {ann_path}')
 
-    id_to_file = {int(im["id"]): im["file_name"] for im in images}
+    out_dir = figures_dir(repo_root, args.results, args.model, args.split)
 
-    out_dir = figures_dir()
-
+    print("ANN :", ann_path)
+    print("PRED:", pred_path)
+    print("OUT :", out_dir)
     print(f"Processing {len(images)} images...")
 
     for idx, im_info in enumerate(images):
         image_id = int(im_info["id"])
-        file_name = im_info["file_name"]
+        file_name = str(im_info["file_name"])
         img_path = img_root / file_name
 
         if not img_path.exists():
-            print(f"[{idx}] Missing image file: {img_path}")
+            print(f"[{idx+1}/{len(images)}] missing image file: {img_path}")
             continue
 
         gt_boxes = [
@@ -162,22 +190,20 @@ def main() -> None:
         for p in preds:
             if int(p.get("image_id")) == image_id:
                 sc = float(p.get("score", 0.0))
-                if sc >= SCORE_THRESHOLD:
+                if sc >= float(SCORE_THRESHOLD):
                     pred_boxes.append((sc, xywh_to_xyxy(p["bbox"])))
-
         pred_boxes.sort(key=lambda t: t[0], reverse=True)
-        pred_boxes = pred_boxes[:MAX_PREDS]
+        pred_boxes = pred_boxes[: int(MAX_PREDS)]
 
         im = Image.open(img_path).convert("RGB")
         draw = ImageDraw.Draw(im)
 
-        matched_gt = set()
-
-        # 1) Draw all ground truth first (background layer)
+        # Draw GT first
         for gb in gt_boxes:
             draw_box(draw, gb, "green", 4)
 
-        # 2) Then draw predictions on top
+        # Draw predictions on top (blue TP, red FP)
+        matched_gt = set()
         for sc, pb in pred_boxes:
             best_i = -1
             best = 0.0
@@ -189,13 +215,14 @@ def main() -> None:
                     best = v
                     best_i = i
 
-            if best >= IOU_THRESHOLD and best_i >= 0:
+            if best >= float(IOU_THRESHOLD) and best_i >= 0:
                 matched_gt.add(best_i)
-                draw_box(draw, pb, "blue", 2)  # TP on top
+                draw_box(draw, pb, "blue", 2)
             else:
-                draw_box(draw, pb, "red", 2)  # FP on top
+                draw_box(draw, pb, "red", 2)
 
-        out_path = out_dir / f"image_{image_id}.png"
+        original_name = Path(file_name).name
+        out_path = out_dir / original_name
         im.save(out_path)
 
         print(f"[{idx+1}/{len(images)}] saved: {out_path.name}")

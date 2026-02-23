@@ -258,6 +258,13 @@ def main() -> int:
     if str(args.gpus).strip():
         env["CUDA_VISIBLE_DEVICES"] = str(args.gpus).strip()
 
+    # Ensure a unique rendezvous even if DEIM/train.py initializes torch.distributed internally.
+    env["MASTER_ADDR"] = env.get("MASTER_ADDR", "127.0.0.1")
+    env["MASTER_PORT"] = str(int(args.master_port))
+    env.setdefault("WORLD_SIZE", "1")
+    env.setdefault("RANK", "0")
+    env.setdefault("LOCAL_RANK", "0")
+
     pred_path = out_dir / "predictions_coco.json"
     if str(args.dump_predictions).strip() == "1":
         env["DEIM_DUMP_PREDICTIONS"] = str(pred_path.resolve())

@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import shutil
+
 from train_utils import (
     read_json,
     write_json,
@@ -42,34 +44,63 @@ def _location_from_file_name(file_name: str) -> str:
     return "unknown"
 
 
-def _split_holdout_by_location(
-    coco: dict[str, Any],
-    val_frac: float,
-    seed: int,
-    min_val_per_location: int,
-) -> tuple[set[int], set[int]]:
-    """_split_holdout_by_location(coco, val_frac, seed, min_val_per_location) -> (train_ids, val_ids)."""
+def _split_holdout_by_location(coco: dict[str, Any], val_frac: float, seed: int, min_val_per_location: int) -> tuple[set[int], set[int]]:
+    """_split_holdout_by_location(coco, val_frac, seed, min_val_per_location) -> (train_ids, val_ids): Per-location stratified split (whale vs empty)."""
     rng = random.Random(int(seed))
 
     images = coco.get("images", []) or []
+    anns = coco.get("annotations", []) or []
     if not isinstance(images, list) or len(images) == 0:
         raise SystemExit("ERROR: COCO has no images.")
 
+    # image_id -> has_whale (>=1 annotation)
+    whale_img_ids: set[int] = set()
+    for a in anns:
+        try:
+            whale_img_ids.add(int(a.get("image_id")))
+        except Exception:
+            continue
+
+    # group images by location
     by_loc: dict[str, list[dict[str, Any]]] = {}
+    all_img_ids: list[int] = []
     for im in images:
+        if "id" not in im:
+            continue
+        iid = int(im["id"])
+        all_img_ids.append(iid)
         loc = _location_from_file_name(im.get("file_name", ""))
         by_loc.setdefault(loc, []).append(im)
 
     val_img_ids: set[int] = set()
-    all_img_ids: list[int] = [int(im["id"]) for im in images if "id" in im]
 
     for loc, ims in by_loc.items():
-        ids = [int(im["id"]) for im in ims if "id" in im]
-        rng.shuffle(ids)
-        take = min(len(ids), max(int(min_val_per_location), int(round(len(ids) * float(val_frac)))))
-        for x in ids[:take]:
+        whale_ids: list[int] = []
+        empty_ids: list[int] = []
+        for im in ims:
+            iid = int(im["id"])
+            if iid in whale_img_ids:
+                whale_ids.append(iid)
+            else:
+                empty_ids.append(iid)
+
+        rng.shuffle(whale_ids)
+        rng.shuffle(empty_ids)
+
+        def _take_n(n_total: int) -> int:
+            if n_total <= 0:
+                return 0
+            return min(n_total, max(int(min_val_per_location), int(round(n_total * float(val_frac)))))
+
+        take_whale = _take_n(len(whale_ids)) if whale_ids else 0
+        take_empty = _take_n(len(empty_ids)) if empty_ids else 0
+
+        for x in whale_ids[:take_whale]:
+            val_img_ids.add(int(x))
+        for x in empty_ids[:take_empty]:
             val_img_ids.add(int(x))
 
+    # Ensure global target fraction is met (fill from remaining, keeps randomness)
     target_val = max(1, int(round(len(all_img_ids) * float(val_frac))))
     if len(val_img_ids) < target_val:
         remaining = [i for i in all_img_ids if i not in val_img_ids]
@@ -101,6 +132,40 @@ def _filter_coco_by_image_ids(coco: dict[str, Any], keep_img_ids: set[int]) -> d
     coco2["annotations"] = anns2
     return coco2
 
+def write_ann_override_yml(path: Path, img_root: Path, train_ann: str, val_ann: str) -> None:
+    """write_ann_override_yml(path, img_root, train_ann, val_ann) -> None: Write dataset override yml for DEIM."""
+    yml = "\n".join(
+        [
+            "val_dataloader:",
+            "  dataset:",
+            f"    img_folder: {img_root}",
+            f"    ann_file: {val_ann}",
+            "",
+            "train_dataloader:",
+            "  dataset:",
+            f"    img_folder: {img_root}",
+            f"    ann_file: {train_ann}",
+            "",
+        ]
+    )
+    write_text(str(path), yml)
+
+
+def write_include_config_yml(path: Path, base_config: str, override_yml: str, output_dir: str) -> None:
+    """write_include_config_yml(path, base_config, override_yml, output_dir) -> None: Include base+override and set output_dir."""
+    yml = "\n".join(
+        [
+            "__include__: [",
+            f'  "{base_config}",',
+            f'  "{override_yml}",',
+            "]",
+            "",
+            f"output_dir: {output_dir}",
+            "",
+        ]
+    )
+    write_text(str(path), yml)
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -117,14 +182,24 @@ def main() -> int:
     ap.add_argument("--val_frac", default="0.15")
     ap.add_argument("--min_val_per_location", default="1")
     ap.add_argument("--overwrite", default="0")
+    ap.add_argument("--nproc", default="1")
+    ap.add_argument("--master_port", default="29500")
+    ap.add_argument("--eval_name", default="eval_data")
+    ap.add_argument("--eval_gpus", default="")
+    ap.add_argument("--eval_nproc", default="1")
+    ap.add_argument("--eval_master_port", default="29501")
+    ap.add_argument("--overwrite_eval", default="0")
+    ap.add_argument("--val_test_final", default="0")
+    ap.add_argument("--label_offset", default="0")
+    ap.add_argument("--use_amp", action="store_true")
     args = ap.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
     out_dir = Path(args.output_dir).resolve()
-    base_config_abs = resolve_path(args.base_config)
-    coco_trainval_abs = resolve_path(args.coco_trainval)
-    coco_test_abs = resolve_path(args.coco_test) if str(args.coco_test).strip() else ""
-    pretrained_abs = resolve_path(args.pretrained) if str(args.pretrained).strip() else ""
+    base_config_abs = resolve_path(repo_root, args.base_config)
+    coco_trainval_abs = resolve_path(repo_root, args.coco_trainval)
+    coco_test_abs = resolve_path(repo_root, args.coco_test) if str(args.coco_test).strip() else ""
+    pretrained_abs = resolve_path(repo_root, args.pretrained) if str(args.pretrained).strip() else ""
 
     img_root = Path(args.img_root).expanduser()
     img_root_test = Path(args.img_root_test).expanduser() if str(args.img_root_test).strip() else img_root
@@ -155,22 +230,38 @@ def main() -> int:
 
     cfg_dir = out_dir / "config"
     cfg_dir.mkdir(parents=True, exist_ok=True)
+
+    override_yml = cfg_dir / "split_override.yml"
     cfg_path = cfg_dir / "train_config.yml"
 
-    # Keep DEIM default solver behavior by not overriding solver params here.
-    # Only override dataset paths.
-    cfg_obj = {
-        "__base__": [str(Path(base_config_abs).resolve())],
-        "output_dir": str(out_dir),
-        "coco_train": str(train_ann_path),
-        "coco_val": str(val_ann_path),
-        "img_root": str(img_root),
-        "pretrained": (str(Path(pretrained_abs).resolve()) if pretrained_abs else None),
-    }
-    cfg_path.write_text(json.dumps(cfg_obj, indent=2), encoding="utf-8")
+    write_ann_override_yml(override_yml, img_root, str(train_ann_path), str(val_ann_path))
+    write_include_config_yml(cfg_path, str(Path(base_config_abs).resolve()), str(override_yml), str(out_dir))
 
-    cmd = [sys.executable, "train.py", "-c", str(cfg_path)]
     env = os.environ.copy()
+    env["MASTER_ADDR"] = env.get("MASTER_ADDR", "127.0.0.1")
+    env["MASTER_PORT"] = str(int(args.master_port))
+    env.setdefault("WORLD_SIZE", "1")
+    env.setdefault("RANK", "0")
+    env.setdefault("LOCAL_RANK", "0")
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        "--nproc_per_node",
+        str(int(args.nproc)),
+        "--master_port",
+        str(int(args.master_port)),
+        "train.py",
+        "-c",
+        str(cfg_path),
+    ]
+
+    if pretrained_abs:
+        cmd += ["-t", str(Path(pretrained_abs).resolve())]
+    if args.use_amp:
+        cmd.append("--use-amp")
+
     log_path = out_dir / "train_stdout.log"
 
     # Remove stale stage files if present
