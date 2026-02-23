@@ -14,6 +14,7 @@ import openpyxl
 import shutil
 import random
 import uuid
+import traceback
 
 from orekit.pyhelpers import setup_orekit_curdir
 
@@ -28,7 +29,7 @@ from simulation.targets.whales import update_whales, init_whales
 from simulation.targets.water_target_utils import load_land_mask, generate_random_water_targets, build_land_mask
 from simulation.sim_utils import init_eo_tools, init_attitude_models, link_eo_attitude, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, count_orbits_completed, compute_coverage_fraction, _clear_actor_task
 from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution, plot_viewing_time_distribution, plot_gsd_distribution
-from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate, camera_position_xy, close_plotter_safely
+from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate, camera_position_xy, close_plotter_safely, _pump_pyvista_events
 from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
 from simulation.sim_logging import init_excel_log, log_tip, log_cue, log_combined, log_img, gsd_offnadir, at_exit, Logger, compute_stats, format_hms, merge_tip_cue_combined
 from simulation.constants import R_earth
@@ -42,11 +43,11 @@ from pathlib import Path
 
 show_constellation = False
 show_orbits = False
-plot_propagation, uhd = False, False
+plot_propagation, uhd = True, False
 plot_footprints = True
 plot_whale_trajectories = False
 
-create_image = True
+create_image = False
 onboard_ai_tip = True
 onboard_ai_cue = True
 model_attitude_control = True
@@ -57,7 +58,7 @@ verbose = False
 if real_run:
     show_constellation = False
     show_orbits = False
-    plot_propagation, uhd = False, False
+    plot_propagation, uhd = True, True
     plot_footprints = True
     plot_whale_trajectories = False
 
@@ -236,16 +237,41 @@ if plot_propagation:
      tip_fill_meshes, tip_edge_meshes, cue_fill_meshes, cue_edge_meshes,
      step_text) = reset_plotter(pl, all_targets, n_targets, tip_actors, cue_actors, last_theta=None, uhd=uhd)
 
-    pl.show(cpos="yz", interactive_update=True, auto_close=False)
+    if not uhd:
+        pl.show(cpos="yz", interactive_update=True, auto_close=False)
 
     dist_factor = 6.25
     angle_deg = -45.0
+    pl.camera.position = camera_position_xy(dist_factor, angle_deg)
+    pl.camera.focal_point = (0, 0, 0)
 
-    pl.camera.position = camera_position_xy(dist_factor, angle_deg)  # look from -Y
-    pl.camera.focal_point = (0, 0, 0)  # look at Earth center
+    pl.render()
+    if not uhd:
+        _pump_pyvista_events(pl)
 
-    pv_framerate, frames_per_orbit = compute_movie_framerate(a_cue, sim_step_seconds, plot_pyvista_interval, movie_orbit_sec)
-    pl.open_movie( "simulation.mp4",  framerate=pv_framerate)
+    pv_framerate, _ = compute_movie_framerate(a_cue, sim_step_seconds, plot_pyvista_interval, movie_orbit_sec)
+
+    # Force a render first
+    pl.render()
+
+    # Get actual framebuffer size
+    width, height = pl.window_size
+
+    # Make height divisible by 16
+    macro = 16
+    height_fixed = (height + macro - 1) // macro * macro
+
+    if height_fixed != height:
+        pl.window_size = (width, height_fixed)
+        pl.render()
+
+    pl.open_movie(
+        "simulation.mp4",
+        framerate=pv_framerate,
+        format="FFMPEG",
+        codec="libx264",
+        quality=8
+    )
 
 if logging:
     header_tip = ["detection_id", "target_id","tip_actor", "tip_observation_time", "tip_confirmation_time", "tip_ai_decision", "true_label", "correct", "offnadir_deg", "gsd_m", "target_lat", "target_lon", "target_alt",
@@ -613,11 +639,10 @@ while elapsed_seconds <= sim_duration_seconds:
                                 in_view = False
                                 eo_tools_dict[actor.name].pointing_vec_lvlh_target = None
 
-                        pv = eo_tools_dict[actor.name].pointing_vec_lvlh_target
+                        pointing_vec = eo_tools_dict[actor.name].pointing_vec_lvlh_target
                         if (in_view or will_be_in_view_soon) and (eo_tools_dict[actor.name].offnadir_unbound_target is not None) and not (eo_tools_dict[actor.name].offnadir_unbound_target >= (offnadir_limit + offnadir_margin) and not moving_towards):
-                            if pv is not None:
-                                att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_lvlh(pv)
-
+                            if pointing_vec is not None:
+                                att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_lvlh(pointing_vec)
                         if not (in_view or will_be_in_view_later):
                             # Task finished → reset and pick next later
                             print(f"!! {actor.name}: Target {task_id} out of view, delete task")
@@ -893,7 +918,6 @@ while elapsed_seconds <= sim_duration_seconds:
     t_mid = time.time()
 
     if plot_propagation and n_steps % plot_pyvista_interval == 0:
-
         update_plotter(pl,
                        earth_actor, earth_state,
                        sun_light, whales_poly, tasked_poly,
@@ -904,11 +928,13 @@ while elapsed_seconds <= sim_duration_seconds:
                        confirmed_targets_pos, confirmed_targets_neg,
                        FovPoints_tip, FovPoints_cue, step_text, n_steps)
 
-        try:
-            pl.write_frame()
+        if not uhd:
+            _pump_pyvista_events(pl)
 
-        except:
-            print(f"PyVista warning: skipped writing frame at {n_steps}")
+        pl.render()
+        pl.write_frame()
+
+
 
     t_end = time.time()
 

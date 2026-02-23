@@ -12,9 +12,9 @@ from PIL import Image, ImageDraw
 # DEFAULTS (override via CLI)
 # =======================
 
-DEFAULT_RESULTS_FOLDER = "default_model_S"
+DEFAULT_RESULTS_FOLDER = "test_model_S"
 DEFAULT_MODEL = "final"          # "final" or "fold1"
-DEFAULT_SPLIT = "test"           # "validation" or "test"
+DEFAULT_SPLIT = "validation"           # "validation" or "test"
 
 SCORE_THRESHOLD = 0.4
 MAX_PREDS = 50

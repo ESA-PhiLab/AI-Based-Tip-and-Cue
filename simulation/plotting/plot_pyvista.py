@@ -201,10 +201,10 @@ def _eci_to_greenwich_angle_rad(t: datetime) -> float:
     xe, ye, _ = pm.eci2ecef(1.0, 0.0, 0.0, t)
     return math.atan2(ye, xe)
 
-
-def make_plotter_eci(uhd):
+def make_plotter_eci(uhd: bool) -> tuple[pv.Plotter, pv.Actor, dict]:
+    """make_plotter_eci(uhd) -> (pl, earth_actor, state): Create plotter with correct on/off-screen for UHD."""
     window_size = (3840, 2160) if uhd else (1920, 1072)
-    off_screen = True if uhd else False
+    off_screen = bool(uhd)  # UHD must be off-screen
 
     pl = pv.Plotter(lighting="none", window_size=window_size, off_screen=off_screen)
     cubemap = examples.download_cubemap_space_4k()
@@ -219,6 +219,20 @@ def make_plotter_eci(uhd):
     pl.view_isometric()
     state = {"last_theta": None}
     return pl, earth_actor, state
+
+def _pump_pyvista_events(pl: pv.Plotter) -> None:
+    """_pump_pyvista_events(pl) -> None: Pump GUI/VTK events for on-screen rendering."""
+    try:
+        pl.process_events()
+        return
+    except Exception:
+        pass
+    try:
+        iren = getattr(pl, "iren", None)
+        if iren is not None and hasattr(iren, "process_events"):
+            iren.process_events()
+    except Exception:
+        pass
 
 
 def update_earth_rotation_eci(earth_actor: pv.Actor, t: datetime, state: dict) -> None:

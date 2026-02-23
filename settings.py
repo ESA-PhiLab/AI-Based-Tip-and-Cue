@@ -39,7 +39,7 @@ else:
     # Feel free to modify
     print_values = False
     plot_3d = False
-    plot_result = True
+    plot_result = False
     max_glint = False
     generate_radiation = True
     generate_nadir = False
@@ -52,13 +52,13 @@ nSats_cue = 1
 nPlanes_tip = 1
 nPlanes_cue = 1
 
-offnadir_limit = 10  # Maximum off-nadir observation angle (deg), max 62.5 deg
+offnadir_limit = 40  # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 5 * 60  # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
 
 if not real_run:
-    sim_duration_hours = 0.20
+    sim_duration_hours = 5826.4 / 3600 # 0.20
     sim_time = 'slow'
 
 else:
@@ -66,7 +66,7 @@ else:
     sim_time = 'slow'
 
 if not real_run:
-    sim_name = "test1"
+    sim_name = "1_full_orbit"
 else:
     nm_ext = str()
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
