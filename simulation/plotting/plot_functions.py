@@ -210,7 +210,7 @@ def plot_all_fov_footprints(all_fov_polygons, known_targets, extension = "", sho
 
     return fig
 
-def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targets, nPlanes, nSats, extension="", verbose=True, plot_whale_trajectories=False, whale_trajectories=None):
+def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targets, nPlanes, nSats, extension="", verbose=True, plot_whale_trajectories=False, whale_trajectories=None, whale_plot_state=None):
     """Plot satellite footprints, targets, and optionally whale trajectories with Plotly."""
     fig = go.Figure()
 
@@ -254,28 +254,52 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
             print(f"\t\t {n} Added footprint | Time: {int(hours)}h {int(minutes)}m {seconds:.0f}s")
             t_start = time.time()
 
-    # Targets not observed
+    # Targets
     if verbose:
         print(f"\tPlot targets {extension}")
 
+    def _plot_pos(idx, whale):
+        """_plot_pos(idx, whale) -> tuple[float, float]: Return (lat, lon) using last_capture if available else current."""
+        if whale_plot_state and idx in whale_plot_state:
+            d = whale_plot_state[idx]
+            last_cap = d.get("last_capture")
+            cur = d.get("current")
+            if last_cap is not None:
+                return float(last_cap[0]), float(last_cap[1])
+            if cur is not None:
+                return float(cur[0]), float(cur[1])
+        return float(whale.lat), float(whale.lon)
+
     if all_targets:
         observed_ids = set(observed_targets.keys()) if observed_targets else set()
-        unobserved = [w for idx, w in all_targets.items() if idx not in observed_ids]
 
-        if unobserved:
+        unobs_lats, unobs_lons = [], []
+        for idx, w in all_targets.items():
+            if idx in observed_ids:
+                continue
+            lat, lon = _plot_pos(idx, w)
+            unobs_lats.append(lat)
+            unobs_lons.append(lon)
+
+        if unobs_lats:
             fig.add_trace(go.Scattergeo(
-                lon=[w.lon for w in unobserved],
-                lat=[w.lat for w in unobserved],
+                lon=unobs_lons,
+                lat=unobs_lats,
                 mode="markers",
                 marker=dict(color="red", size=5),
                 name="Unobserved targets"
             ))
 
-    # Observed targets
     if observed_targets:
+        obs_lats, obs_lons = [], []
+        for idx, w in observed_targets.items():
+            lat, lon = _plot_pos(idx, w)
+            obs_lats.append(lat)
+            obs_lons.append(lon)
+
         fig.add_trace(go.Scattergeo(
-            lon=[w.lon for w in observed_targets.values()],
-            lat=[w.lat for w in observed_targets.values()],
+            lon=obs_lons,
+            lat=obs_lats,
             mode="markers",
             marker=dict(color="green", size=6),
             name="Observed"

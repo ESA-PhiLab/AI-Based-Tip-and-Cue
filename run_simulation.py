@@ -93,10 +93,6 @@ pv.global_theme.allow_empty_mesh = True
 paseos.set_log_level("WARNING")
 
 
-
-
-
-
 main_path = Path(__file__).resolve().parent
 print(main_path)
 os.chdir(main_path)
@@ -225,6 +221,8 @@ n_targets_negative = n_targets - n_targets_positive
 
 known_targets = generate_random_water_targets(n_targets, mask, res_deg, seed_val=whale_seed, max_abs_lat_val=max_abs_lat)
 all_targets = init_whales(known_targets, seed_val=whale_seed, pos_fraction=pos_fraction)
+last_capture_pos = {idx: None for idx in all_targets.keys()}   # (lat, lon)
+last_capture_time = {idx: None for idx in all_targets.keys()}  # datetime
 
 tasked_targets, observed_targets_tip, observed_targets_cue, confirmed_targets_pos, confirmed_targets_neg = {}, {}, {}, {}, {}
 whale_trajectories = {idx: np.full((n_steps_total, 2), np.nan, dtype=float) for idx in all_targets.keys()}
@@ -403,6 +401,10 @@ while elapsed_seconds <= sim_duration_seconds:
 
                     whale.tip_actor = actor.name
                     whale.t_observed_tip = t_datetime
+
+                    last_capture_pos[whale_idx] = (float(whale.lat), float(whale.lon))
+                    last_capture_time[whale_idx] = t_datetime
+
                     whale.delay_confirmation_tip = delay_confirmation_tip
                     whale.state_observing = 1
                     whale.coord_observed = whale.position()
@@ -761,6 +763,9 @@ while elapsed_seconds <= sim_duration_seconds:
                     whale.cue_actor = actor.name
                     whale.t_observed_cue = t_datetime
                     whale.coord_observed = target_coord
+
+                    last_capture_pos[whale_idx] = (float(whale.lat), float(whale.lon))
+                    last_capture_time[whale_idx] = t_datetime
 
                     if whale.detection_id is None:
                         whale.detection_id = str(uuid.uuid4())
@@ -1277,11 +1282,19 @@ if plot_footprints:
 
     t2 = time.time()
 
+    whale_plot_state = {}
+    for idx, w in all_targets.items():
+        whale_plot_state[idx] = {
+            "current": (float(w.lat), float(w.lon)),
+            "last_capture": last_capture_pos.get(idx, None),
+            "t_last_capture": last_capture_time.get(idx, None),
+        }
+
     if len(fov_polygons_tip) > 0 and len(fov_polygons_tip) <= 1e6:
-        plot_all_fov_footprints_plotly(fov_polygons_tip, all_targets, observed_targets_tip, nPlanes_tip, nSats_tip, extension="tip", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories)
+        plot_all_fov_footprints_plotly(fov_polygons_tip, all_targets, observed_targets_tip, nPlanes_tip, nSats_tip, extension="tip", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories, whale_plot_state=whale_plot_state)
 
     if len(fov_polygons_cue) > 0 and len(fov_polygons_cue) <= 1e6:
-        plot_all_fov_footprints_plotly(fov_polygons_cue, all_targets, observed_targets_cue, nPlanes_cue, nSats_cue, extension="cue", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories)
+        plot_all_fov_footprints_plotly(fov_polygons_cue, all_targets, observed_targets_cue, nPlanes_cue, nSats_cue, extension="cue", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories, whale_plot_state=whale_plot_state)
 
     else:
         print("Footprints too long, skip plotting")
