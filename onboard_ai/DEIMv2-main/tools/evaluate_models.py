@@ -15,7 +15,78 @@ import matplotlib.pyplot as plt
 import eval_utils
 
 
+def _write_overview_mean_std_xlsx(path: Path, rows: list[dict[str, Any]], keys: list[str]) -> None:
+    """_write_overview_mean_std_xlsx(path, rows, keys) -> None: mean/std xlsx (computed over provided rows)."""
+    from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
 
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "mean_std"
+    ws.append(["metric", "mean", "std"])
+
+    for k in keys:
+        vals: list[float] = []
+        for r in rows:
+            v = eval_utils._safe_float(r.get(k))
+            if v is not None:
+                vals.append(float(v))
+        if not vals:
+            ws.append([k, "", ""])
+            continue
+        mean = sum(vals) / float(len(vals))
+        var = sum((x - mean) ** 2 for x in vals) / float(len(vals))
+        std = math.sqrt(var)
+        ws.append([k, mean, std])
+
+    ws.column_dimensions[get_column_letter(1)].width = 60
+    ws.column_dimensions[get_column_letter(2)].width = 18
+    ws.column_dimensions[get_column_letter(3)].width = 18
+    wb.save(str(path))
+
+def _write_fold_split_overview_xlsx(path: Path, folds: list[Path]) -> None:
+    """_write_fold_split_overview_xlsx(path, folds) -> None: Write fold -> train/val/test locations overview xlsx."""
+    from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "fold_splits"
+
+    header = ["fold", "train_locations", "val_locations", "test_locations"]
+    ws.append(header)
+
+    for fold_dir in folds:
+        meta_path = fold_dir / "fold_meta.json"
+        if not meta_path.exists():
+            ws.append([fold_dir.name, "", "", ""])
+            continue
+
+        try:
+            meta = read_json(meta_path)
+        except Exception:
+            ws.append([fold_dir.name, "", "", ""])
+            continue
+
+        train_locs = meta.get("train_locations", []) or []
+        val_locs = meta.get("val_locations", []) or []
+        holdout_test_locs = meta.get("holdout_test_locations", []) or []
+
+        ws.append(
+            [
+                fold_dir.name,
+                ", ".join(map(str, train_locs)),
+                ", ".join(map(str, val_locs)),
+                ", ".join(map(str, holdout_test_locs)),
+            ]
+        )
+
+    for ci, c in enumerate(header, start=1):
+        ws.column_dimensions[get_column_letter(ci)].width = min(80, max(14, len(str(c)) + 2))
+
+    wb.save(str(path))
 
 def read_json(path: Path) -> Any:
     """read_json(path) -> Any: Read JSON."""
@@ -511,6 +582,7 @@ def main() -> int:
 
     # Keep top-level mean/std as validation folds-only (so it stays well-defined)
     _write_overview_mean_std_xlsx(overview_dir / "overview_mean_std.xlsx", val_rows_root, val_keys_root)
+    _write_fold_split_overview_xlsx(overview_dir / "fold_split_overview.xlsx", folds)
 
     write_json(
         overview_dir / "summary.json",

@@ -59,7 +59,19 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
                 out_dir = kwargs.get("output_dir", None)
                 if out_dir:
                     dist_utils.save_on_master(state, os.path.join(out_dir, "nan.pth"))
-                raise RuntimeError("NaN or Inf detected in pred_boxes.")
+                pb = outputs.get("pred_boxes", None)
+                if pb is None:
+                    raise RuntimeError("pred_boxes missing from outputs.")
+
+                bad = ~torch.isfinite(pb)
+                msg = (
+                    f"NaN/Inf in pred_boxes: shape={tuple(pb.shape)} "
+                    f"bad_count={int(bad.sum().item())} "
+                    f"min={float(torch.nan_to_num(pb, nan=0.0, posinf=0.0, neginf=0.0).min().item())} "
+                    f"max={float(torch.nan_to_num(pb, nan=0.0, posinf=0.0, neginf=0.0).max().item())}"
+                )
+                print(msg)
+                raise RuntimeError(msg)
 
             loss_dict = criterion(outputs, targets, **metas)
             weight_dict = criterion.weight_dict

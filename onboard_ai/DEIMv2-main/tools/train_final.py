@@ -5,7 +5,6 @@ import argparse
 import json
 import os
 import random
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,7 +17,6 @@ from train_utils import (
     write_text,
     resolve_path,
     run_and_tee,
-    ensure_env_cuda_visible_devices,
     pick_checkpoint,
     cleanup_numbered_checkpoints,
 )
@@ -44,7 +42,9 @@ def _location_from_file_name(file_name: str) -> str:
     return "unknown"
 
 
-def _split_holdout_by_location(coco: dict[str, Any], val_frac: float, seed: int, min_val_per_location: int) -> tuple[set[int], set[int]]:
+def _split_holdout_by_location(
+    coco: dict[str, Any], val_frac: float, seed: int, min_val_per_location: int
+) -> tuple[set[int], set[int]]:
     """_split_holdout_by_location(coco, val_frac, seed, min_val_per_location) -> (train_ids, val_ids): Per-location stratified split (whale vs empty)."""
     rng = random.Random(int(seed))
 
@@ -53,7 +53,6 @@ def _split_holdout_by_location(coco: dict[str, Any], val_frac: float, seed: int,
     if not isinstance(images, list) or len(images) == 0:
         raise SystemExit("ERROR: COCO has no images.")
 
-    # image_id -> has_whale (>=1 annotation)
     whale_img_ids: set[int] = set()
     for a in anns:
         try:
@@ -61,7 +60,6 @@ def _split_holdout_by_location(coco: dict[str, Any], val_frac: float, seed: int,
         except Exception:
             continue
 
-    # group images by location
     by_loc: dict[str, list[dict[str, Any]]] = {}
     all_img_ids: list[int] = []
     for im in images:
@@ -74,7 +72,7 @@ def _split_holdout_by_location(coco: dict[str, Any], val_frac: float, seed: int,
 
     val_img_ids: set[int] = set()
 
-    for loc, ims in by_loc.items():
+    for _, ims in by_loc.items():
         whale_ids: list[int] = []
         empty_ids: list[int] = []
         for im in ims:
@@ -100,7 +98,6 @@ def _split_holdout_by_location(coco: dict[str, Any], val_frac: float, seed: int,
         for x in empty_ids[:take_empty]:
             val_img_ids.add(int(x))
 
-    # Ensure global target fraction is met (fill from remaining, keeps randomness)
     target_val = max(1, int(round(len(all_img_ids) * float(val_frac))))
     if len(val_img_ids) < target_val:
         remaining = [i for i in all_img_ids if i not in val_img_ids]
@@ -131,6 +128,7 @@ def _filter_coco_by_image_ids(coco: dict[str, Any], keep_img_ids: set[int]) -> d
     coco2["images"] = images2
     coco2["annotations"] = anns2
     return coco2
+
 
 def write_ann_override_yml(path: Path, img_root: Path, train_ann: str, val_ann: str) -> None:
     """write_ann_override_yml(path, img_root, train_ann, val_ann) -> None: Write dataset override yml for DEIM."""
@@ -168,6 +166,7 @@ def write_include_config_yml(path: Path, base_config: str, override_yml: str, ou
 
 
 def main() -> int:
+    """main() -> int: Split train/val, write configs, launch torchrun training for final model."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo_root", default=".")
     ap.add_argument("--base_config", required=True)
@@ -204,8 +203,6 @@ def main() -> int:
     img_root = Path(args.img_root).expanduser()
     img_root_test = Path(args.img_root_test).expanduser() if str(args.img_root_test).strip() else img_root
 
-    ensure_env_cuda_visible_devices(args.gpus)
-
     if str(args.overwrite).strip() == "1" and out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -237,12 +234,15 @@ def main() -> int:
     write_ann_override_yml(override_yml, img_root, str(train_ann_path), str(val_ann_path))
     write_include_config_yml(cfg_path, str(Path(base_config_abs).resolve()), str(override_yml), str(out_dir))
 
+    # -----------------------
+    # FIX: propagate GPU selection into the env used for torchrun
+    # -----------------------
     env = os.environ.copy()
+    if str(args.gpus).strip():
+        env["CUDA_VISIBLE_DEVICES"] = str(args.gpus).strip()
+
     env["MASTER_ADDR"] = env.get("MASTER_ADDR", "127.0.0.1")
     env["MASTER_PORT"] = str(int(args.master_port))
-    env.setdefault("WORLD_SIZE", "1")
-    env.setdefault("RANK", "0")
-    env.setdefault("LOCAL_RANK", "0")
 
     cmd = [
         sys.executable,
@@ -264,7 +264,6 @@ def main() -> int:
 
     log_path = out_dir / "train_stdout.log"
 
-    # Remove stale stage files if present
     for stale in ["best_stg1.pth", "best_stg2.pth", "last.pth"]:
         p = out_dir / stale
         if p.exists():
@@ -279,7 +278,6 @@ def main() -> int:
 
     ckpt = pick_checkpoint(out_dir)
 
-    # Record which checkpoint variant was selected (stg1/stg2/last/other)
     variant = "other"
     n = ckpt.name
     if n == "best_stg1.pth":

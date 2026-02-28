@@ -20,6 +20,9 @@ import re
 from datetime import datetime
 
 
+_AVG_RE = re.compile(r"\bAveraged stats:\s.*?\bloss:\s[-+0-9.eE]+\s\(([-+0-9.eE]+)\)")
+_EPOCH_RE = re.compile(r"^Epoch:\s*\[(\d+)\]")
+
 def read_json(path: str) -> Any:
     """read_json(path) -> Any: Read JSON."""
     with open(path, "r", encoding="utf-8") as f:
@@ -583,66 +586,155 @@ def parse_train_coco_metrics_from_log(log_path: Path) -> list[dict[str, Any]]:
     return [rows[k] for k in sorted(rows.keys())]
 
 
-def parse_loss_curves_from_log(log_path: Path) -> list[dict[str, Any]]:
-    """parse_loss_curves_from_log(log_path) -> list[dict]: Extract per-epoch train/val loss (and components) from log.txt if available."""
-    log_path = Path(log_path)
-    fold_dir = log_path.parent.parent if log_path.parent.name == "logs" else log_path.parent
-    log_txt = fold_dir / "log.txt"
+_LOSS_KV_RE = re.compile(r"\b(loss(?:_[A-Za-z0-9]+)*):\s*[-+0-9.eE]+\s*\(([-+0-9.eE]+)\)")
 
-    rows: list[dict[str, Any]] = []
-    if not log_txt.exists():
-        return rows
+def parse_loss_curves_from_stdout_log(stdout_log_path: Path) -> list[dict[str, Any]]:
+    """parse_loss_curves_from_stdout_log(stdout_log_path) -> list[dict]: Extract per-epoch train/val loss components from plain-text logs."""
+    stdout_log_path = Path(stdout_log_path)
+    if not stdout_log_path.exists():
+        return []
 
-    # Expect JSONL where some keys include train/val losses or components.
-    for line in log_txt.read_text(encoding="utf-8", errors="ignore").splitlines():
-        obj = _try_parse_json_line(line)
-        if not obj or "epoch" not in obj:
+    rows_by_ep: dict[int, dict[str, Any]] = {}
+    current_ep: int | None = None
+    in_test = False
+
+    for line in stdout_log_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        s = line.strip()
+
+        m_ep = _EPOCH_RE.match(s)
+        if m_ep:
+            current_ep = int(m_ep.group(1))
+            in_test = False
+            rows_by_ep.setdefault(current_ep, {"epoch": current_ep})
             continue
-        try:
-            ep = int(obj.get("epoch"))
-        except Exception:
+
+        if s.startswith("Test:"):
+            in_test = True
             continue
 
-        r: dict[str, Any] = {"epoch": ep}
+        if "Averaged stats:" not in s or current_ep is None:
+            continue
 
-        # Common conventions we support:
-        # - train_loss, val_loss
-        # - train_loss_* / val_loss_* components
-        # - loss_* (treated as val components if prefixed with 'test_' not present)
-        for k, v in obj.items():
-            fv = safe_float(v)
+        kvs = _LOSS_KV_RE.findall(s)
+        if not kvs:
+            continue
+
+        prefix = "val_" if in_test else "train_"
+        r = rows_by_ep[current_ep]
+        for name, avg_str in kvs:
+            fv = safe_float(avg_str)
             if fv is None:
                 continue
-            if k in ("train_loss", "val_loss"):
-                r[k] = fv
-            elif k.startswith("train_") and ("loss" in k):
-                r[k] = fv
-            elif k.startswith("val_") and ("loss" in k):
-                r[k] = fv
+            r[f"{prefix}{name}"] = float(fv)
 
-        if len(r.keys()) > 1:
-            rows.append(r)
+    return [rows_by_ep[k] for k in sorted(rows_by_ep.keys())]
 
-    # Deduplicate by epoch keeping last
-    by_ep: dict[int, dict[str, Any]] = {}
-    for r in rows:
-        by_ep[int(r["epoch"])] = r
-    return [by_ep[k] for k in sorted(by_ep.keys())]
+def parse_loss_curves_from_jsonl_logtxt(log_path: Path) -> list[dict[str, Any]]:
+    """parse_loss_curves_from_jsonl_logtxt(log_path) -> list[dict]: Parse per-epoch train/val component losses from JSONL log.txt."""
+    log_path = Path(log_path)
+
+    # If user passed a fold dir, prefer fold/log.txt
+    if log_path.is_dir():
+        cand = log_path / "log.txt"
+        if cand.exists():
+            log_path = cand
+
+    if log_path.name != "log.txt":
+        # If a stdout log was passed, try sibling log.txt
+        cand = log_path.parent / "log.txt"
+        if cand.exists():
+            log_path = cand
+
+    if not log_path.exists():
+        return []
+
+    rows_by_ep: dict[int, dict[str, Any]] = {}
+    txt = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+    def is_loss_key(k: str) -> bool:
+        if not k.startswith("loss"):
+            return False
+        if any(x in k for x in ["dn_", "aux_", "enc_", "_pre", "pre_", "detr"]):
+            return False
+        return True
+
+    for line in txt:
+        obj = _try_parse_json_line(line)
+        if not obj:
+            continue
+        if "epoch" not in obj:
+            continue
+
+        ep = safe_float(obj.get("epoch"))
+        if ep is None:
+            continue
+        ep_i = int(ep)
+
+        r = rows_by_ep.setdefault(ep_i, {"epoch": ep_i})
+
+        # Determine whether this JSON line is train or val/test
+        # Common pattern: train logs use "loss_*", test logs use "test_loss_*"
+        is_val = any(k.startswith("test_") or k.startswith("val_") for k in obj.keys())
+
+        if is_val:
+            # Capture test_/val_ prefixed losses
+            for k, v in obj.items():
+                if not isinstance(k, str):
+                    continue
+                if k.startswith("test_") and is_loss_key(k[len("test_"):]):
+                    fv = safe_float(v)
+                    if fv is not None:
+                        r[f"val_{k[len('test_') :]}"] = float(fv)
+                elif k.startswith("val_") and is_loss_key(k[len("val_"):]):
+                    fv = safe_float(v)
+                    if fv is not None:
+                        r[f"val_{k[len('val_') :]}"] = float(fv)
+        else:
+            # Capture train losses (usually unprefixed "loss_*")
+            for k, v in obj.items():
+                if not isinstance(k, str):
+                    continue
+                if is_loss_key(k):
+                    fv = safe_float(v)
+                    if fv is not None:
+                        r[f"train_{k}"] = float(fv)
+
+    return [rows_by_ep[k] for k in sorted(rows_by_ep.keys())]
+
+def parse_loss_curves_from_log(log_path: Path) -> list[dict[str, Any]]:
+    """parse_loss_curves_from_log(log_path) -> list[dict]: Parse loss curves from JSONL log.txt or plain-text stdout logs."""
+    log_path = Path(log_path)
+
+    rows = parse_loss_curves_from_jsonl_logtxt(log_path)
+    if rows:
+        return rows
+
+    return parse_loss_curves_from_stdout_log(log_path)
 
 
-def _compute_total_loss(row: dict[str, Any], prefix: str) -> float | None:
-    """_compute_total_loss(row, prefix) -> float|None: Sum component losses for a prefix if total not present."""
+def _loss_component_suffixes(row: dict[str, Any], prefix: str) -> set[str]:
+    """_loss_component_suffixes(row, prefix) -> set[str]: Component-loss suffixes for a prefix (excludes total)."""
     total_key = f"{prefix}loss"
-    if total_key in row:
-        return safe_float(row.get(total_key))
+    suff: set[str] = set()
+    for k in row.keys():
+        if k.startswith(prefix) and "loss" in k and k != total_key:
+            suff.add(k[len(prefix):])
+    return suff
 
-    # Accept train_loss_* or val_loss_* style
+
+def _compute_total_loss(row: dict[str, Any], prefix: str, allowed_suffixes: set[str] | None = None) -> float | None:
+    """_compute_total_loss(row, prefix, allowed_suffixes=None) -> float|None: Sum component losses (ignores total key)."""
+    total_key = f"{prefix}loss"
     comps: list[float] = []
     for k, v in row.items():
-        if k.startswith(prefix) and "loss" in k and k != total_key:
-            fv = safe_float(v)
-            if fv is not None:
-                comps.append(float(fv))
+        if not (k.startswith(prefix) and "loss" in k and k != total_key):
+            continue
+        suffix = k[len(prefix):]
+        if allowed_suffixes is not None and suffix not in allowed_suffixes:
+            continue
+        fv = safe_float(v)
+        if fv is not None:
+            comps.append(float(fv))
     if comps:
         return float(sum(comps))
     return None
@@ -677,9 +769,20 @@ def plot_metric_over_epoch(out_path: Path, title: str, rows: list[dict[str, Any]
     plt.savefig(str(out_path))
     plt.close()
 
-
 def plot_train_val_loss(out_path: Path, title: str, rows: list[dict[str, Any]]) -> None:
-    """plot_train_val_loss(out_path, title, rows) -> None: Plot train vs val total loss over epoch if possible."""
+    """plot_train_val_loss(out_path, title, rows) -> None: Plot train vs val loss as identical sum over val components."""
+    # Determine which component keys exist in validation across the run
+    # We only sum these, for BOTH train and val.
+    val_suffixes: set[str] = set()
+    for r in rows:
+        for k in r.keys():
+            if k.startswith("val_loss") and k != "val_loss":
+                val_suffixes.add(k[len("val_"):])  # e.g. "loss_bbox"
+
+    # Fallback: if val only logged total (rare for JSONL), try the classic trio
+    if not val_suffixes:
+        val_suffixes = {"loss_mal", "loss_bbox", "loss_giou"}
+
     xs: list[int] = []
     tr: list[float] = []
     va: list[float] = []
@@ -689,20 +792,27 @@ def plot_train_val_loss(out_path: Path, title: str, rows: list[dict[str, Any]]) 
         if ep is None:
             continue
 
-        train_total = safe_float(r.get("train_loss"))
-        val_total = safe_float(r.get("val_loss"))
+        train_total = 0.0
+        val_total = 0.0
+        have_train = False
+        have_val = False
 
-        if train_total is None:
-            train_total = _compute_total_loss(r, "train_")
-        if val_total is None:
-            val_total = _compute_total_loss(r, "val_")
+        for suf in sorted(val_suffixes):
+            tv = safe_float(r.get(f"train_{suf}"))
+            vv = safe_float(r.get(f"val_{suf}"))
+            if tv is not None:
+                train_total += float(tv)
+                have_train = True
+            if vv is not None:
+                val_total += float(vv)
+                have_val = True
 
-        if train_total is None and val_total is None:
+        if not (have_train and have_val):
             continue
 
         xs.append(int(ep))
-        tr.append(float(train_total) if train_total is not None else float("nan"))
-        va.append(float(val_total) if val_total is not None else float("nan"))
+        tr.append(train_total)
+        va.append(val_total)
 
     if not xs:
         return
@@ -714,12 +824,11 @@ def plot_train_val_loss(out_path: Path, title: str, rows: list[dict[str, Any]]) 
     plt.plot(xs, va, label="val")
     plt.title(title)
     plt.xlabel("epoch")
-    plt.ylabel("loss")
+    plt.ylabel("loss (sum of val components)")
     plt.legend()
     plt.tight_layout()
     plt.savefig(str(out_path))
     plt.close()
-
 
 def write_train_metrics_xlsx(fold_dir: Path, coco_rows: list[dict[str, Any]]) -> None:
     """write_train_metrics_xlsx(fold_dir, coco_rows) -> None: Write train metrics to fold_dir/metrics/train_metrics.xlsx."""

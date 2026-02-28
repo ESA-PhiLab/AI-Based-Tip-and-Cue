@@ -178,3 +178,35 @@ def ensure_env_cuda_visible_devices(gpus: str) -> dict[str, str]:
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpus).strip()
     return env
+
+def run_and_tee(cmd: list[str], env: dict[str, str] | None, cwd: str | None, log_path: str) -> int:
+    """run_and_tee(cmd, env, cwd, log_path) -> int: Stream stdout/stderr to console and append to log."""
+    from datetime import datetime
+    from pathlib import Path
+    import subprocess
+
+    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write("\n" + "=" * 120 + "\n")
+        f.write(f"[run_and_tee] {datetime.now().isoformat(timespec='seconds')}\n")
+        f.write(f"[run_and_tee] CMD: {' '.join(cmd)}\n")
+        f.write("=" * 120 + "\n")
+        f.flush()
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+            cwd=cwd,
+            text=True,
+        )
+
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            f.write(line)
+            f.flush()
+            print(line, end="")
+
+        return int(proc.wait())

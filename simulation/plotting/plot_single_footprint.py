@@ -63,15 +63,21 @@ def main() -> None:
     t0_pykep = pk.epoch_from_string(t_datetime_utc.strftime("%Y-%m-%d %H:%M:%S"))
 
     # satellite geodetic
-    sat_lat_deg = 3.0
-    sat_lon_deg = 0.0
+    sat_lat_deg = 20.94716
+    sat_lon_deg = -10.60062
     sat_alt_m = 613e3
 
     # target geodetic
-    target_lat_deg = 0.0
-    target_lon_deg = 0.0
+    target_lat_deg = 27.94716
+    target_lon_deg = -15.60062
     target_alt_m = 0.0
     target_geo = (target_lat_deg, target_lon_deg, target_alt_m)
+
+    eul_default = [0.0, 0.0, 0.0]
+    swath_cue = 45 * 10 ** 3  # m
+
+
+    fov = math.degrees(2 * math.atan(swath_cue / (2 * (a_tip - R_earth))))  # deg
 
     # IMPORTANT: what does plot_all_fov_footprints_plotly expect?
     # try "latlon" first; if still no polygon, switch to "lonlat"
@@ -103,13 +109,6 @@ def main() -> None:
     ActorBuilder.set_central_body(actor, pk.planet.jpl_lp("earth"), radius=R_earth)
     actor.set_time(t0_pykep)
 
-    # select fov + defaults like in sim
-    if use_cue:
-        fov = fov_cue
-        eul_default = [0.0, 0.0, 0.0]
-    else:
-        fov = fov_tip
-        eul_default = [0.0, 0.0, 0.0]
 
     eo_tools_dict = init_eo_tools([actor], [], fov, fov, offnadir_limit)
     att_models_dict = init_attitude_models(

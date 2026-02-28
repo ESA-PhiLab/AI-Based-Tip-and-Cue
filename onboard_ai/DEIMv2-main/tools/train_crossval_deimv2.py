@@ -68,6 +68,66 @@ def _run_eval_one(repo_root: Path, base_config: Path, checkpoint: Path, img_root
     return int(subprocess.call(cmd, cwd=str(repo_root), env=env))
 
 
+def _has_eval_metrics(fold_dir: Path) -> bool:
+    """_has_eval_metrics(fold_dir) -> bool: True if eval produced metrics.json."""
+    if (fold_dir / "metrics" / "validation" / "metrics.json").exists():
+        return True
+    if (fold_dir / "metrics" / "test" / "metrics.json").exists():
+        return True
+    if list(fold_dir.glob("eval_val/**/metrics.json")):
+        return True
+    if list(fold_dir.glob("eval_test/**/metrics.json")):
+        return True
+    return False
+
+
+def _find_resume_ckpt(fold_dir: Path) -> Path | None:
+    """_find_resume_ckpt(fold_dir) -> Path|None: Select checkpoint for resume."""
+    ckpt_dir = fold_dir / "checkpoints"
+
+    candidates: list[Path] = []
+    candidates += list(fold_dir.glob("*.pth"))
+    if ckpt_dir.exists():
+        candidates += list(ckpt_dir.glob("*.pth"))
+
+    candidates = [p for p in candidates if p.is_file()]
+    if not candidates:
+        return None
+
+    by_name = {p.name: p for p in candidates}
+
+    for key in ["last.pth", "best_stg2.pth", "best_stg1.pth", "best.pth"]:
+        if key in by_name:
+            return by_name[key]
+
+    numbered = [p for p in candidates if p.name.startswith("checkpoint") and p.name.endswith(".pth")]
+    if numbered:
+        def _step(p: Path) -> int:
+            digits = "".join(ch for ch in p.stem if ch.isdigit())
+            return int(digits) if digits else -1
+        numbered.sort(key=_step)
+        return numbered[-1]
+
+    return sorted(candidates, key=lambda p: p.stat().st_mtime)[-1]
+
+
+def _fold_is_done(fold_dir: Path, eval_after_each_fold: str) -> bool:
+    """_fold_is_done(fold_dir, eval_after_each_fold) -> bool: True if fold completed."""
+    if (fold_dir / "DONE").exists():
+        return True
+
+    if not (fold_dir / "fold_meta.json").exists():
+        return False
+
+    if _find_resume_ckpt(fold_dir) is None:
+        return False
+
+    if str(eval_after_each_fold).strip() == "1":
+        return _has_eval_metrics(fold_dir)
+
+    return True
+
+
 def make_random_folds(locations: list[str], k: int, seed: int, val_size: int) -> list[FoldSpec]:
     """make_random_folds(locations, k, seed, val_size) -> list[FoldSpec]: Random folds with fixed val_size."""
     rng = random.Random(int(seed))
@@ -259,7 +319,12 @@ def main() -> None:
 
     ap.add_argument("--label_offset", default="0")
     ap.add_argument("--use_amp", action="store_true")
-    args = ap.parse_args()
+    sys.argv = [a.replace("\r", "") for a in sys.argv]
+    args, unknown = ap.parse_known_args()
+
+    unknown_clean = [u for u in unknown if str(u).replace("\r", "").strip() != ""]
+    if unknown_clean:
+        ap.error("unrecognized arguments: " + " ".join(unknown_clean))
 
     repo_root = Path(__file__).resolve().parents[1]
 
@@ -289,25 +354,27 @@ def main() -> None:
             "or ensure img_root contains location subfolders, or COCO images[*].file_name starts with 'Location/...'."
         )
 
-    # 2) holdout test locations: must be exactly 2
     holdout_test = extract_locations_from_csv_arg(args.holdout_test_locations) if str(args.holdout_test_locations).strip() else []
-    if len(holdout_test) != 2:
-        raise SystemExit(f"ERROR: --holdout_test_locations must contain exactly 2 locations, got {len(holdout_test)}: {holdout_test}")
+    if len(holdout_test) not in (0, 2):
+        raise SystemExit(
+            f"ERROR: --holdout_test_locations must contain 0 or exactly 2 locations, got {len(holdout_test)}: {holdout_test}"
+        )
 
     missing = [x for x in holdout_test if x not in all_locations]
     if missing:
         raise SystemExit(f"ERROR: Holdout test locations not found among detected locations: {missing}")
 
-    # 3) CV pool = all minus holdout test
+    # 3) CV pool = all minus optional holdout test
     cv_locations = [x for x in all_locations if x not in set(holdout_test)]
 
     val_size = int(args.val_size)
-    if val_size != 2:
-        raise SystemExit(f"ERROR: This setup targets 5/2/2; set --val_size=2 (got {val_size}).")
-    if len(cv_locations) != 7:
+    if val_size < 1:
+        raise SystemExit(f"ERROR: --val_size must be >= 1, got {val_size}.")
+    if len(cv_locations) <= val_size:
         raise SystemExit(
-            f"ERROR: This setup targets 5/2/2 with 9 total locations -> CV pool must be 7, got {len(cv_locations)}. "
-            f"Detected all={len(all_locations)} holdout_test=2. all_locations={all_locations} holdout_test={holdout_test}"
+            f"ERROR: Not enough locations for CV after removing holdout_test. "
+            f"Need len(cv_locations) > val_size, got len(cv_locations)={len(cv_locations)} val_size={val_size}. "
+            f"all_locations={all_locations} holdout_test={holdout_test}"
         )
 
     print(f"[train_crossval] All locations ({len(all_locations)}): {all_locations}", flush=True)
@@ -343,9 +410,15 @@ def main() -> None:
     nproc = int(args.nproc)
 
     for fold in folds:
-        if len(fold.val_locations) != 2 or len(fold.train_locations) != 5:
+        if len(fold.val_locations) != int(val_size):
             raise SystemExit(
-                f"ERROR: Fold split mismatch. Expected 5 train / 2 val. Got train={len(fold.train_locations)} val={len(fold.val_locations)} "
+                f"ERROR: Fold split mismatch. Expected val_size={int(val_size)}. "
+                f"Got train={len(fold.train_locations)} val={len(fold.val_locations)} "
+                f"train={fold.train_locations} val={fold.val_locations}"
+            )
+        if len(fold.train_locations) < 1:
+            raise SystemExit(
+                f"ERROR: Fold split mismatch. Training set became empty. "
                 f"train={fold.train_locations} val={fold.val_locations}"
             )
 
@@ -403,7 +476,7 @@ def main() -> None:
             "val_locations": fold.val_locations,
             "train_ann": str(train_ann_path),
             "val_ann": str(val_ann_path),
-            "test_ann": (str(Path(coco_test_abs).resolve()) if coco_test_abs else None),
+            "test_ann": (str(Path(coco_test_abs).resolve()) if (coco_test_abs and holdout_test) else None),
             "log": str(log_path.resolve()),
             "fold_checkpoint": str(fold_ckpt.resolve()),
             "holdout_test_locations": holdout_test,
@@ -434,7 +507,7 @@ def main() -> None:
                 raise SystemExit(f"Fold {fold.fold_id} validation eval failed: exit {rc_val}")
             eval_utils.copy_eval_artifacts_to_metrics_folder(out_val, fold_dir, "validation", overwrite=str(args.overwrite_eval))
 
-            if coco_test_abs:
+            if coco_test_abs and holdout_test:
                 out_test = fold_dir / "eval_test" / str(args.eval_name)
                 rc_test = _run_eval_one(
                     repo_root=repo_root2,
