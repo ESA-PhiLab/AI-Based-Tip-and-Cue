@@ -223,7 +223,7 @@ def plot_all_fov_footprints_plotly(all_fov_polygons, all_targets, observed_targe
                 lon=[p[1] for p in traj],
                 lat=[p[0] for p in traj],
                 mode="lines",
-                line=dict(width=1, color="orange"),
+                line=dict(width=3, color="orange"),
                 name=f"Whale {whale_id} path",
                 showlegend=False  # avoids hundreds of legend entries
             ))

@@ -43,7 +43,7 @@ from pathlib import Path
 
 show_constellation = False
 show_orbits = False
-plot_propagation, uhd = True, False
+plot_propagation, uhd = True, True
 plot_footprints = True
 plot_whale_trajectories = False
 
@@ -937,7 +937,10 @@ while elapsed_seconds <= sim_duration_seconds:
             _pump_pyvista_events(pl)
 
         pl.render()
-        pl.write_frame()
+        try:
+            pl.write_frame()
+        except Exception:
+            print("Failed to write PyVista frame, skipping to the next")
 
 
 

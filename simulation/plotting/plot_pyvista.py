@@ -614,7 +614,10 @@ def update_plotter(pl,
     # Step label with timestamp
     step_text.SetText(1, t_datetime.strftime("%d-%m-%y %H:%M:%S"))
 
-    pl.update()
+    if getattr(pl, "off_screen", False):
+        pl.render()
+    else:
+        pl.update()
 
 
 

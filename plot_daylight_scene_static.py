@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -60,9 +60,39 @@ def _set_poly_points(poly: pv.PolyData, pts: np.ndarray) -> None:
     poly.verts = verts
 
 
+def _eci_to_pv(v: np.ndarray) -> np.ndarray:
+    """_eci_to_pv(v) -> np.ndarray: Apply plotting axis flip ([-x,-y,+z])."""
+    v = np.asarray(v, dtype=float)
+    if v.ndim == 1:
+        return np.array([-v[0], -v[1], v[2]], dtype=float)
+    return np.column_stack([-v[:, 0], -v[:, 1], v[:, 2]])
+
+
+def _make_line_poly() -> pv.PolyData:
+    """_make_line_poly() -> pv.PolyData: Create a 2-point line PolyData that can be updated."""
+    pts = np.zeros((2, 3), dtype=float)
+    lines = np.array([2, 0, 1], dtype=np.int64)
+    return pv.PolyData(pts, lines)
+
+
+def _set_line(line_poly: pv.PolyData, p0: np.ndarray, p1: np.ndarray) -> None:
+    """_set_line(line_poly, p0, p1) -> None: Update endpoints of a 2-point line."""
+    p0 = np.asarray(p0, dtype=float).reshape(3)
+    p1 = np.asarray(p1, dtype=float).reshape(3)
+    line_poly.points = np.vstack([p0, p1])
+
+
 def main() -> int:
-    """main() -> int: Render a single PyVista frame at t0 (no propagation, no saving)."""
+    """main() -> int: Render a single PyVista frame at t0 with daylight coloring and Sun-to-Earth ray."""
     uhd = False
+
+    # -----------------------------
+    # Sun ray toggle (Sun -> Earth center)
+    # -----------------------------
+    show_sun_ray = True
+    sun_ray_length = 3 * R_earth  # make it clearly visible beyond Earth
+    sun_ray_color = "peachpuff"
+    sun_ray_width = 4
 
     main_path = Path(__file__).resolve().parent
     os.chdir(main_path)
@@ -83,10 +113,10 @@ def main() -> int:
     # -----------------------------
     # Start epoch
     # -----------------------------
-    t0_dt = t0  # noqa: F405
-    if t0_dt.tzinfo is None:
-        t0_dt = t0_dt.replace(tzinfo=timezone.utc)
+    t0_local = datetime(2025, 9, 21, 12, 00, 00, tzinfo=timezone.utc)
+    n_targets_local = 500
 
+    t0_dt = t0_local
     t0_orekit = AbsoluteDate(
         t0_dt.year, t0_dt.month, t0_dt.day,
         t0_dt.hour, t0_dt.minute, t0_dt.second + t0_dt.microsecond / 1e6,
@@ -126,7 +156,6 @@ def main() -> int:
 
         (tip_actors if "Tip" in planet.name else cue_actors).append(actor)
 
-    # Initialize sim only if your ActorBuilder setup expects it (no stepping done)
     if len(tip_actors) != 0:
         sim = paseos.init_sim(local_actor=tip_actors[0])
         for a in tip_actors[1:] + cue_actors:
@@ -136,7 +165,6 @@ def main() -> int:
         for a in cue_actors[1:]:
             sim.add_known_actor(a)
 
-    # Ensure all actors are at t0
     for a in tip_actors + cue_actors:
         a.set_time(t0_pykep)
 
@@ -152,7 +180,7 @@ def main() -> int:
         mask, _ = load_land_mask(worldmap_dir, mask_npy, res_deg)  # noqa: F405
 
     known_targets = generate_random_water_targets(
-        n_targets,  # noqa: F405
+        n_targets_local,
         mask,
         res_deg,  # noqa: F405
         seed_val=whale_seed,  # noqa: F405
@@ -171,6 +199,9 @@ def main() -> int:
 
     illuminated_ids = daylight_mask(all_targets, sun_vec_ecef)
 
+    # Unit direction from Earth center to Sun (ECI)
+    s_hat_eci = sun_vec_eci / max(float(np.linalg.norm(sun_vec_eci)), 1e-12)
+
     # -----------------------------
     # PyVista scene (single render)
     # -----------------------------
@@ -188,10 +219,26 @@ def main() -> int:
 
     pl.show_axes()
 
-    dist_factor = 6.25
-    angle_deg = -45.0
-    pl.camera.position = camera_position_xy(dist_factor, angle_deg)
+    # --- Camera facing Europe ---
+    # Europe approx: lat ~50°N, lon ~10°E
+
+    lat_deg = 50.0
+    lon_deg = 10.0
+    dist_factor = 6.25 * R_earth
+
+    lat = np.radians(lat_deg)
+    lon = np.radians(lon_deg)
+
+    x = dist_factor * np.cos(lat) * np.cos(lon)
+    y = dist_factor * np.cos(lat) * np.sin(lon)
+    z = dist_factor * np.sin(lat)
+
+    cam_pos_eci = np.array([x, y, z])
+    cam_pos_pv = _eci_to_pv(cam_pos_eci)
+
+    pl.camera.position = cam_pos_pv
     pl.camera.focal_point = (0, 0, 0)
+    pl.camera.up = (0, 0, 1)
 
     sun_light = init_sun_light(pl)
 
@@ -200,10 +247,23 @@ def main() -> int:
     sats_lit = _poly_points(0)
     sats_unlit = _poly_points(0)
 
-    pl.add_points(whales_day, color="yellow", render_points_as_spheres=True, point_size=10)
-    pl.add_points(whales_night, color="slategray", render_points_as_spheres=True, point_size=10)
+    pl.add_points(whales_day, color="yellow", render_points_as_spheres=True, point_size=8)
+    pl.add_points(whales_night, color="slategray", render_points_as_spheres=True, point_size=8)
     pl.add_points(sats_lit, color="lawngreen", render_points_as_spheres=True, point_size=18)
     pl.add_points(sats_unlit, color="red", render_points_as_spheres=True, point_size=18)
+
+    # --- Sun ray (outside Earth, always visible on lit side) ---
+    # --- Sun -> Earth center ray using add_lines ---
+    if show_sun_ray:
+        p_center = _eci_to_pv(np.array([0.0, 0.0, 0.0]))
+        p_sun = _eci_to_pv(s_hat_eci * sun_ray_length)
+
+        pl.add_lines(
+            np.array([p_sun, p_center]),
+            color=sun_ray_color,
+            width=sun_ray_width,
+        )
+
 
     pl.add_text("Single timestep (t0)", position="lower_left", font_size=10, color="white")
 
@@ -226,27 +286,12 @@ def main() -> int:
         _set_poly_points(whales_day, pts_all[mask_day])
         _set_poly_points(whales_night, pts_all[~mask_day])
 
-    # Satellites -> lit/shadow using state at t0 (no propagation)
     sat_pos_lit, sat_pos_unlit = [], []
     for a in tip_actors + cue_actors:
-        # Try common ways to access position without advancing time.
-        r = None
-        for attr in ("r", "position", "pos_eci", "r_eci"):
-            if hasattr(a, attr):
-                v = getattr(a, attr)
-                if isinstance(v, (list, tuple, np.ndarray)) and len(v) == 3:
-                    r = np.asarray(v, dtype=float)
-                    break
-
-        # Fallback: call the orbit callback at exactly t0 (dt=0), which is still "no propagation".
-        if r is None and hasattr(a, "orbit"):
-            try:
-                r_list, _v_list = a.orbit(t0_pykep)  # type: ignore[attr-defined]
-                r = np.asarray(r_list, dtype=float)
-            except Exception:
-                r = None
-
-        if r is None:
+        try:
+            r_list, _v_list = a.get_position_velocity(t0_pykep)
+            r = np.asarray(r_list, dtype=float).reshape(3)
+        except Exception:
             continue
 
         is_lit = not satellite_in_shadow(r, sun_vec_eci, earth.getEquatorialRadius())
@@ -255,11 +300,14 @@ def main() -> int:
     _set_poly_points(sats_lit, sats_to_points_eci(sat_pos_lit))
     _set_poly_points(sats_unlit, sats_to_points_eci(sat_pos_unlit))
 
+    print("n sats lit/unlit:", len(sat_pos_lit), len(sat_pos_unlit))
+    if sat_pos_lit:
+        print("example sat norm (km):", np.linalg.norm(sat_pos_lit[0]) / 1000.0)
+
     pl.render()
     if not uhd:
         _pump_pyvista_events(pl)
 
-    # Keep window open
     if not uhd:
         while pl.ren_win is not None:
             _pump_pyvista_events(pl)
