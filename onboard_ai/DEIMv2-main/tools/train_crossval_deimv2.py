@@ -5,14 +5,17 @@ import argparse
 import json
 import random
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from itertools import combinations
+from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any
 
 import eval_utils
+from compute_dataset_mean_std import _iter_coco_image_paths, compute_mean_std_rgb_fast
 from train_utils import (
     read_json,
     write_json,
@@ -21,9 +24,8 @@ from train_utils import (
     run_and_tee,
     ensure_env_cuda_visible_devices,
     pick_checkpoint,
-    cleanup_numbered_checkpoints,
+    cleanup_numbered_checkpoints, export_tb_plots
 )
-
 
 @dataclass(frozen=True)
 class FoldSpec:
@@ -31,9 +33,21 @@ class FoldSpec:
     train_locations: list[str]
     val_locations: list[str]
 
+def export_tb_per_fold(repo_root: Path, fold_dir: Path) -> None:
+    """export_tb_per_fold(repo_root, fold_dir) -> None: Export TB loss plots for this fold (best-effort)."""
+    summary_dir = fold_dir / "summary"
+    logdir = summary_dir if summary_dir.exists() else fold_dir
+    outdir = fold_dir / "tb_exports"
+    try:
+        cmd = [sys.executable, "tools/export_tb_curves.py", "--logdir", str(logdir), "--outdir", str(outdir)]
+        rc = subprocess.call(cmd, cwd=str(repo_root))
+        if rc != 0:
+            print(f"[tb_export] WARNING: export_tb_curves.py exited with {rc} for {fold_dir}", flush=True)
+    except Exception as e:
+        print(f"[tb_export] WARNING: failed exporting TB plots for {fold_dir}: {e}", flush=True)
 
 def _run_eval_one(repo_root: Path, base_config: Path, checkpoint: Path, img_root: Path, ann: Path, out_dir: Path, gpus: str, nproc: str, master_port: int, overwrite: str, label_offset: str) -> int:
-    """_run_eval_one(...) -> int: Run tools/eval_one_deimv2.py for a single split."""
+    """_run_eval_one(...) -> int: Run tools/eval_one_deimv2.py for a single split and return exit code."""
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         sys.executable,
@@ -65,7 +79,7 @@ def _run_eval_one(repo_root: Path, base_config: Path, checkpoint: Path, img_root
     env = os.environ.copy()
     if str(gpus).strip():
         env["CUDA_VISIBLE_DEVICES"] = str(gpus).strip()
-    return int(subprocess.call(cmd, cwd=str(repo_root), env=env))
+    return subprocess.call(cmd, cwd=str(repo_root), env=env)
 
 
 def _has_eval_metrics(fold_dir: Path) -> bool:
@@ -127,19 +141,78 @@ def _fold_is_done(fold_dir: Path, eval_after_each_fold: str) -> bool:
 
     return True
 
-
 def make_random_folds(locations: list[str], k: int, seed: int, val_size: int) -> list[FoldSpec]:
-    """make_random_folds(locations, k, seed, val_size) -> list[FoldSpec]: Random folds with fixed val_size."""
+    """make_random_folds(locations, k, seed, val_size) -> list[FoldSpec]: Balanced unique folds (greedy) so each location appears ~equally often in val."""
     rng = random.Random(int(seed))
     locs = list(dict.fromkeys([str(x) for x in locations if str(x).strip() != ""]))
-    if len(locs) <= int(val_size):
+
+    val_size = int(val_size)
+    k = int(k)
+
+    if val_size < 1:
+        raise SystemExit(f"ERROR: --val_size must be >= 1, got {val_size}.")
+    if len(locs) <= val_size:
         raise SystemExit(f"Need at least 1 training location: got {len(locs)} for val_size={val_size}")
 
+    all_vals = list(combinations(locs, val_size))
+    if k > len(all_vals):
+        raise SystemExit(
+            f"Requested k={k} folds, but only {len(all_vals)} unique val combinations exist "
+            f"for n={len(locs)} locations and val_size={val_size}."
+        )
+
+    counts: dict[str, int] = {l: 0 for l in locs}
+    remaining = list(all_vals)
+    chosen: list[tuple[str, ...]] = []
+
+    def score_after_add(comb: tuple[str, ...]) -> tuple[int, int, float]:
+        tmp = counts.copy()
+        for l in comb:
+            tmp[l] += 1
+        vals = list(tmp.values())
+        spread = max(vals) - min(vals)
+        maxv = max(vals)
+        mean = sum(vals) / float(len(vals))
+        var = sum((v - mean) ** 2 for v in vals) / float(len(vals))
+        return spread, maxv, var
+
+    for _ in range(k):
+        best_score: tuple[int, int, float] | None = None
+        best: list[tuple[str, ...]] = []
+
+        # Greedy selection: minimize imbalance (spread), then max count, then variance
+        for comb in remaining:
+            sc = score_after_add(comb)
+            if best_score is None or sc < best_score:
+                best_score = sc
+                best = [comb]
+            elif sc == best_score:
+                best.append(comb)
+
+        pick = rng.choice(best)
+        chosen.append(pick)
+        remaining.remove(pick)
+        for l in pick:
+            counts[l] += 1
+
     folds: list[FoldSpec] = []
-    for fi in range(int(k)):
-        val = rng.sample(locs, int(val_size))
+    for fi, comb in enumerate(chosen):
+        val = list(comb)
         train = [x for x in locs if x not in val]
         folds.append(FoldSpec(fold_id=fi, train_locations=train, val_locations=val))
+
+    # ---- Debug report: validation usage per location ----
+    print("\nBalanced CV validation usage:")
+    for loc in sorted(counts):
+        print(f"  {loc}: {counts[loc]}")
+
+    total_val_slots = k * val_size
+    expected = total_val_slots / float(len(locs))
+    print(f"\nTotal validation slots: {total_val_slots}")
+    print(f"Locations: {len(locs)}")
+    print(f"Expected appearances per location (ideal): {expected:.2f}")
+    print(f"Min count: {min(counts.values())}, Max count: {max(counts.values())}\n")
+
     return folds
 
 
@@ -261,6 +334,55 @@ def write_include_config_yml(path: Path, base_config: str, override_yml: str, ou
     write_text(str(path), yml)
 
 
+def _fmt_float_list(xs: list[float]) -> str:
+    """_fmt_float_list(xs) -> str: Format float list for YAML inline arrays."""
+    return "[" + ", ".join(f"{float(x):.16g}" for x in xs) + "]"
+
+
+def _patch_normalize_lines(yml_text: str, mean: list[float], std: list[float]) -> tuple[str, int]:
+    """_patch_normalize_lines(yml_text, mean, std) -> (new_text, n): Replace all inline Normalize mean/std blocks."""
+    mean_s = _fmt_float_list(mean)
+    std_s = _fmt_float_list(std)
+
+    # Matches: {type: Normalize, mean: [...], std: [...]}
+    pat = re.compile(
+        r"(\{type:\s*Normalize\s*,\s*mean:\s*)\[[^\]]*\](\s*,\s*std:\s*)\[[^\]]*\](\s*\})"
+    )
+
+    def _repl(m: re.Match) -> str:
+        return f"{m.group(1)}{mean_s}{m.group(2)}{std_s}{m.group(3)}"
+
+    new_text, n = pat.subn(_repl, yml_text)
+    return new_text, int(n)
+
+
+def _compute_mean_std_from_coco(img_root: Path, coco_path: Path, workers: int, progress_step_pct: int) -> tuple[list[float], list[float], int, int]:
+    """_compute_mean_std_from_coco(img_root, coco_path, workers, progress_step_pct) -> (mean, std, n_images, n_pixels): Exact RGB mean/std."""
+    paths = _iter_coco_image_paths(coco_path=coco_path, img_root=img_root, locations=None)
+    if not paths:
+        raise RuntimeError(f"No images resolved from COCO: {coco_path}")
+
+    mean, std, n_images, n_pixels = compute_mean_std_rgb_fast(
+        image_paths=paths,
+        workers=int(workers),
+        progress_step_pct=max(1, int(progress_step_pct)),
+    )
+    return mean, std, int(n_images), int(n_pixels)
+
+
+def _write_base_config_with_fold_norm(base_config_in: Path, base_config_out: Path, mean: list[float], std: list[float]) -> int:
+    """_write_base_config_with_fold_norm(base_config_in, base_config_out, mean, std) -> int: Patch Normalize mean/std in base config."""
+    txt = base_config_in.read_text(encoding="utf-8")
+    new_txt, n = _patch_normalize_lines(txt, mean=mean, std=std)
+    if n < 1:
+        raise RuntimeError(
+            f"Did not find any inline Normalize blocks to patch in: {base_config_in}\n"
+            "Expected lines like: - {type: Normalize, mean: [...], std: [...]}."
+        )
+    base_config_out.parent.mkdir(parents=True, exist_ok=True)
+    base_config_out.write_text(new_txt, encoding="utf-8")
+    return int(n)
+
 def _detect_all_locations(img_root_train: Path, coco_full: dict[str, Any]) -> list[str]:
     """_detect_all_locations(img_root_train, coco_full) -> list[str]: Detect all locations from folders (preferred) or COCO file_name."""
     locs_from_dirs: list[str] = []
@@ -294,7 +416,7 @@ def main() -> None:
     ap.add_argument("--base_config", required=True)
     ap.add_argument("--pretrained", default="")
     ap.add_argument("--results_dir", required=True)
-    ap.add_argument("--select_metric", default="AP_precision_iou_0.50:0.95_area_all_maxdets_100")
+    ap.add_argument("--select_metric", default="AP_precision_iou_0.50_area_all_maxdets_100")
 
     # Old behavior: if --test_locations is empty, locations are auto-detected.
     # New: --holdout_test_locations is ALWAYS the fixed 2-location TEST holdout.
@@ -305,6 +427,11 @@ def main() -> None:
     ap.add_argument("--k", default="4")
     ap.add_argument("--seed", default="42")
     ap.add_argument("--val_size", default="2")
+
+    # Per-fold RGB normalization from TRAIN split (instances_train.json)
+    ap.add_argument("--per_fold_norm_stats", default="1")  # 1|0
+    ap.add_argument("--stats_workers", default=str(cpu_count()))
+    ap.add_argument("--stats_progress_step_pct", default="5")
 
     ap.add_argument("--gpus", default="0")
     ap.add_argument("--nproc", default="1")
@@ -441,7 +568,54 @@ def main() -> None:
         run_cfg = cfg_dir / "train_config.yml"
 
         write_ann_override_yml(override_yml, img_root_train, str(train_ann_path), str(val_ann_path))
-        write_include_config_yml(run_cfg, str(Path(base_config_abs).resolve()), str(override_yml), str(fold_dir))
+
+        # ----- Per-fold mean/std computed on TRAIN split (=> train locations of this fold) -----
+        base_cfg_for_fold = Path(base_config_abs).resolve()
+        stats_json_path = cfg_dir / "dataset_rgb_mean_std_train.json"
+        base_cfg_patched = cfg_dir / "base_config_with_fold_norm.yml"
+
+        fold_mean: list[float] | None = None
+        fold_std: list[float] | None = None
+        n_images = 0
+        n_pixels = 0
+        n_norm_patched = 0
+
+        if str(getattr(args, "per_fold_norm_stats", "1")).strip() == "1":
+            mean, std, n_images, n_pixels = _compute_mean_std_from_coco(
+                img_root=img_root_train,
+                coco_path=train_ann_path,
+                workers=int(getattr(args, "stats_workers", cpu_count())),
+                progress_step_pct=int(getattr(args, "stats_progress_step_pct", 5)),
+            )
+            fold_mean, fold_std = mean, std
+            n_norm_patched = _write_base_config_with_fold_norm(
+                base_config_in=base_cfg_for_fold,
+                base_config_out=base_cfg_patched,
+                mean=mean,
+                std=std,
+            )
+
+            write_json(
+                str(stats_json_path),
+                {
+                    "fold_id": int(fold.fold_id),
+                    "train_locations": fold.train_locations,
+                    "train_ann": str(train_ann_path),
+                    "img_root": str(img_root_train),
+                    "n_images_processed": int(n_images),
+                    "n_pixels_total": int(n_pixels),
+                    "mean_rgb_01": mean,
+                    "std_rgb_01": std,
+                    "patched_normalize_blocks": int(n_norm_patched),
+                    "note": "Exact RGB mean/std over TRAIN split (instances_train.json). Applied to all inline Normalize blocks (train+val).",
+                },
+            )
+
+            base_cfg_for_include = base_cfg_patched
+        else:
+            base_cfg_for_include = base_cfg_for_fold
+
+        write_include_config_yml(run_cfg, str(base_cfg_for_include), str(override_yml), str(fold_dir))
 
         log_dir = fold_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -468,6 +642,8 @@ def main() -> None:
         if rc != 0:
             raise SystemExit(f"Fold {fold.fold_id} training failed: exit {rc}")
 
+
+        export_tb_plots(repo_root=repo_root, run_dir=fold_dir, out_subdir="tb_exports")
         fold_ckpt = pick_checkpoint(fold_dir)
 
         fold_meta: dict[str, Any] = {
@@ -480,13 +656,18 @@ def main() -> None:
             "log": str(log_path.resolve()),
             "fold_checkpoint": str(fold_ckpt.resolve()),
             "holdout_test_locations": holdout_test,
+            "base_config_original": str(Path(base_config_abs).resolve()),
+            "base_config_with_fold_norm": (str(base_cfg_patched.resolve()) if base_cfg_patched.exists() else None),
+            "fold_norm_stats_json": (str(stats_json_path.resolve()) if stats_json_path.exists() else None),
+            "fold_mean_rgb_01": fold_mean,
+            "fold_std_rgb_01": fold_std,
         }
 
         write_json(str(fold_dir / "fold_meta.json"), fold_meta)
 
         if str(args.eval_after_each_fold).strip() == "1":
             repo_root2 = Path(__file__).resolve().parents[1]
-            base_cfg = Path(base_config_abs).resolve()
+            base_cfg = Path(fold_meta.get("base_config_with_fold_norm") or base_config_abs).resolve()
             ckpt = fold_ckpt.resolve()
 
             out_val = fold_dir / "eval_val" / str(args.eval_name)

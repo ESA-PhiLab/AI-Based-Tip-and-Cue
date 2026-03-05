@@ -43,6 +43,8 @@ def run_eval_one(
     master_port: str,
     overwrite: str,
     label_offset: str,
+    score_thr: str,
+    optimize_score_thr: str,
 ) -> int:
     """run_eval_one(...) -> int: Run eval_one_deimv2.py with dump_predictions enabled."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -71,6 +73,10 @@ def run_eval_one(
         "1",
         "--label_offset",
         str(label_offset),
+        "--score_thr",
+        str(score_thr),
+        "--optimize_score_thr",
+        str(optimize_score_thr),
     ]
     print(" ".join(cmd), flush=True)
     env = os.environ.copy()
@@ -83,7 +89,6 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo_root", required=True)
     ap.add_argument("--results_dir", required=True)
-    ap.add_argument("--base_config", required=True)
     ap.add_argument("--img_root", required=True)
     ap.add_argument("--eval_name", default="eval_data")
     ap.add_argument("--split", default="val")  # val|test|both
@@ -93,16 +98,19 @@ def main() -> int:
     ap.add_argument("--overwrite", default="0")
     ap.add_argument("--label_offset", default="0")
     ap.add_argument("--include_final", default="0")  # 1|0
+
+    # Forwarded into eval_one_deimv2.py -> extra_detection_metrics.py
+    ap.add_argument("--score_thr", default="0.05")
+    ap.add_argument("--optimize_score_thr", default="1")  # 1 => optimize image-level F1, 0 => fixed score_thr
     args = ap.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
     results_dir = Path(args.results_dir).resolve()
-    base_config = Path(args.base_config).resolve()
     img_root = Path(args.img_root).resolve()
 
     folds = find_fold_dirs(results_dir)
     if not folds:
-        print(f"[dump_predictions_all.py] NOTE: no folds found under {results_dir}/cross_validation", flush=True)
+        raise SystemExit(f"[dump_predictions_all.py] ERROR: no folds found under {results_dir}/cross_validation")
 
     port0 = int(str(args.master_port))
     rc_any = 0
@@ -112,8 +120,27 @@ def main() -> int:
         meta: dict[str, Any] = {}
         if meta_path.exists():
             meta = read_json(meta_path)
+
+            fold_cfg = meta.get("base_config_with_fold_norm")
+            if not fold_cfg:
+                raise SystemExit(
+                    f"[dump_predictions_all] ERROR: fold meta has no base_config_with_fold_norm: {meta_path}\n"
+                    "Refusing to evaluate without the per-fold patched config."
+                )
+            fold_base_cfg = Path(fold_cfg).resolve()
+            if not fold_base_cfg.exists():
+                raise SystemExit(f"[dump_predictions_all] ERROR: config missing: {fold_base_cfg}")
+
+
         else:
-            print(f"[dump_predictions_all.py] NOTE: {fold_dir.name}: fold_meta.json missing; trying to resolve from folder contents", flush=True)
+            raise SystemExit(
+
+                f"[dump_predictions_all] ERROR: missing fold_meta.json: {meta_path}\n"
+
+                "Refusing to evaluate without per-fold patched config."
+
+            )
+
 
         ckpt_str = str(meta.get("fold_checkpoint", "")).strip()
         ckpt = eval_utils.resolve_checkpoint_path(results_dir, fold_dir, ckpt_str)
@@ -130,9 +157,10 @@ def main() -> int:
             if val_ann is None or not val_ann.exists():
                 print(f"[dump_predictions_all.py] SKIP {fold_dir.name} val: ann missing/unresolvable", flush=True)
             else:
+
                 rc = run_eval_one(
                     repo_root=repo_root,
-                    base_config=base_config,
+                    base_config=fold_base_cfg,
                     checkpoint=ckpt,
                     img_root=img_root,
                     ann=val_ann,
@@ -142,6 +170,8 @@ def main() -> int:
                     master_port=str(port0 + i),
                     overwrite=args.overwrite,
                     label_offset=args.label_offset,
+                    score_thr=args.score_thr,
+                    optimize_score_thr=args.optimize_score_thr,
                 )
                 if rc != 0:
                     rc_any = rc_any or rc
@@ -153,9 +183,10 @@ def main() -> int:
             if test_ann is None or not test_ann.exists():
                 print(f"[dump_predictions_all.py] SKIP {fold_dir.name} test: ann missing/unresolvable", flush=True)
             else:
+
                 rc = run_eval_one(
                     repo_root=repo_root,
-                    base_config=base_config,
+                    base_config=fold_base_cfg,
                     checkpoint=ckpt,
                     img_root=img_root,
                     ann=test_ann,
@@ -165,6 +196,8 @@ def main() -> int:
                     master_port=str(port0 + 100 + i),
                     overwrite=args.overwrite,
                     label_offset=args.label_offset,
+                    score_thr=args.score_thr,
+                    optimize_score_thr=args.optimize_score_thr,
                 )
                 if rc != 0:
                     rc_any = rc_any or rc
@@ -176,6 +209,17 @@ def main() -> int:
         meta_path = final_dir / "final_meta.json"
         if meta_path.exists():
             meta = read_json(meta_path)
+
+            final_cfg = meta.get("base_config_with_train_norm") or meta.get("base_config_with_train_norm".strip())
+            if not final_cfg:
+                raise SystemExit(
+                    f"[dump_predictions_all] ERROR: final meta has no base_config_with_train_norm: {meta_path}\n"
+                    "Refusing to evaluate without the final patched config."
+                )
+            final_base_cfg = Path(final_cfg).resolve()
+            if not final_base_cfg.exists():
+                raise SystemExit(f"[dump_predictions_all] ERROR: config missing: {final_base_cfg}")
+
 
             ckpt_str = str(meta.get("final_checkpoint", "")).strip()
             ckpt = eval_utils.resolve_checkpoint_path(results_dir, final_dir, ckpt_str)
@@ -193,7 +237,7 @@ def main() -> int:
                     out_val = final_dir / "eval_val" / str(args.eval_name)
                     rc = run_eval_one(
                         repo_root=repo_root,
-                        base_config=base_config,
+                        base_config=final_base_cfg,
                         checkpoint=ckpt,
                         img_root=img_root,
                         ann=val_ann,
@@ -203,6 +247,8 @@ def main() -> int:
                         master_port=str(port0 + 500),
                         overwrite=args.overwrite,
                         label_offset=args.label_offset,
+                        score_thr=args.score_thr,
+                        optimize_score_thr=args.optimize_score_thr,
                     )
                     if rc != 0:
                         rc_any = rc_any or rc
@@ -215,7 +261,7 @@ def main() -> int:
                         out_test = final_dir / "eval_test" / str(args.eval_name)
                         rc = run_eval_one(
                             repo_root=repo_root,
-                            base_config=base_config,
+                            base_config=final_base_cfg,
                             checkpoint=ckpt,
                             img_root=img_root,
                             ann=test_ann,
@@ -225,6 +271,8 @@ def main() -> int:
                             master_port=str(port0 + 600),
                             overwrite=args.overwrite,
                             label_offset=args.label_offset,
+                            score_thr=args.score_thr,
+                            optimize_score_thr=args.optimize_score_thr,
                         )
                         if rc != 0:
                             rc_any = rc_any or rc

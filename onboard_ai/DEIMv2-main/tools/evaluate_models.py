@@ -13,7 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import eval_utils
-
+import shutil
 
 def _write_overview_mean_std_xlsx(path: Path, rows: list[dict[str, Any]], keys: list[str]) -> None:
     """_write_overview_mean_std_xlsx(path, rows, keys) -> None: mean/std xlsx (computed over provided rows)."""
@@ -128,15 +128,20 @@ def resolve_train_log(fold_dir: Path) -> Path | None:
         fold_dir / "logs" / "train.log",
         fold_dir / "train_stdout.log",
         fold_dir / "train.log",
+        # launcher logs (main_local.sh)
+        fold_dir.parent / "final_train_stdout.log" if fold_dir.name == "final_location_holdout" else None,
+        fold_dir.parent / "cv_train_stdout.log" if fold_dir.name.startswith("fold") else None,
     ]
     for p in cand:
+        if p is None:
+            continue
         if p.exists():
             return p
     return None
 
 
-def _plot_all_ap_ar_from_coco_rows(fold_dir: Path, coco_rows: list[dict[str, Any]]) -> None:
-    """_plot_all_ap_ar_from_coco_rows(fold_dir, coco_rows) -> None: Plot all AP/AR metrics per epoch."""
+def _plot_all_ap_ar_from_coco_rows(fold_dir: Path, coco_rows: list[dict[str, Any]], run_name: str) -> None:
+    """_plot_all_ap_ar_from_coco_rows(fold_dir, coco_rows, run_name) -> None: Plot all AP/AR metrics per epoch."""
     if not coco_rows:
         return
 
@@ -154,13 +159,32 @@ def _plot_all_ap_ar_from_coco_rows(fold_dir: Path, coco_rows: list[dict[str, Any
     plots_dir = fold_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
+    # CLEANUP old AP/AR epoch plots
+    eval_utils._cleanup_epoch_plots(
+        plots_dir,
+        prefixes=[
+            "AP_",
+            "AR_",
+            "AP_precision",
+            "AR_recall",
+        ],
+    )
+
+    fold_tag = "final" if fold_dir.name == "final_location_holdout" else fold_dir.name
+    rn = eval_utils.safe_slug(run_name) if run_name else "run"
+
+    fold_tag = "final" if fold_dir.name == "final_location_holdout" else fold_dir.name
+    rn = eval_utils.safe_slug(run_name) if run_name else "run"
+
     for k in ap_keys + ar_keys:
-        out = plots_dir / f"{eval_utils.safe_slug(k)}_over_epoch.png"
+        out = plots_dir / f"{eval_utils.safe_slug(k)}_over_epoch_{rn}_{fold_tag}.png"
         eval_utils.plot_metric_over_epoch(out, f"{fold_dir.name}: {k} over epoch", coco_rows, k)
 
 
-def _plot_train_val_loss_from_log(fold_dir: Path, loss_rows: list[dict[str, Any]]) -> None:
-    """_plot_train_val_loss_from_log(fold_dir, loss_rows) -> None: Save train/val loss curve plot."""
+
+
+def _plot_train_val_loss_from_log(fold_dir: Path, loss_rows: list[dict[str, Any]], run_name: str) -> None:
+    """_plot_train_val_loss_from_log(fold_dir, loss_rows, run_name) -> None: Save train/val loss curve plot."""
     if not loss_rows:
         return
     plots_dir = fold_dir / "plots"
@@ -168,20 +192,99 @@ def _plot_train_val_loss_from_log(fold_dir: Path, loss_rows: list[dict[str, Any]
     metrics_dir = fold_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
+    eval_utils._cleanup_epoch_plots(
+        plots_dir,
+        prefixes=[
+            "train_vs_val_loss_over_epoch",
+            "train_vs_val_loss_shared_over_epoch",
+            "train_real_vs_val_shared_loss_over_epoch",
+            "train_minus_val_loss_over_epoch",
+            "train_val_components_over_epoch",
+        ],
+    )
+
+    eval_utils._cleanup_epoch_plots(
+        metrics_dir,
+        prefixes=[
+            "loss_curves",
+            "loss_curves_shared",
+            "loss_curves_real_vs_val",
+            "loss_gap",
+            "loss_components",
+        ],
+    )
+
+    fold_tag = "final" if fold_dir.name == "final_location_holdout" else fold_dir.name
+    rn = eval_utils.safe_slug(run_name) if run_name else "run"
+
+    # (1) As-is: 3 curves
     eval_utils.plot_train_val_loss(
-        plots_dir / "train_vs_val_loss_over_epoch.png",
+        plots_dir / f"train_vs_val_loss_over_epoch_{rn}_{fold_tag}.png",
         f"{fold_dir.name}: train/val loss vs epoch",
         loss_rows,
+        mode="all",
     )
     eval_utils.plot_train_val_loss(
-        metrics_dir / "loss_curves.png",
+        metrics_dir / f"loss_curves_{rn}_{fold_tag}.png",
         f"{fold_dir.name}: train/val loss vs epoch",
+        loss_rows,
+        mode="all",
+    )
+
+    # (2) Only train+val shared
+    eval_utils.plot_train_val_loss(
+        plots_dir / f"train_vs_val_loss_shared_over_epoch_{rn}_{fold_tag}.png",
+        f"{fold_dir.name}: train/val shared loss vs epoch",
+        loss_rows,
+        mode="shared",
+    )
+    eval_utils.plot_train_val_loss(
+        metrics_dir / f"loss_curves_shared_{rn}_{fold_tag}.png",
+        f"{fold_dir.name}: train/val shared loss vs epoch",
+        loss_rows,
+        mode="shared",
+    )
+
+    # (3) Train real vs val shared
+    eval_utils.plot_train_val_loss(
+        plots_dir / f"train_real_vs_val_shared_loss_over_epoch_{rn}_{fold_tag}.png",
+        f"{fold_dir.name}: train real vs val shared loss vs epoch",
+        loss_rows,
+        mode="real_vs_val",
+    )
+    eval_utils.plot_train_val_loss(
+        metrics_dir / f"loss_curves_real_vs_val_{rn}_{fold_tag}.png",
+        f"{fold_dir.name}: train real vs val shared loss vs epoch",
+        loss_rows,
+        mode="real_vs_val",
+    )
+
+    eval_utils.plot_train_val_loss_gap(
+        plots_dir / f"train_minus_val_loss_over_epoch_{rn}_{fold_tag}.png",
+        f"{fold_dir.name}: train - val loss vs epoch",
+        loss_rows,
+    )
+    eval_utils.plot_train_val_loss_gap(
+        metrics_dir / f"loss_gap_{rn}_{fold_tag}.png",
+        f"{fold_dir.name}: train - val loss vs epoch",
+        loss_rows,
+    )
+
+    # NEW: component plot (orange/blue/green + dashed val)
+    eval_utils.plot_train_val_components_from_rows(
+        plots_dir / f"train_val_components_over_epoch_{rn}_{fold_tag}.png",
+        f"{fold_dir.name}: train/val component losses vs epoch",
+        loss_rows,
+    )
+    eval_utils.plot_train_val_components_from_rows(
+        metrics_dir / f"loss_components_{rn}_{fold_tag}.png",
+        f"{fold_dir.name}: train/val component losses vs epoch",
         loss_rows,
     )
 
 
-def _write_fold_train_outputs(fold_dir: Path) -> dict[str, Any]:
-    """_write_fold_train_outputs(fold_dir) -> dict[str,Any]: Parse training logs to produce XLSX + plots."""
+def _write_fold_train_outputs(fold_dir: Path, run_name: str) -> dict[str, Any]:
+    """_write_fold_train_outputs(fold_dir, run_name) -> dict[str,Any]: Parse training logs to produce XLSX + plots."""
     log_path = resolve_train_log(fold_dir)
     if log_path is None:
         return {"ok": False, "reason": "missing_train_log"}
@@ -189,14 +292,14 @@ def _write_fold_train_outputs(fold_dir: Path) -> dict[str, Any]:
     coco_rows = eval_utils.parse_train_coco_metrics_from_log(log_path)
     loss_rows = eval_utils.parse_loss_curves_from_log(log_path)
 
-    _plot_all_ap_ar_from_coco_rows(fold_dir, coco_rows)
+    _plot_all_ap_ar_from_coco_rows(fold_dir, coco_rows, run_name)
 
     if coco_rows:
         eval_utils.write_train_metrics_xlsx(fold_dir, coco_rows)
     if loss_rows:
         eval_utils.write_loss_xlsx(fold_dir, loss_rows)
 
-    _plot_train_val_loss_from_log(fold_dir, loss_rows)
+    _plot_train_val_loss_from_log(fold_dir, loss_rows, run_name)
 
     return {
         "ok": True,
@@ -205,23 +308,56 @@ def _write_fold_train_outputs(fold_dir: Path) -> dict[str, Any]:
         "train_log": str(log_path),
     }
 
-
-def _read_extra_metrics(metrics_dir: Path) -> dict[str, float]:
-    """_read_extra_metrics(metrics_dir) -> dict[str,float]: Extract key extra metrics."""
-    extra_path = metrics_dir / "metrics_extra.json"
-    if not extra_path.exists():
+def _read_extra_metrics(src_dir: Path) -> dict[str, Any]:
+    """_read_extra_metrics(src_dir) -> dict[str,Any]: Read metrics_extra.json if present and flatten keys."""
+    p = src_dir / "metrics_extra.json"
+    if not p.exists():
         return {}
     try:
-        j = eval_utils.read_json(str(extra_path))
+        j = eval_utils.read_json(p)
     except Exception:
         return {}
 
-    keys = ["precision", "recall", "f1", "tp", "fp", "fn"]
-    out: dict[str, float] = {}
-    for k in keys:
-        fv = eval_utils.safe_float(j.get(k))
-        if fv is not None:
-            out[k] = float(fv)
+    out: dict[str, Any] = {}
+    if not isinstance(j, dict):
+        return out
+
+    # Confusion matrix
+    if isinstance(j.get("image_level_confusion"), dict):
+        cm = j["image_level_confusion"]
+        out["image_level_TP"] = eval_utils._safe_float(cm.get("TP"))
+        out["image_level_FP"] = eval_utils._safe_float(cm.get("FP"))
+        out["image_level_FN"] = eval_utils._safe_float(cm.get("FN"))
+        out["image_level_TN"] = eval_utils._safe_float(cm.get("TN"))
+
+    # Existing extra metrics
+    for k in [
+        "image_level_f1",
+        "image_level_precision",
+        "image_level_recall",
+        "pr_ap_global",
+        "roc_auc_image_level",
+    ]:
+        if k in j:
+            out[k] = eval_utils._safe_float(j.get(k))
+
+    # ---- NEW: expose the image-level score threshold used as an overview column ----
+    # Your extra_detection_metrics.py writes "score_thr_used" (float). We map it into a key that
+    # passes _keep_root_key() (starts with "image_level_").
+    if "score_thr_used" in j:
+        out["image_level_score_thr_used"] = eval_utils._safe_float(j.get("score_thr_used"))
+
+    # Optional: if present, also keep the F1-optimum threshold and stats (these are already numeric)
+    # and will appear as columns.
+    for src_key, dst_key in [
+        ("best_thr_f1", "image_level_best_thr_f1"),
+        ("best_f1", "image_level_best_f1"),
+        ("best_precision", "image_level_best_precision"),
+        ("best_recall", "image_level_best_recall"),
+    ]:
+        if src_key in j:
+            out[dst_key] = eval_utils._safe_float(j.get(src_key))
+
     return out
 
 
@@ -334,41 +470,48 @@ def _write_overview_mean_std_xlsx(path: Path, rows: list[dict[str, Any]], keys: 
     wb.save(str(path))
 
 
-def _plot_overview_bar_and_box(out_plots: Path, rows: list[dict[str, Any]], keys: list[str]) -> None:
-    """_plot_overview_bar_and_box(out_plots, rows, keys) -> None: Bar plots for AP/AR/latency + extra metrics."""
+def _plot_overview_bar_and_box(out_plots: Path, rows: list[dict[str, Any]], keys: list[str], run_name: str) -> None:
+    """_plot_overview_bar_and_box(out_plots, rows, keys, run_name) -> None: Bar plots for AP/AR/latency + extra metrics."""
     out_plots.mkdir(parents=True, exist_ok=True)
+    rn = eval_utils.safe_slug(run_name) if run_name else "run"
 
     def _keep(k: str) -> bool:
         return (
-            k.startswith("AP_")
-            or k.startswith("AR_")
-            or k.startswith("AP_precision")
-            or k.startswith("AR_recall")
-            or k.startswith("latency_")
-            or k in ("precision", "recall", "f1", "tp", "fp", "fn")
+                k.startswith("AP_")
+                or k.startswith("AR_")
+                or k.startswith("AP_precision")
+                or k.startswith("AR_recall")
+                or k.startswith("latency_")
+                or k.startswith("image_level_")
+                or k in (
+                    "precision", "recall", "f1", "tp", "fp", "fn",
+                    "pr_ap_global", "roc_auc_image_level",
+                    "image_level_TP", "image_level_FP", "image_level_FN", "image_level_TN",
+                )
         )
 
     for k in [kk for kk in keys if _keep(kk)]:
         eval_utils.plot_barplot(
-            out_plots / f"{eval_utils.safe_slug(k)}_bar.png",
+            out_plots / f"{eval_utils.safe_slug(k)}_bar_{rn}.png",
             f"{k} per fold",
             rows,
             k,
         )
 
-def _copy_extra_plots_to_overview(overview_split_dir: Path, folds: list[Path], results_dir: Path, split: str) -> None:
-    """_copy_extra_plots_to_overview(overview_split_dir, folds, results_dir, split) -> None: Copy per-fold extra plots into overview."""
+def _copy_extra_plots_to_overview(overview_split_dir: Path, folds: list[Path], results_dir: Path, split: str, run_name: str) -> None:
+    """_copy_extra_plots_to_overview(overview_split_dir, folds, results_dir, split, run_name) -> None: Copy per-fold extra plots into overview."""
     import shutil
 
     dst_root = overview_split_dir / "extra_plots"
     dst_root.mkdir(parents=True, exist_ok=True)
+    rn = eval_utils.safe_slug(run_name) if run_name else "run"
 
     def _copy_from(src_dir: Path, tag: str) -> None:
         plots = src_dir / "plots"
         if not plots.exists():
             return
         for p in plots.glob("*.png"):
-            shutil.copyfile(p, dst_root / f"{tag}_{p.name}")
+            shutil.copyfile(p, dst_root / f"{p.stem}_{rn}_{tag}{p.suffix}")
 
     for f in folds:
         mdir = f / "metrics" / split
@@ -377,7 +520,7 @@ def _copy_extra_plots_to_overview(overview_split_dir: Path, folds: list[Path], r
 
     final_mdir = results_dir / "final_location_holdout" / "metrics" / split
     if final_mdir.exists():
-        _copy_from(final_mdir, "FINAL")
+        _copy_from(final_mdir, "final")
 
 def _write_combined_overview_xlsx(path: Path, sections: list[tuple[str, list[dict[str, Any]], list[str], dict[str, Any] | None]]) -> None:
     """_write_combined_overview_xlsx(path, sections) -> None: One sheet with multiple sections stacked."""
@@ -408,28 +551,66 @@ def _write_combined_overview_xlsx(path: Path, sections: list[tuple[str, list[dic
 
     wb.save(str(path))
 
+def _copy_metrics_extra_to_overview(overview_split_dir: Path, folds: list[Path], results_dir: Path, split: str) -> None:
+    """_copy_metrics_extra_to_overview(overview_split_dir, folds, results_dir, split) -> None: Copy metrics_extra.json into overview/{split}/extra_metrics."""
+    import shutil
+
+    dst_dir = overview_split_dir / "extra_metrics"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+
+    def _copy_one(src_dir: Path, tag: str) -> None:
+        src = src_dir / "metrics_extra.json"
+        if src.exists():
+            shutil.copyfile(src, dst_dir / f"{tag}_metrics_extra.json")
+
+        # Also copy best-threshold txt (if present)
+        thr_files = sorted(src_dir.glob("best_image_level_f1_threshold_*.txt"))
+        if thr_files:
+            shutil.copyfile(thr_files[0], dst_dir / f"{tag}_best_image_level_f1_threshold.txt")
+
+    for f in folds:
+        mdir = f / "metrics" / split
+        if mdir.exists():
+            _copy_one(mdir, f.name)
+
+    final_mdir = results_dir / "final_location_holdout" / "metrics" / split
+    if final_mdir.exists():
+        _copy_one(final_mdir, "FINAL")
+
 
 def _copy_predictions_to_overview(overview_split_dir: Path, folds: list[Path], results_dir: Path, split: str) -> None:
-    """_copy_predictions_to_overview(overview_split_dir, folds, results_dir, split) -> None: Copy predictions_coco.json into overview/{split}/predictions."""
+    """_copy_predictions_to_overview(overview_split_dir, folds, results_dir, split) -> None: Copy predictions (merged + ranks) into overview/{split}/predictions."""
     import shutil
 
     dst_dir = overview_split_dir / "predictions"
     dst_dir.mkdir(parents=True, exist_ok=True)
 
     def _copy_one(src_dir: Path, tag: str) -> None:
-        src = src_dir / "predictions_coco.json"
-        if src.exists():
-            shutil.copyfile(src, dst_dir / f"{tag}_predictions_coco.json")
-        for rp in sorted(src_dir.glob("predictions_coco.json.rank*.json")):
+        merged = src_dir / "predictions_coco.json"
+        rank0 = src_dir / "predictions_coco.json.rank0.json"
+        ranks = sorted(src_dir.glob("predictions_coco.json.rank*.json"))
+
+        # Prefer merged; otherwise fall back to rank0; otherwise first available rank.
+        src_main: Path | None = None
+        if merged.exists():
+            src_main = merged
+        elif rank0.exists():
+            src_main = rank0
+        elif ranks:
+            src_main = ranks[0]
+
+        if src_main is not None:
+            shutil.copyfile(src_main, dst_dir / f"{tag}_predictions_coco.json")
+
+        # Always also copy all rank files (if any) for debugging/traceability
+        for rp in ranks:
             shutil.copyfile(rp, dst_dir / f"{tag}_{rp.name}")
 
-    # Folds
     for f in folds:
         mdir = f / "metrics" / split
         if mdir.exists():
             _copy_one(mdir, f.name)
 
-    # Final
     final_mdir = results_dir / "final_location_holdout" / "metrics" / split
     if final_mdir.exists():
         _copy_one(final_mdir, "FINAL")
@@ -454,32 +635,58 @@ def _copy_final_checkpoint(results_dir: Path, overview_dir: Path) -> None:
     dst = overview_dir / ckpt.name
     shutil.copyfile(ckpt, dst)
 
+
+def _plot_suffix(run_name: str, tag: str) -> str:
+    """_plot_suffix(run_name, tag) -> str: Build _RUN_TAG suffix (empty if missing)."""
+    run = (run_name or "").strip()
+    t = (tag or "").strip()
+    if run and t:
+        return f"_{run}_{t}"
+    if run:
+        return f"_{run}"
+    if t:
+        return f"_{t}"
+    return ""
+
+
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo_root", default=".")
     ap.add_argument("--results_dir", required=True)
     ap.add_argument("--eval_name", default="eval_data")
-    ap.add_argument("--select_metric", default="AP_precision_iou_0.50:0.95_area_all_maxdets_100")
+    ap.add_argument("--select_metric", default="AP_precision_iou_0.50_area_all_maxdets_100")
     ap.add_argument("--per_fold_only", default="0")
     ap.add_argument("--overwrite", default="0")
+    ap.add_argument("--run_name", default="")
     args = ap.parse_args()
 
     results_dir = Path(args.results_dir).resolve()
+    run_name = str(getattr(args, "run_name", "") or "").strip()
+
+    # DELETE all old plots folders under this run before re-generating anything
+
+    for p in results_dir.rglob("plots"):
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+
     folds = find_folds(results_dir)
+
     if not folds:
         print(f"[evaluate_models.py] ERROR: no folds found under {results_dir / 'cross_validation'}")
         return 2
 
     fold_train_reports: list[dict[str, Any]] = []
     for f in folds:
-        rep = _write_fold_train_outputs(f)
+        rep = _write_fold_train_outputs(f, run_name)
         fold_train_reports.append({"fold": f.name, **rep})
 
     # Also generate the same per-epoch AP/AR plots for the final model folder (if present).
     final_dir = results_dir / "final_location_holdout"
     final_train_report: dict[str, Any] | None = None
     if final_dir.exists() and final_dir.is_dir():
-        rep = _write_fold_train_outputs(final_dir)
+        rep = _write_fold_train_outputs(final_dir, run_name)
         final_train_report = {"folder": final_dir.name, **rep}
 
     overview_dir = results_dir / "overview"
@@ -516,27 +723,50 @@ def main() -> int:
     val_dir.mkdir(parents=True, exist_ok=True)
     final_val = _collect_eval_metrics_for_final(results_dir, "validation", args.eval_name)
     final_val_row = ({"fold": "FINAL", **final_val} if final_val else None)
-    _write_overview_xlsx_with_final(val_dir / "overview.xlsx", val_rows, val_keys_sorted, final_val_row)
-    _write_overview_mean_std_xlsx(val_dir / "overview_mean_std.xlsx", val_rows, val_keys_sorted)
+    _write_overview_xlsx_with_final(val_dir / f"overview_{run_name}.xlsx", val_rows, val_keys_sorted, final_val_row)
+    _write_overview_mean_std_xlsx(val_dir / f"overview_mean_std_{run_name}.xlsx", val_rows, val_keys_sorted)
     if val_keys_sorted:
-        _plot_overview_bar_and_box(val_dir / "plots", val_rows, val_keys_sorted)
+        _plot_overview_bar_and_box(val_dir / "plots", val_rows, val_keys_sorted, run_name)
 
     test_dir = overview_dir / "test"
     test_dir.mkdir(parents=True, exist_ok=True)
     final_test = _collect_eval_metrics_for_final(results_dir, "test", args.eval_name)
     final_test_row = ({"fold": "FINAL", **final_test} if final_test else None)
-    _write_overview_xlsx_with_final(test_dir / "overview.xlsx", test_rows, test_keys_sorted, final_test_row)
-    _write_overview_mean_std_xlsx(test_dir / "overview_mean_std.xlsx", test_rows, test_keys_sorted)
+    _write_overview_xlsx_with_final(test_dir / f"overview_{run_name}.xlsx", test_rows, test_keys_sorted, final_test_row)
+    _write_overview_mean_std_xlsx(test_dir / f"overview_mean_std_{run_name}.xlsx", test_rows, test_keys_sorted)
     if test_keys_sorted:
-        _plot_overview_bar_and_box(test_dir / "plots", test_rows, test_keys_sorted)
+        _plot_overview_bar_and_box(test_dir / "plots", test_rows, test_keys_sorted, run_name)
 
     _copy_predictions_to_overview(val_dir, folds, results_dir, "validation")
-    _copy_predictions_to_overview(test_dir, folds, results_dir, "test")
+    _copy_metrics_extra_to_overview(val_dir, folds, results_dir, "validation")
 
-    _copy_extra_plots_to_overview(val_dir, folds, results_dir, "validation")
-    _copy_extra_plots_to_overview(test_dir, folds, results_dir, "test")
+    _copy_predictions_to_overview(test_dir, folds, results_dir, "test")
+    _copy_metrics_extra_to_overview(test_dir, folds, results_dir, "test")
+
+    _copy_extra_plots_to_overview(val_dir, folds, results_dir, "validation", run_name)
+    _copy_extra_plots_to_overview(test_dir, folds, results_dir, "test", run_name)
 
     _copy_final_checkpoint(results_dir, overview_dir)
+
+    # Create overview/training and copy AP + train/val loss plots into it
+    training_dir = overview_dir / "training"
+    training_dir.mkdir(parents=True, exist_ok=True)
+
+    def _is_training_plot(p: Path) -> bool:
+        n = p.name
+        return (
+                "_over_epoch_" in n
+                or n.startswith("train_vs_val_loss_over_epoch_")
+                or n.startswith("train_minus_val_loss_over_epoch_")
+        )
+
+    # Copy from fold/final training plots folders
+    for src in results_dir.rglob("plots"):
+        if not src.is_dir():
+            continue
+        for png in src.glob("*.png"):
+            if _is_training_plot(png):
+                shutil.copy2(png, training_dir / png.name)
 
     # Top-level overview.xlsx: stack VALIDATION section then TEST section (each has its own MEAN and FINAL)
     def _keep_root_key(k: str) -> bool:
@@ -546,7 +776,12 @@ def main() -> int:
                 or k.startswith("AP_precision")
                 or k.startswith("AR_recall")
                 or k.startswith("latency_")
-                or k in ("precision", "recall", "f1", "tp", "fp", "fn")
+                or k.startswith("image_level_")
+                or k in (
+                    "precision", "recall", "f1", "tp", "fp", "fn",
+                    "pr_ap_global", "roc_auc_image_level",
+                    "image_level_TP", "image_level_FP", "image_level_FN", "image_level_TN",
+                )
         )
 
     val_keys_root = [k for k in val_keys_sorted if _keep_root_key(k)]
@@ -573,7 +808,7 @@ def main() -> int:
         final_test_root = {"fold": "FINAL", **{k: final_test_row.get(k, "") for k in test_keys_root}}
 
     _write_combined_overview_xlsx(
-        overview_dir / "overview.xlsx",
+        overview_dir / f"overview_{run_name}.xlsx",
         [
             ("VALIDATION", val_rows_root, val_keys_root, final_val_root),
             ("TEST", test_rows_root, test_keys_root, final_test_root),
@@ -581,8 +816,8 @@ def main() -> int:
     )
 
     # Keep top-level mean/std as validation folds-only (so it stays well-defined)
-    _write_overview_mean_std_xlsx(overview_dir / "overview_mean_std.xlsx", val_rows_root, val_keys_root)
-    _write_fold_split_overview_xlsx(overview_dir / "fold_split_overview.xlsx", folds)
+    _write_overview_mean_std_xlsx(overview_dir / f"overview_mean_std_{run_name}.xlsx", val_rows_root, val_keys_root)
+    _write_fold_split_overview_xlsx(overview_dir / f"fold_split_overview_{run_name}.xlsx", folds)
 
     write_json(
         overview_dir / "summary.json",
@@ -597,9 +832,11 @@ def main() -> int:
             "root_overview_sections": ["validation", "test"],
             "final_validation_included": bool(final_val_row is not None),
             "final_test_included": bool(final_test_row is not None),
-            "note": "overview/overview.xlsx stacks VALIDATION then TEST, each with its own MEAN and FINAL (FINAL excluded from mean). Subfolder overview.xlsx files also include FINAL similarly. mean/std files exclude FINAL.",
+            "note": f"overview/overview_{run_name}.xlsx stacks VALIDATION then TEST, each with its own MEAN and FINAL (FINAL excluded from mean). Subfolder overview_{run_name}.xlsx files also include FINAL similarly. mean/std files exclude FINAL.",
         },
     )
+
+
 
     print(f"[evaluate_models.py] Wrote overview to: {overview_dir}", flush=True)
     return 0

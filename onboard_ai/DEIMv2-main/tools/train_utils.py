@@ -9,7 +9,20 @@ from typing import Any
 
 import re
 from pathlib import Path
+import sys
 
+def export_tb_plots(repo_root: Path, run_dir: Path, out_subdir: str = "tb_exports") -> None:
+    """export_tb_plots(repo_root, run_dir, out_subdir='tb_exports') -> None: Export TB scalars to PNG/CSV (best-effort)."""
+    summary_dir = run_dir / "summary"
+    logdir = summary_dir if summary_dir.exists() else run_dir
+    outdir = run_dir / out_subdir
+    try:
+        cmd = [sys.executable, "tools/export_tb_curves.py", "--logdir", str(logdir), "--outdir", str(outdir)]
+        rc = subprocess.call(cmd, cwd=str(repo_root))
+        if rc != 0:
+            print(f"[tb_export] WARNING: export_tb_curves.py exited with {rc} for {run_dir}", flush=True)
+    except Exception as e:
+        print(f"[tb_export] WARNING: failed exporting TB plots for {run_dir}: {e}", flush=True)
 
 def cleanup_numbered_checkpoints(out_dir: Path) -> None:
     """cleanup_numbered_checkpoints(out_dir) -> None: Delete only checkpointXXXX.pth files in out_dir and out_dir/checkpoints."""
@@ -160,24 +173,15 @@ def resolve_path(repo_root: Path, p: str) -> str:
     return str(pp.resolve()) if pp.is_absolute() else str((repo_root / pp).resolve())
 
 
-def run_and_tee(cmd: list[str], env: dict[str, str] | None, cwd: str | None, log_path: str) -> int:
-    """run_and_tee(cmd, env, cwd, log_path) -> int: Stream stdout/stderr to console and log file."""
-    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "w", encoding="utf-8") as f:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=cwd, text=True)
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            f.write(line)
-            f.flush()
-            print(line, end="")
-        return proc.wait()
 
-
-def ensure_env_cuda_visible_devices(gpus: str) -> dict[str, str]:
-    """ensure_env_cuda_visible_devices(gpus) -> dict[str,str]: Copy env and set CUDA_VISIBLE_DEVICES."""
-    env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(gpus).strip()
-    return env
+def ensure_env_cuda_visible_devices(gpus: str) -> None:
+    """ensure_env_cuda_visible_devices(gpus)->None: Set CUDA_VISIBLE_DEVICES only if not already set."""
+    if str(os.environ.get("CUDA_VISIBLE_DEVICES", "")).strip():
+        return
+    gpus = str(gpus).strip()
+    if not gpus:
+        return
+    os.environ["CUDA_VISIBLE_DEVICES"] = gpus
 
 def run_and_tee(cmd: list[str], env: dict[str, str] | None, cwd: str | None, log_path: str) -> int:
     """run_and_tee(cmd, env, cwd, log_path) -> int: Stream stdout/stderr to console and append to log."""

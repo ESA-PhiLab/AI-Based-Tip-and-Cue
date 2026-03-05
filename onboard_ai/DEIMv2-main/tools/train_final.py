@@ -5,11 +5,16 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
+from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any
 
+
 import shutil
+
+from compute_dataset_mean_std import _iter_coco_image_paths, compute_mean_std_rgb_fast
 
 from train_utils import (
     read_json,
@@ -18,8 +23,10 @@ from train_utils import (
     resolve_path,
     run_and_tee,
     pick_checkpoint,
-    cleanup_numbered_checkpoints,
+    cleanup_numbered_checkpoints, export_tb_plots
 )
+
+
 
 
 def _require_coco_dict(obj: Any, path: str) -> dict[str, Any]:
@@ -165,6 +172,55 @@ def write_include_config_yml(path: Path, base_config: str, override_yml: str, ou
     write_text(str(path), yml)
 
 
+def _fmt_float_list(xs: list[float]) -> str:
+    """_fmt_float_list(xs) -> str: Format float list for YAML inline arrays."""
+    return "[" + ", ".join(f"{float(x):.16g}" for x in xs) + "]"
+
+
+def _patch_normalize_lines(yml_text: str, mean: list[float], std: list[float]) -> tuple[str, int]:
+    """_patch_normalize_lines(yml_text, mean, std) -> (new_text, n): Replace all inline Normalize mean/std blocks."""
+    mean_s = _fmt_float_list(mean)
+    std_s = _fmt_float_list(std)
+
+    pat = re.compile(
+        r"(\{type:\s*Normalize\s*,\s*mean:\s*)\[[^\]]*\](\s*,\s*std:\s*)\[[^\]]*\](\s*\})"
+    )
+
+    def _repl(m: re.Match) -> str:
+        return f"{m.group(1)}{mean_s}{m.group(2)}{std_s}{m.group(3)}"
+
+    new_text, n = pat.subn(_repl, yml_text)
+    return new_text, int(n)
+
+
+def _compute_mean_std_from_coco(img_root: Path, coco_path: Path, workers: int, progress_step_pct: int) -> tuple[list[float], list[float], int, int]:
+    """_compute_mean_std_from_coco(img_root, coco_path, workers, progress_step_pct) -> (mean, std, n_images, n_pixels): Exact RGB mean/std."""
+    paths = _iter_coco_image_paths(coco_path=coco_path, img_root=img_root, locations=None)
+    if not paths:
+        raise RuntimeError(f"No images resolved from COCO: {coco_path}")
+
+    mean, std, n_images, n_pixels = compute_mean_std_rgb_fast(
+        image_paths=paths,
+        workers=int(workers),
+        progress_step_pct=max(1, int(progress_step_pct)),
+    )
+    return mean, std, int(n_images), int(n_pixels)
+
+
+def _write_base_config_with_norm(base_config_in: Path, base_config_out: Path, mean: list[float], std: list[float]) -> int:
+    """_write_base_config_with_norm(base_config_in, base_config_out, mean, std) -> int: Patch Normalize mean/std in base config."""
+    txt = base_config_in.read_text(encoding="utf-8")
+    new_txt, n = _patch_normalize_lines(txt, mean=mean, std=std)
+    if n < 1:
+        raise RuntimeError(
+            f"Did not find any inline Normalize blocks to patch in: {base_config_in}\n"
+            "Expected lines like: - {type: Normalize, mean: [...], std: [...]}."
+        )
+    base_config_out.parent.mkdir(parents=True, exist_ok=True)
+    base_config_out.write_text(new_txt, encoding="utf-8")
+    return int(n)
+
+
 def main() -> int:
     """main() -> int: Split train/val, write configs, launch torchrun training for final model."""
     ap = argparse.ArgumentParser()
@@ -180,6 +236,11 @@ def main() -> int:
     ap.add_argument("--seed", default="123")
     ap.add_argument("--val_frac", default="0.15")
     ap.add_argument("--min_val_per_location", default="1")
+
+    # Final model RGB normalization computed on TRAIN split (after the train/val split)
+    ap.add_argument("--final_norm_stats", default="1")  # 1|0
+    ap.add_argument("--stats_workers", default=str(cpu_count()))
+    ap.add_argument("--stats_progress_step_pct", default="5")
     ap.add_argument("--overwrite", default="0")
     ap.add_argument("--nproc", default="1")
     ap.add_argument("--master_port", default="29500")
@@ -196,6 +257,15 @@ def main() -> int:
     repo_root = Path(args.repo_root).resolve()
     out_dir = Path(args.output_dir).resolve()
     base_config_abs = resolve_path(repo_root, args.base_config)
+
+    # Fail hard unless config lives inside results/ (run-frozen config)
+    bc_norm = str(Path(base_config_abs).resolve()).replace("\\", "/")
+    if "/results/" not in bc_norm:
+        raise SystemExit(
+            f"[train_final] ERROR: base_config must be the run-local frozen config under results/, got:\n{bc_norm}"
+        )
+
+
     coco_trainval_abs = resolve_path(repo_root, args.coco_trainval)
     coco_test_abs = resolve_path(repo_root, args.coco_test) if str(args.coco_test).strip() else ""
     pretrained_abs = resolve_path(repo_root, args.pretrained) if str(args.pretrained).strip() else ""
@@ -232,13 +302,57 @@ def main() -> int:
     cfg_path = cfg_dir / "train_config.yml"
 
     write_ann_override_yml(override_yml, img_root, str(train_ann_path), str(val_ann_path))
-    write_include_config_yml(cfg_path, str(Path(base_config_abs).resolve()), str(override_yml), str(out_dir))
+
+    # ----- Final mean/std computed on TRAIN split (instances_train.json) -----
+    base_cfg_for_final = Path(base_config_abs).resolve()
+    stats_json_path = cfg_dir / "dataset_rgb_mean_std_train.json"
+    base_cfg_patched = cfg_dir / "base_config_with_train_norm.yml"
+
+    final_mean: list[float] | None = None
+    final_std: list[float] | None = None
+    n_images = 0
+    n_pixels = 0
+    n_norm_patched = 0
+
+    if str(getattr(args, "final_norm_stats", "1")).strip() == "1":
+        mean, std, n_images, n_pixels = _compute_mean_std_from_coco(
+            img_root=img_root,
+            coco_path=train_ann_path,
+            workers=int(getattr(args, "stats_workers", cpu_count())),
+            progress_step_pct=int(getattr(args, "stats_progress_step_pct", 5)),
+        )
+        final_mean, final_std = mean, std
+        n_norm_patched = _write_base_config_with_norm(
+            base_config_in=base_cfg_for_final,
+            base_config_out=base_cfg_patched,
+            mean=mean,
+            std=std,
+        )
+
+        write_json(
+            str(stats_json_path),
+            {
+                "train_ann": str(train_ann_path),
+                "img_root": str(img_root),
+                "n_images_processed": int(n_images),
+                "n_pixels_total": int(n_pixels),
+                "mean_rgb_01": mean,
+                "std_rgb_01": std,
+                "patched_normalize_blocks": int(n_norm_patched),
+                "note": "Exact RGB mean/std over FINAL TRAIN split (instances_train.json). Applied to all inline Normalize blocks (train+val).",
+            },
+        )
+        base_cfg_for_include = base_cfg_patched
+    else:
+        base_cfg_for_include = base_cfg_for_final
+
+    write_include_config_yml(cfg_path, str(base_cfg_for_include), str(override_yml), str(out_dir))
 
     # -----------------------
     # FIX: propagate GPU selection into the env used for torchrun
     # -----------------------
     env = os.environ.copy()
-    if str(args.gpus).strip():
+    if not str(env.get("CUDA_VISIBLE_DEVICES", "")).strip():
         env["CUDA_VISIBLE_DEVICES"] = str(args.gpus).strip()
 
     env["MASTER_ADDR"] = env.get("MASTER_ADDR", "127.0.0.1")
@@ -276,6 +390,8 @@ def main() -> int:
     if rc != 0:
         raise SystemExit(f"Final training failed: exit {rc}")
 
+    export_tb_plots(repo_root=repo_root, run_dir=out_dir, out_subdir="tb_exports")
+
     ckpt = pick_checkpoint(out_dir)
 
     variant = "other"
@@ -303,6 +419,11 @@ def main() -> int:
         "val_frac": float(args.val_frac),
         "seed": int(args.seed),
         "min_val_per_location": int(args.min_val_per_location),
+        "base_config_original": str(Path(base_config_abs).resolve()),
+        "base_config_with_train_norm": (str(base_cfg_patched.resolve()) if base_cfg_patched.exists() else None),
+        "train_norm_stats_json": (str(stats_json_path.resolve()) if stats_json_path.exists() else None),
+        "train_mean_rgb_01": final_mean,
+        "train_std_rgb_01": final_std,
     }
     write_json(str(out_dir / "final_meta.json"), final_meta)
 

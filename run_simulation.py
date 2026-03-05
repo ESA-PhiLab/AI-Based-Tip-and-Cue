@@ -45,7 +45,7 @@ show_constellation = False
 show_orbits = False
 plot_propagation, uhd = True, True
 plot_footprints = True
-plot_whale_trajectories = False
+# plot_whale_trajectories = False
 
 create_image = False
 onboard_ai_tip = True
@@ -73,6 +73,7 @@ if real_run:
 
     logging = True
     verbose = False
+
 
 # Initialize Orekit
 vm = orekit.initVM()

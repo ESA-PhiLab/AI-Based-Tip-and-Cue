@@ -24,6 +24,7 @@ anns_folder = "dataset/create_dataset/"
 anns_path = os.path.join(anns_folder, "final_annotations.json")
 
 real_run = False
+plot_whale_trajectories = True
 
 if real_run:
     print_values = False
@@ -38,7 +39,7 @@ if real_run:
 else:
     # Feel free to modify
     print_values = False
-    plot_3d = False
+    plot_3d = True
     plot_result = False
     max_glint = False
     generate_radiation = True
@@ -46,11 +47,11 @@ else:
     flat_dem = False
     exclude_dark = True
 
-nSats_tip = 1
-nSats_cue = 1
+nSats_tip = 2
+nSats_cue = 2
 
-nPlanes_tip = 1
-nPlanes_cue = 1
+nPlanes_tip = 2
+nPlanes_cue = 2
 
 offnadir_limit = 40  # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 5 * 60  # Time delay between Tip and Cue satellite (s)
@@ -58,15 +59,15 @@ delta_t_tipcue = 5 * 60  # Time delay between Tip and Cue satellite (s)
 whale_seed = 42
 
 if not real_run:
-    sim_duration_hours = 5826.4 / 3600 # 0.20
-    sim_time = 'slow'
+    sim_duration_hours = 5/60 #5826.4/3600
+    sim_time = 'custom'
 
 else:
     sim_duration_hours = 24
     sim_time = 'slow'
 
 if not real_run:
-    sim_name = "1_full_orbit"
+    sim_name = "11_trajectory_5m"
 else:
     nm_ext = str()
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
@@ -92,7 +93,7 @@ elif sim_time == 'fast':
     movie_orbit_sec = 60.0
 
 else:
-    sim_step_seconds = 1
+    sim_step_seconds = 5
     plot_fov_interval = 1
     plot_pyvista_interval = 1
     print_interval = 10
@@ -186,7 +187,6 @@ refl_mode = 'proxy'
 refl_scale = None
 refl_offset = None
 
-
 # ================================================================================
 # ATTITUDE
 
@@ -205,8 +205,8 @@ if real_run:
     n_targets = 500
 
 if not real_run:
-    n_targets = 500
-    whale_seed = 17
+    n_targets = 10000
+    whale_seed = 42
 
 pos_fraction = 1.0
 

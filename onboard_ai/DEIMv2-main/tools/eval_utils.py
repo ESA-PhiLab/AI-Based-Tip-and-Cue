@@ -22,6 +22,28 @@ from datetime import datetime
 
 _AVG_RE = re.compile(r"\bAveraged stats:\s.*?\bloss:\s[-+0-9.eE]+\s\(([-+0-9.eE]+)\)")
 _EPOCH_RE = re.compile(r"^Epoch:\s*\[(\d+)\]")
+_LOSS_KV_RE = re.compile(r"\b(loss(?:_[A-Za-z0-9]+)*):\s*[-+0-9.eE]+\s*\(([-+0-9.eE]+)\)")
+# ===================== ADD/REPLACE BELOW IN eval_utils.py =====================
+
+
+DEFAULT_LOSS_WEIGHT_DICT: dict[str, float] = {
+    "loss_mal": 1.0,
+    "loss_bbox": 5.0,
+    "loss_giou": 2.0,
+    "loss_fgl": 0.0,
+    "loss_ddf": 0.0,
+}
+
+
+# DEFAULT_LOSS_WEIGHT_DICT: dict[str, float] = {
+#     "loss_mal": 1.0,
+#     "loss_bbox": 1.0,
+#     "loss_giou": 1.0,
+#     "loss_fgl": 1.0,
+#     "loss_ddf": 1.0,
+# }
+
+
 
 def read_json(path: str) -> Any:
     """read_json(path) -> Any: Read JSON."""
@@ -115,33 +137,6 @@ def read_meta(fold_dir: Path) -> dict[str, Any]:
         except Exception:
             return {}
     return {}
-
-
-def resolve_val_ann_path(fold_dir: Path, meta: dict[str, Any]) -> Path:
-    """resolve_val_ann_path(fold_dir, meta) -> Path: Find validation annotations."""
-    # Prefer explicit meta
-    for k in ["val_ann", "coco_val", "ann_val"]:
-        v = str(meta.get(k) or "").strip()
-        if v:
-            p = Path(v).expanduser()
-            if p.exists():
-                return p
-            p2 = fold_dir / p.name
-            if p2.exists():
-                return p2
-
-    # Common locations
-    cands = [
-        fold_dir / "splits" / "instances_val.json",
-        fold_dir / "instances_val.json",
-        fold_dir / "val.json",
-        fold_dir / "annotations" / "instances_val.json",
-        fold_dir / "annotations" / "val.json",
-    ]
-    p = _first_existing(cands)
-    if p is None:
-        raise FileNotFoundError(f"Could not resolve val annotation json under {fold_dir}")
-    return p
 
 def resolve_val_ann_path(*args) -> Path:
     """resolve_val_ann_path(results_dir?, fold_dir, meta) -> Path: Find validation annotations (supports old/new call signatures)."""
@@ -312,6 +307,19 @@ def collect_eval_metrics(eval_dir: Path) -> dict[str, Any]:
             pass
 
     return out
+
+
+def _cleanup_epoch_plots(plots_dir: Path, prefixes: list[str]) -> None:
+    """_cleanup_epoch_plots(plots_dir, prefixes) -> None: Delete old epoch plots before re-plotting."""
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    # Remove legacy + any suffix variants for each prefix.
+    for pref in prefixes:
+        for p in plots_dir.glob(f"{pref}*.png"):
+            try:
+                p.unlink()
+            except Exception:
+                pass
 
 
 def plot_barplot(out_path: Path, title: str, rows: list[dict[str, Any]], key: str) -> None:
@@ -586,48 +594,164 @@ def parse_train_coco_metrics_from_log(log_path: Path) -> list[dict[str, Any]]:
     return [rows[k] for k in sorted(rows.keys())]
 
 
-_LOSS_KV_RE = re.compile(r"\b(loss(?:_[A-Za-z0-9]+)*):\s*[-+0-9.eE]+\s*\(([-+0-9.eE]+)\)")
+def _discover_shared_loss_keys(rows: list[dict[str, Any]]) -> list[str]:
+    """_discover_shared_loss_keys(rows) -> list[str]: Loss keys that appear in BOTH train_ and val_ across rows."""
+    train_keys: set[str] = set()
+    val_keys: set[str] = set()
 
-def parse_loss_curves_from_stdout_log(stdout_log_path: Path) -> list[dict[str, Any]]:
-    """parse_loss_curves_from_stdout_log(stdout_log_path) -> list[dict]: Extract per-epoch train/val loss components from plain-text logs."""
-    stdout_log_path = Path(stdout_log_path)
-    if not stdout_log_path.exists():
+    for r in rows:
+        for k in r.keys():
+            if not isinstance(k, str):
+                continue
+            if k.startswith("train_loss") and k != "train_loss":
+                train_keys.add(k[len("train_"):])  # "train_loss_bbox" -> "loss_bbox"
+            if k.startswith("val_loss") and k != "val_loss":
+                val_keys.add(k[len("val_"):])      # "val_loss_bbox" -> "loss_bbox"
+
+    shared = sorted(train_keys & val_keys)
+    if not shared:
+        shared = ["loss_mal", "loss_bbox", "loss_giou"]
+    return shared
+
+
+
+def _compute_weighted_total(row: dict[str, Any], prefix: str, allowed_loss_keys: list[str], weight_dict: dict[str, float]) -> float | None:
+    """_compute_weighted_total(row, prefix, allowed_loss_keys, weight_dict) -> float|None: Sum weight*component over allowed keys."""
+    total = 0.0
+    used = 0
+    for lk in allowed_loss_keys:
+        v = safe_float(row.get(f"{prefix}_{lk}"))
+        if v is None:
+            continue
+        w = float(weight_dict.get(lk, 0.0))
+        total += w * float(v)
+        used += 1
+    return total if used > 0 else None
+
+
+
+def _attach_shared_weighted_totals(rows: list[dict[str, Any]], weight_dict: dict[str, float]) -> list[dict[str, Any]]:
+    """_attach_shared_weighted_totals(rows, weight_dict) -> rows: Add train/val weighted totals over shared keys only."""
+    allowed = _discover_shared_loss_keys(rows)
+    for r in rows:
+        tr = _compute_weighted_total(r, "train", allowed, weight_dict)
+        va = _compute_weighted_total(r, "val", allowed, weight_dict)
+        if tr is not None:
+            r["train_loss_weighted"] = tr
+        if va is not None:
+            r["val_loss_weighted"] = va
+    return rows
+
+
+_STDOUT_EPOCH_RE = re.compile(r"^Epoch:\s*\[(\d+)\]")
+_STDOUT_AVG_RE = re.compile(r"^Averaged stats:\s*(.*)$")
+_STDOUT_KV_RE = re.compile(
+    r"([A-Za-z0-9_]+):\s*([+-]?\d+(?:\.\d+)?)(?:\s*\(([+-]?\d+(?:\.\d+)?)\))?"
+)
+
+
+def _is_main_loss_key(k: str) -> bool:
+    """_is_main_loss_key(k) -> bool: True for main loss keys (exclude aux/dn/enc/pre variants)."""
+    if not k.startswith("loss"):
+        return False
+    if any(x in k for x in ["dn_", "aux_", "enc_", "_pre", "pre_", "detr"]):
+        return False
+    return True
+
+def parse_loss_curves_from_stdout_log(log_path: Path) -> list[dict[str, Any]]:
+    """parse_loss_curves_from_stdout_log(log_path) -> list[dict]: Parse per-epoch train/val main losses, plus full train losses from stdout."""
+    log_path = Path(log_path)
+    if log_path.is_dir():
+        cand = log_path / "train_stdout.log"
+        if cand.exists():
+            log_path = cand
+
+    if not log_path.exists():
         return []
 
     rows_by_ep: dict[int, dict[str, Any]] = {}
-    current_ep: int | None = None
-    in_test = False
+    cur_epoch: int | None = None
+    mode: str = "train"  # switches to "val" after seeing "Test:" blocks
 
-    for line in stdout_log_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        s = line.strip()
+    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    for line in lines:
+        line = line.strip()
 
-        m_ep = _EPOCH_RE.match(s)
+        m_ep = _STDOUT_EPOCH_RE.match(line)
         if m_ep:
-            current_ep = int(m_ep.group(1))
-            in_test = False
-            rows_by_ep.setdefault(current_ep, {"epoch": current_ep})
+            cur_epoch = int(m_ep.group(1))
+            mode = "train"
+            rows_by_ep.setdefault(cur_epoch, {"epoch": cur_epoch})
             continue
 
-        if s.startswith("Test:"):
-            in_test = True
+        if line.startswith("Test:"):
+            mode = "val"
             continue
 
-        if "Averaged stats:" not in s or current_ep is None:
+        m_avg = _STDOUT_AVG_RE.match(line)
+        if not m_avg or cur_epoch is None:
             continue
 
-        kvs = _LOSS_KV_RE.findall(s)
-        if not kvs:
-            continue
+        payload = m_avg.group(1)
+        r = rows_by_ep.setdefault(cur_epoch, {"epoch": cur_epoch})
 
-        prefix = "val_" if in_test else "train_"
-        r = rows_by_ep[current_ep]
-        for name, avg_str in kvs:
-            fv = safe_float(avg_str)
-            if fv is None:
+        for km in _STDOUT_KV_RE.finditer(payload):
+            k = km.group(1)
+            v = safe_float(km.group(3) if km.group(3) is not None else km.group(2))
+            if v is None or not k.startswith("loss"):
                 continue
-            r[f"{prefix}{name}"] = float(fv)
+
+            if mode == "train":
+                # Keep ALL train loss terms (main + aux/dn/enc/pre) for "real" weighted loss.
+                r[f"trainfull_{k}"] = float(v)
+
+                # Also keep main train losses for the existing shared-components plots.
+                if _is_main_loss_key(k):
+                    r[f"train_{k}"] = float(v)
+            else:
+                # For val, keep only main keys (val has no aux/dn variants in your stdout).
+                if _is_main_loss_key(k):
+                    r[f"val_{k}"] = float(v)
 
     return [rows_by_ep[k] for k in sorted(rows_by_ep.keys())]
+
+def plot_train_val_components(epochs, train_mal, val_mal, train_bbox, val_bbox, train_giou, val_giou, out_path=None):
+    """Plot train vs val MAL, BBOX, GIoU (solid=train, dashed=val)."""
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    epochs = np.asarray(epochs)
+
+    plt.figure(figsize=(10, 5))
+
+    # Orange: MAL
+    plt.plot(epochs, train_mal, color="orange", linestyle="-", label="mal train")
+    plt.plot(epochs, val_mal, color="orange", linestyle="--", label="mal val")
+
+    # Blue: BBOX
+    plt.plot(epochs, train_bbox, color="blue", linestyle="-", label="bbox train")
+    plt.plot(epochs, val_bbox, color="blue", linestyle="--", label="bbox val")
+
+    # Green: GIoU
+    plt.plot(epochs, train_giou, color="green", linestyle="-", label="giou train")
+    plt.plot(epochs, val_giou, color="green", linestyle="--", label="giou val")
+
+    plt.xlabel("epoch")
+    plt.ylabel("loss")
+    plt.title("Train vs Val component losses")
+    plt.grid(True, alpha=0.3)
+    plt.legend(ncols=3, fontsize=9)
+    plt.tight_layout()
+
+    if out_path is not None:
+        plt.savefig(out_path, dpi=200)
+    else:
+        plt.show()
+
+    return None
+
+
+# ===================== END ADD/REPLACE =====================
 
 def parse_loss_curves_from_jsonl_logtxt(log_path: Path) -> list[dict[str, Any]]:
     """parse_loss_curves_from_jsonl_logtxt(log_path) -> list[dict]: Parse per-epoch train/val component losses from JSONL log.txt."""
@@ -651,12 +775,15 @@ def parse_loss_curves_from_jsonl_logtxt(log_path: Path) -> list[dict[str, Any]]:
     rows_by_ep: dict[int, dict[str, Any]] = {}
     txt = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
 
-    def is_loss_key(k: str) -> bool:
+    def is_main_loss_key(k: str) -> bool:
         if not k.startswith("loss"):
             return False
         if any(x in k for x in ["dn_", "aux_", "enc_", "_pre", "pre_", "detr"]):
             return False
         return True
+
+    def is_any_loss_key(k: str) -> bool:
+        return k.startswith("loss")
 
     for line in txt:
         obj = _try_parse_json_line(line)
@@ -677,40 +804,80 @@ def parse_loss_curves_from_jsonl_logtxt(log_path: Path) -> list[dict[str, Any]]:
         is_val = any(k.startswith("test_") or k.startswith("val_") for k in obj.keys())
 
         if is_val:
-            # Capture test_/val_ prefixed losses
+            # Capture test_/val_ prefixed *main* losses for shared-components plots
             for k, v in obj.items():
                 if not isinstance(k, str):
                     continue
-                if k.startswith("test_") and is_loss_key(k[len("test_"):]):
+                if k.startswith("test_") and is_main_loss_key(k[len("test_"):]):
                     fv = safe_float(v)
                     if fv is not None:
                         r[f"val_{k[len('test_') :]}"] = float(fv)
-                elif k.startswith("val_") and is_loss_key(k[len("val_"):]):
+                elif k.startswith("val_") and is_main_loss_key(k[len("val_"):]):
                     fv = safe_float(v)
                     if fv is not None:
                         r[f"val_{k[len('val_') :]}"] = float(fv)
         else:
-            # Capture train losses (usually unprefixed "loss_*")
+            # Capture train losses:
+            # - main losses into train_loss_* (for shared-components plots)
+            # - ALL losses into trainfull_loss_* (for real weighted loss)
             for k, v in obj.items():
                 if not isinstance(k, str):
                     continue
-                if is_loss_key(k):
+                if is_any_loss_key(k):
                     fv = safe_float(v)
                     if fv is not None:
-                        r[f"train_{k}"] = float(fv)
+                        r[f"trainfull_{k}"] = float(fv)
+                        if is_main_loss_key(k):
+                            r[f"train_{k}"] = float(fv)
 
     return [rows_by_ep[k] for k in sorted(rows_by_ep.keys())]
 
+
+def _base_loss_key(loss_key: str, weight_dict: dict[str, float]) -> str | None:
+    """_base_loss_key(loss_key, weight_dict) -> str|None: Map variant loss key (e.g. loss_bbox_dn_0) to base key (loss_bbox)."""
+    for base in weight_dict.keys():
+        if loss_key == base or loss_key.startswith(base + "_"):
+            return base
+    return None
+
+
+def _attach_real_train_weighted_totals(rows: list[dict[str, Any]], weight_dict: dict[str, float]) -> list[dict[str, Any]]:
+    """_attach_real_train_weighted_totals(rows, weight_dict) -> rows: Add train_loss_real_weighted from all trainfull_loss_* keys."""
+    for r in rows:
+        total = 0.0
+        used = 0
+        for k, v in r.items():
+            if not isinstance(k, str) or not k.startswith("trainfull_loss"):
+                continue
+            loss_key = k[len("trainfull_"):]  # "loss_bbox_dn_0"
+            base = _base_loss_key(loss_key, weight_dict)
+            if base is None:
+                continue
+            fv = safe_float(v)
+            if fv is None:
+                continue
+            total += float(weight_dict[base]) * float(fv)
+            used += 1
+
+        if used > 0:
+            r["train_loss_real_weighted"] = float(total)
+
+    return rows
+
+
 def parse_loss_curves_from_log(log_path: Path) -> list[dict[str, Any]]:
-    """parse_loss_curves_from_log(log_path) -> list[dict]: Parse loss curves from JSONL log.txt or plain-text stdout logs."""
+    """parse_loss_curves_from_log(log_path) -> list[dict]: Parse loss curves and add shared + real train weighted totals."""
     log_path = Path(log_path)
 
     rows = parse_loss_curves_from_jsonl_logtxt(log_path)
-    if rows:
-        return rows
+    if not rows:
+        rows = parse_loss_curves_from_stdout_log(log_path)
+    if not rows:
+        return []
 
-    return parse_loss_curves_from_stdout_log(log_path)
-
+    rows = _attach_shared_weighted_totals(rows, DEFAULT_LOSS_WEIGHT_DICT)
+    rows = _attach_real_train_weighted_totals(rows, DEFAULT_LOSS_WEIGHT_DICT)
+    return rows
 
 def _loss_component_suffixes(row: dict[str, Any], prefix: str) -> set[str]:
     """_loss_component_suffixes(row, prefix) -> set[str]: Component-loss suffixes for a prefix (excludes total)."""
@@ -769,66 +936,73 @@ def plot_metric_over_epoch(out_path: Path, title: str, rows: list[dict[str, Any]
     plt.savefig(str(out_path))
     plt.close()
 
-def plot_train_val_loss(out_path: Path, title: str, rows: list[dict[str, Any]]) -> None:
-    """plot_train_val_loss(out_path, title, rows) -> None: Plot train vs val loss as identical sum over val components."""
-    # Determine which component keys exist in validation across the run
-    # We only sum these, for BOTH train and val.
-    val_suffixes: set[str] = set()
-    for r in rows:
-        for k in r.keys():
-            if k.startswith("val_loss") and k != "val_loss":
-                val_suffixes.add(k[len("val_"):])  # e.g. "loss_bbox"
-
-    # Fallback: if val only logged total (rare for JSONL), try the classic trio
-    if not val_suffixes:
-        val_suffixes = {"loss_mal", "loss_bbox", "loss_giou"}
-
+def plot_train_val_loss(out_path: Path, title: str, rows: list[dict[str, Any]], mode: str = "all") -> None:
+    """plot_train_val_loss(out_path, title, rows, mode='all') -> None: Plot loss curves with fixed colors; mode in {'all','shared','real_vs_val'}."""
     xs: list[int] = []
-    tr: list[float] = []
-    va: list[float] = []
+    tr_shared: list[float] = []
+    va_shared: list[float] = []
+    tr_real: list[float] = []
 
     for r in rows:
         ep = r.get("epoch")
         if ep is None:
             continue
 
-        train_total = 0.0
-        val_total = 0.0
-        have_train = False
-        have_val = False
+        tw = safe_float(r.get("train_loss_weighted"))
+        vw = safe_float(r.get("val_loss_weighted"))
+        rw = safe_float(r.get("train_loss_real_weighted"))
 
-        for suf in sorted(val_suffixes):
-            tv = safe_float(r.get(f"train_{suf}"))
-            vv = safe_float(r.get(f"val_{suf}"))
-            if tv is not None:
-                train_total += float(tv)
-                have_train = True
-            if vv is not None:
-                val_total += float(vv)
-                have_val = True
-
-        if not (have_train and have_val):
+        if tw is None or vw is None:
             continue
 
         xs.append(int(ep))
-        tr.append(train_total)
-        va.append(val_total)
+        tr_shared.append(float(tw))
+        va_shared.append(float(vw))
+        tr_real.append(float(rw) if rw is not None else float("nan"))
 
     if not xs:
         return
 
+    mode = str(mode or "all").strip().lower()
+    if mode not in {"all", "shared", "real_vs_val"}:
+        mode = "all"
+
+    # Fixed legend labels (match your screenshot exactly)
+    L_TRAIN_SHARED = "train (shared, weighted)"
+    L_VAL_SHARED = "val (shared, weighted)"
+    L_TRAIN_REAL = "train (real, weighted)"
+
+    # Fixed colors (match your screenshot)
+    C_TRAIN_SHARED = "tab:blue"
+    C_VAL_SHARED = "tab:orange"
+    C_TRAIN_REAL = "tab:green"
+
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(7, 4))
-    plt.plot(xs, tr, label="train")
-    plt.plot(xs, va, label="val")
+
+    if mode == "shared":
+        plt.plot(xs, tr_shared, label=L_TRAIN_SHARED, color=C_TRAIN_SHARED)
+        plt.plot(xs, va_shared, label=L_VAL_SHARED, color=C_VAL_SHARED)
+        ylabel = "loss (shared components, weighted)"
+    elif mode == "real_vs_val":
+        plt.plot(xs, va_shared, label=L_VAL_SHARED, color=C_VAL_SHARED)
+        plt.plot(xs, tr_real, label=L_TRAIN_REAL, color=C_TRAIN_REAL)
+        ylabel = "loss"
+    else:
+        plt.plot(xs, tr_shared, label=L_TRAIN_SHARED, color=C_TRAIN_SHARED)
+        plt.plot(xs, va_shared, label=L_VAL_SHARED, color=C_VAL_SHARED)
+        plt.plot(xs, tr_real, label=L_TRAIN_REAL, color=C_TRAIN_REAL)
+        ylabel = "loss"
+
     plt.title(title)
     plt.xlabel("epoch")
-    plt.ylabel("loss (sum of val components)")
+    plt.ylabel(ylabel)
     plt.legend()
     plt.tight_layout()
     plt.savefig(str(out_path))
     plt.close()
+
 
 def write_train_metrics_xlsx(fold_dir: Path, coco_rows: list[dict[str, Any]]) -> None:
     """write_train_metrics_xlsx(fold_dir, coco_rows) -> None: Write train metrics to fold_dir/metrics/train_metrics.xlsx."""
@@ -883,4 +1057,105 @@ def write_loss_xlsx(fold_dir: Path, loss_rows: list[dict[str, Any]]) -> None:
     for ci, c in enumerate(keys, start=1):
         ws.column_dimensions[get_column_letter(ci)].width = min(60, max(10, len(str(c)) + 2))
     wb.save(str(out))
+
+def plot_train_val_loss_gap(out_path: Path, title: str, rows: list[dict[str, Any]]) -> None:
+    """plot_train_val_loss_gap(out_path, title, rows) -> None: Plot (train_weighted - val_weighted) loss gap vs epoch."""
+    xs: list[int] = []
+    gap: list[float] = []
+
+    for r in rows:
+        ep = r.get("epoch")
+        if ep is None:
+            continue
+
+        tw = safe_float(r.get("train_loss_weighted"))
+        vw = safe_float(r.get("val_loss_weighted"))
+
+        # Fallback if weighted totals weren't present for some reason
+        if tw is None or vw is None:
+            continue
+
+        xs.append(int(ep))
+        gap.append(float(tw) - float(vw))
+
+    if not xs:
+        return
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.figure(figsize=(7, 4))
+    plt.plot(xs, gap, label="train_shared - val_shared")
+    plt.axhline(0.0, linewidth=1.0)
+    plt.title(title)
+    plt.xlabel("epoch")
+    plt.ylabel("loss (shared components, weighted)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(str(out_path))
+    plt.close()
+
+
+
+def _series(rows: list[dict[str, Any]], key: str) -> list[tuple[int, float]]:
+    """_series(rows, key) -> list[(epoch,val)]: Extract sorted (epoch,val) for a key."""
+    out: list[tuple[int, float]] = []
+    for r in rows:
+        ep = r.get("epoch")
+        v = safe_float(r.get(key))
+        if ep is None or v is None:
+            continue
+        out.append((int(ep), float(v)))
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def plot_train_val_components_from_rows(out_path: Path, title: str, rows: list[dict[str, Any]]) -> None:
+    """plot_train_val_components_from_rows(out_path, title, rows) -> None: Plot train/val MAL,BBOX,GIoU (solid/dashed) and save."""
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    mal_tr = _series(rows, "train_loss_mal")
+    mal_va = _series(rows, "val_loss_mal")
+    bb_tr = _series(rows, "train_loss_bbox")
+    bb_va = _series(rows, "val_loss_bbox")
+    gi_tr = _series(rows, "train_loss_giou")
+    gi_va = _series(rows, "val_loss_giou")
+
+    if not (mal_tr or mal_va or bb_tr or bb_va or gi_tr or gi_va):
+        return
+
+    plt.figure(figsize=(10, 5))
+
+    if mal_tr:
+        xs, ys = zip(*mal_tr)
+        plt.plot(xs, ys, color="orange", linestyle="-", label="mal train")
+    if mal_va:
+        xs, ys = zip(*mal_va)
+        plt.plot(xs, ys, color="orange", linestyle="--", label="mal val")
+
+    if bb_tr:
+        xs, ys = zip(*bb_tr)
+        plt.plot(xs, ys, color="blue", linestyle="-", label="bbox train")
+    if bb_va:
+        xs, ys = zip(*bb_va)
+        plt.plot(xs, ys, color="blue", linestyle="--", label="bbox val")
+
+    if gi_tr:
+        xs, ys = zip(*gi_tr)
+        plt.plot(xs, ys, color="green", linestyle="-", label="giou train")
+    if gi_va:
+        xs, ys = zip(*gi_va)
+        plt.plot(xs, ys, color="green", linestyle="--", label="giou val")
+
+    plt.title(title)
+    plt.xlabel("epoch")
+    plt.ylabel("loss")
+    plt.grid(True, alpha=0.3)
+    plt.legend(ncols=3, fontsize=9)
+    plt.tight_layout()
+    plt.savefig(str(out_path), dpi=200)
+    plt.close()
+
+
+
 

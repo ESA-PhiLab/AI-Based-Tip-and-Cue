@@ -26,9 +26,12 @@ anns_path = str(anns_folder / "final_annotations.json")
 SCRIPT_DIR = Path(__file__).resolve().parent
 poses_xlsx = SCRIPT_DIR / "combined_results.xlsx"
 
-sat_lat, sat_lon, sat_alt = 58.0, -5.0, 617000.0  # lat, lon, m
-tgt_lat, tgt_lon, tgt_alt = 53.0, 0.0, 0.0  # lat, lon, me
-dt = datetime(2025, 6, 11, 12, 0, 0, tzinfo=timezone.utc)
+sat_lat, sat_lon, sat_alt = 52.377956,  4.897070, 617000.0  # lat, lon, m
+tgt_lat, tgt_lon, tgt_alt = 41.902782,  12.496366, 0.0  # lat, lon, me
+dt = datetime(2025, 6, 21, 3, 36, 0, tzinfo=timezone.utc)
+
+
+bools["plot_3d"] = True
 
 # result_name, detection_id, sat_lat, sat_lon, sat_alt, tgt_lat, tgt_lon, tgt_alt, datetime_utc = pick_random_pose(poses_xlsx, pick_pose_seed=14)
 # dt = ( datetime.fromisoformat(datetime_utc.replace("Z", "+00:00")).astimezone(timezone.utc) if datetime_utc else datetime(2025, 6, 11, 8, 0, 0, tzinfo=timezone.utc) )

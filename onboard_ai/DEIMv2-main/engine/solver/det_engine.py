@@ -6,38 +6,42 @@ Modified from DETR (https://github.com/facebookresearch/detr/blob/main/engine.py
 Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 """
 
-from __future__ import annotations
 
-import math
-import os
 import sys
-from typing import Any, Iterable
+import math
+from typing import Iterable
 
 import torch
-from torch.cuda.amp.grad_scaler import GradScaler
+import torch.amp
 from torch.utils.tensorboard import SummaryWriter
+from torch.cuda.amp.grad_scaler import GradScaler
 
+from ..optim import ModelEMA, Warmup
 from ..data import CocoEvaluator
 from ..misc import MetricLogger, SmoothedValue, dist_utils
-from ..optim import ModelEMA, Warmup
+
+import os
+import json
+from pathlib import Path
+from typing import Any
 
 
 def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, max_norm: float = 0, **kwargs) -> dict[str, float]:
-    """train_one_epoch(...) -> dict[str,float]: One training epoch; returns global-avg meters."""
+                    device: torch.device, epoch: int, max_norm: float = 0, **kwargs):
     model.train()
     criterion.train()
     metric_logger = MetricLogger(delimiter="  ")
-    metric_logger.add_meter("lr", SmoothedValue(window_size=1, fmt="{value:.6f}"))
-    header = f"Epoch: [{epoch}]"
+    metric_logger.add_meter('lr', SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    header = 'Epoch: [{}]'.format(epoch)
 
-    print_freq = kwargs.get("print_freq", 10)
-    writer: SummaryWriter | None = kwargs.get("writer", None)
+    print_freq = kwargs.get('print_freq', 10)
+    writer :SummaryWriter = kwargs.get('writer', None)
+    writer_log_every = kwargs.get("writer_log_every", 10)  # log interval in steps
 
-    ema: ModelEMA | None = kwargs.get("ema", None)
-    scaler: GradScaler | None = kwargs.get("scaler", None)
-    lr_warmup_scheduler: Warmup | None = kwargs.get("lr_warmup_scheduler", None)
+    ema :ModelEMA = kwargs.get('ema', None)
+    scaler :GradScaler = kwargs.get('scaler', None)
+    lr_warmup_scheduler :Warmup = kwargs.get('lr_warmup_scheduler', None)
 
     cur_iters = epoch * len(data_loader)
 
@@ -48,37 +52,26 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
         metas = dict(epoch=epoch, step=i, global_step=global_step, epoch_step=len(data_loader))
 
         if scaler is not None:
-            with torch.autocast(device_type=device.type, cache_enabled=True):
+            with torch.autocast(device_type=str(device), cache_enabled=True):
                 outputs = model(samples, targets=targets)
 
-            if torch.isnan(outputs["pred_boxes"]).any() or torch.isinf(outputs["pred_boxes"]).any():
-                print(outputs["pred_boxes"])
-                state = {}
+            if torch.isnan(outputs['pred_boxes']).any() or torch.isinf(outputs['pred_boxes']).any():
+                print(outputs['pred_boxes'])
+                state = model.state_dict()
+                new_state = {}
                 for key, value in model.state_dict().items():
-                    state[key.replace("module.", "")] = value
-                out_dir = kwargs.get("output_dir", None)
-                if out_dir:
-                    dist_utils.save_on_master(state, os.path.join(out_dir, "nan.pth"))
-                pb = outputs.get("pred_boxes", None)
-                if pb is None:
-                    raise RuntimeError("pred_boxes missing from outputs.")
+                    # Replace 'module' with 'model' in each key
+                    new_key = key.replace('module.', '')
+                    # Add the updated key-value pair to the state dictionary
+                    state[new_key] = value
+                new_state['model'] = state
+                dist_utils.save_on_master(new_state, "./NaN.pth")
 
-                bad = ~torch.isfinite(pb)
-                msg = (
-                    f"NaN/Inf in pred_boxes: shape={tuple(pb.shape)} "
-                    f"bad_count={int(bad.sum().item())} "
-                    f"min={float(torch.nan_to_num(pb, nan=0.0, posinf=0.0, neginf=0.0).min().item())} "
-                    f"max={float(torch.nan_to_num(pb, nan=0.0, posinf=0.0, neginf=0.0).max().item())}"
-                )
-                print(msg)
-                raise RuntimeError(msg)
+            with torch.autocast(device_type=str(device), enabled=False):
+                loss_dict = criterion(outputs, targets, **metas)
 
-            loss_dict = criterion(outputs, targets, **metas)
-            weight_dict = criterion.weight_dict
-            losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
-
-            optimizer.zero_grad(set_to_none=True)
-            scaler.scale(losses).backward()
+            loss = sum(loss_dict.values())
+            scaler.scale(loss).backward()
 
             if max_norm > 0:
                 scaler.unscale_(optimizer)
@@ -86,25 +79,27 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
 
             scaler.step(optimizer)
             scaler.update()
+            optimizer.zero_grad()
 
         else:
             outputs = model(samples, targets=targets)
             loss_dict = criterion(outputs, targets, **metas)
-            weight_dict = criterion.weight_dict
-            losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
-            optimizer.zero_grad(set_to_none=True)
-            losses.backward()
+            loss : torch.Tensor = sum(loss_dict.values())
+            optimizer.zero_grad()
+            loss.backward()
+
             if max_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+
             optimizer.step()
 
-        # Scheduler behavior:
-        # - self_lr_scheduler: per-iter scheduler that returns updated optimizer
-        # - else: warmup steps per-iter (no args); epoch scheduler stepping is handled outside this loop
+        # ema
+        if ema is not None:
+            ema.update(model)
+
         if self_lr_scheduler:
-            if lr_scheduler is not None:
-                optimizer = lr_scheduler.step(cur_iters + i, optimizer)
+            optimizer = lr_scheduler.step(cur_iters + i, optimizer)
         else:
             if lr_warmup_scheduler is not None:
                 lr_warmup_scheduler.step()
@@ -112,117 +107,177 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
         loss_dict_reduced = dist_utils.reduce_dict(loss_dict)
         loss_value = sum(loss_dict_reduced.values())
 
-        metric_logger.update(loss=loss_value, **loss_dict_reduced)
-        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-
-        if ema is not None:
-            ema.update(model)
-
-        if writer is not None and dist_utils.is_main_process():
+        # ---- extra tensorboard logging (new-style tags) ----
+        if writer and dist_utils.is_main_process() and (global_step % writer_log_every == 0):
+            try:
+                writer.add_scalar("train/loss_total", float(loss_value), global_step)
+            except Exception:
+                pass
+            try:
+                writer.add_scalar("train/lr", float(optimizer.param_groups[0]["lr"]), global_step)
+            except Exception:
+                pass
             for k, v in loss_dict_reduced.items():
                 try:
                     writer.add_scalar(f"train/{k}", float(v), global_step)
                 except Exception:
                     pass
-            try:
-                writer.add_scalar("train/lr", float(optimizer.param_groups[0]["lr"]), global_step)
-            except Exception:
-                pass
+        # ----------------------------------------------------
 
-        # Do NOT step lr_scheduler here for the default (non self_lr_scheduler) case.
-        # Epoch-level stepping is handled by the solver when warmup is done.
-        pass
+        if not math.isfinite(loss_value):
+            print("Loss is {}, stopping training".format(loss_value))
+            print(loss_dict_reduced)
+            sys.exit(1)
 
+        metric_logger.update(loss=loss_value, **loss_dict_reduced)
+        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+
+        if writer and dist_utils.is_main_process() and global_step % 10 == 0:
+            writer.add_scalar('Loss/total', loss_value.item(), global_step)
+            for j, pg in enumerate(optimizer.param_groups):
+                writer.add_scalar(f'Lr/pg_{j}', pg['lr'], global_step)
+            for k, v in loss_dict_reduced.items():
+                writer.add_scalar(f'Loss/{k}', v.item(), global_step)
+
+    # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    return {k: float(meter.global_avg) for k, meter in metric_logger.meters.items()}
+
+    if writer and dist_utils.is_main_process() and "loss" in metric_logger.meters:
+        writer.add_scalars("Loss/total_epoch", {"train": float(metric_logger.meters["loss"].global_avg)}, epoch)
+
+
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
 
 @torch.no_grad()
-def evaluate(model: torch.nn.Module, criterion: torch.nn.Module | None, postprocessor, data_loader,
-             coco_evaluator: CocoEvaluator | None, device, epoch: int = -1, compute_loss: bool = True, **kwargs) -> tuple[dict[str, Any], CocoEvaluator | None]:
-    """evaluate(...) -> (stats, coco_evaluator): Compatible with DEIM solver call signature + optional COCO dump."""
+def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, data_loader, coco_evaluator: CocoEvaluator, device,
+             epoch: int = -1, **kwargs):
     model.eval()
-    if criterion is not None:
-        criterion.eval()
-    if coco_evaluator is not None:
-        coco_evaluator.cleanup()
+    criterion.eval()
+    coco_evaluator.cleanup()
+
+    writer: SummaryWriter = kwargs.get("writer", None)
 
     metric_logger = MetricLogger(delimiter="  ")
-    header = "Test:"
+    # metric_logger.add_meter('class_error', SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    header = 'Test:'
 
-    iou_types = coco_evaluator.iou_types if coco_evaluator is not None else ()
-
+    # ---- optional COCO predictions dump (path provided by eval_one_deimv2.py) ----
     dump_path = (os.getenv("DEIM_DUMP_PREDICTIONS", "") or "").strip()
     do_dump = dump_path != ""
     local_dump: list[dict[str, Any]] = []
+    label_offset = int((os.getenv("DEIM_LABEL_OFFSET", "0") or "0").strip())
+    # ---------------------------------------------------------------------------
 
-    for step, (samples, targets) in enumerate(metric_logger.log_every(data_loader, 10, header)):
+    # iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessor.keys())
+    iou_types = coco_evaluator.iou_types
+    # coco_evaluator = CocoEvaluator(base_ds, iou_types)
+    # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
+
+    for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
-        # Repo behavior for metrics: forward WITHOUT targets.
-        outputs_pred = model(samples)
+        outputs = model(samples)
 
-        # Optional: compute loss for logging (separate forward), does not affect predictions.
-        if compute_loss and criterion is not None:
-            metas = dict(epoch=epoch, step=step, global_step=step, epoch_step=len(data_loader))
-            with torch.autocast(device_type=device.type, enabled=False):
-                outputs_loss = model(samples, targets=targets)
-                loss_dict = criterion(outputs_loss, targets, **metas)
+        # ---- compute eval loss (extra forward with targets) ----
+        metas = dict(epoch=epoch, step=0, global_step=0, epoch_step=len(data_loader))
+        with torch.autocast(device_type=str(device), enabled=False):
+            outputs_loss = model(samples, targets=targets)
+            loss_dict = criterion(outputs_loss, targets, **metas)
 
-            loss_dict_reduced = dist_utils.reduce_dict(loss_dict)
-            loss_value = sum(loss_dict_reduced.values())
-            metric_logger.update(loss=loss_value, **loss_dict_reduced)
+        loss_dict_reduced = dist_utils.reduce_dict(loss_dict)
+        loss_value = sum(loss_dict_reduced.values())
+        metric_logger.update(loss=loss_value, **loss_dict_reduced)
+        # -------------------------------------------------------
 
+
+
+        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+
+        results = postprocessor(outputs, orig_target_sizes)
+
+        # if 'segm' in postprocessor.keys():
+        #     target_sizes = torch.stack([t["size"] for t in targets], dim=0)
+        #     results = postprocessor['segm'](results, outputs, orig_target_sizes, target_sizes)
+
+        res = {target['image_id'].item(): output for target, output in zip(targets, results)}
         if coco_evaluator is not None:
-            orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-            results = postprocessor(outputs_pred, orig_target_sizes)
-            res = {t["image_id"].item(): o for t, o in zip(targets, results)}
             coco_evaluator.update(res)
 
-            if do_dump:
-                label_offset = int((os.getenv("DEIM_LABEL_OFFSET", "0") or "0").strip())
-                for t, o in zip(targets, results):
-                    image_id = int(t["image_id"].item())
-                    boxes = o["boxes"].detach().cpu().tolist()
-                    scores = o["scores"].detach().cpu().tolist()
-                    labels = o["labels"].detach().cpu().tolist()
-                    for b, s, l in zip(boxes, scores, labels):
-                        x1, y1, x2, y2 = [float(x) for x in b]
-                        w = float(x2 - x1)
-                        h = float(y2 - y1)
-                        local_dump.append(
-                            {
-                                "image_id": image_id,
-                                "category_id": int(l) + label_offset,
-                                "bbox": [x1, y1, w, h],
-                                "score": float(s),
-                            }
-                        )
+        # ---- collect predictions for COCO JSON dump ----
+        if do_dump:
+            for t, o in zip(targets, results):
+                image_id = int(t["image_id"].item())
+                boxes = o["boxes"].detach().cpu().tolist()
+                scores = o["scores"].detach().cpu().tolist()
+                labels = o["labels"].detach().cpu().tolist()
 
+                for b, s, l in zip(boxes, scores, labels):
+                    x1, y1, x2, y2 = [float(x) for x in b]
+                    w = float(x2 - x1)
+                    h = float(y2 - y1)
+                    local_dump.append({
+                        "image_id": image_id,
+                        "category_id": int(l) + label_offset,
+                        "bbox": [x1, y1, w, h],
+                        "score": float(s),
+                    })
+        # -----------------------------------------------
+
+    # gather the stats from all processes
     metric_logger.synchronize_between_processes()
+
+    # ---- tensorboard validation logging ----
+    if writer and dist_utils.is_main_process():
+        for k, meter in metric_logger.meters.items():
+            try:
+                writer.add_scalar(f"val/{k}", float(meter.global_avg), epoch)
+            except Exception:
+                pass
+    # ----------------------------------------
+
     print("Averaged stats:", metric_logger)
+
+    if "loss" in metric_logger.meters:
+        print(f"Eval loss (global_avg): {metric_logger.meters['loss'].global_avg}")
+
+    if writer and dist_utils.is_main_process() and "loss" in metric_logger.meters:
+        writer.add_scalars("Loss/total_epoch", {"val": float(metric_logger.meters["loss"].global_avg)}, epoch)
+
 
     if coco_evaluator is not None:
         coco_evaluator.synchronize_between_processes()
+
+    # accumulate predictions from all images
+    if coco_evaluator is not None:
         coco_evaluator.accumulate()
         coco_evaluator.summarize()
 
-    stats: dict[str, Any] = {}
+    stats = {}
+    # stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     if coco_evaluator is not None:
-        if "bbox" in iou_types:
-            stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
-        if "segm" in iou_types:
-            stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
+        if 'bbox' in iou_types:
+            stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
+        if 'segm' in iou_types:
+            stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
 
-    for k, meter in metric_logger.meters.items():
-        if k not in stats:
-            stats[k] = float(meter.global_avg)
+    # ---- optional tensorboard logging for COCO metrics (epoch x-axis) ----
+    if writer and dist_utils.is_main_process():
+        if coco_evaluator is not None and "bbox" in iou_types:
+            try:
+                coco = coco_evaluator.coco_eval["bbox"].stats.tolist()
+                writer.add_scalar("val/coco_AP", float(coco[0]), epoch)
+                writer.add_scalar("val/coco_AP50", float(coco[1]), epoch)
+                writer.add_scalar("val/coco_AP75", float(coco[2]), epoch)
+            except Exception:
+                pass
+    # --------------------------------------------------------------------
 
+
+    # ---- write predictions to DEIM_DUMP_PREDICTIONS (rank-safe) ----
     if do_dump:
-        import json
-        from pathlib import Path
-
         rank = 0
         try:
             import torch.distributed as dist
@@ -233,17 +288,24 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module | None, postproc
 
         try:
             Path(dump_path).parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        # Always write per-rank file
+        try:
             rank_path = Path(dump_path + f".rank{rank}.json")
             with rank_path.open("w", encoding="utf-8") as f:
                 json.dump(local_dump, f)
         except Exception as e:
-            print(f"[det_engine.evaluate] WARNING: failed to write rank predictions dump: {e}", file=sys.stderr, flush=True)
+            print(f"[det_engine.evaluate] WARNING: failed writing rank predictions: {e}", file=sys.stderr, flush=True)
 
+        # Rank 0 also writes the main file (this is what eval_one_deimv2.py expects)
         if rank == 0:
             try:
-                with open(dump_path, "w", encoding="utf-8") as f:
+                with Path(dump_path).open("w", encoding="utf-8") as f:
                     json.dump(local_dump, f)
             except Exception as e:
-                print(f"[det_engine.evaluate] WARNING: failed to write predictions dump: {e}", file=sys.stderr, flush=True)
+                print(f"[det_engine.evaluate] WARNING: failed writing predictions: {e}", file=sys.stderr, flush=True)
+    # ---------------------------------------------------------------
 
     return stats, coco_evaluator

@@ -21,6 +21,12 @@ import yaml
 
 import eval_utils
 
+def safe_slug(s: str) -> str:
+    """safe_slug(s) -> str: Return filesystem-safe version of string."""
+    import re
+    t = re.sub(r"[^A-Za-z0-9._-]+", "_", str(s))
+    t = re.sub(r"_+", "_", t).strip("_")
+    return t or "run"
 
 def read_json(path: str) -> Any:
     """read_json(path) -> Any: Read JSON."""
@@ -215,6 +221,8 @@ def main() -> int:
     ap.add_argument("--dump_predictions", default="0")
     ap.add_argument("--label_offset", default="0")
     ap.add_argument("--extra_iou_thr", default="0.5")
+    ap.add_argument("--score_thr", default="0.05")
+    ap.add_argument("--optimize_score_thr", default="1")  # 1 => optimize for image-level F1, 0 => fixed score_thr
     ap.add_argument("--eval_num_workers", default="0")
     args = ap.parse_args()
 
@@ -255,7 +263,7 @@ def main() -> int:
 
     repo_root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
-    if str(args.gpus).strip():
+    if (not str(env.get("CUDA_VISIBLE_DEVICES", "")).strip()) and str(args.gpus).strip():
         env["CUDA_VISIBLE_DEVICES"] = str(args.gpus).strip()
 
     # Ensure a unique rendezvous even if DEIM/train.py initializes torch.distributed internally.
@@ -334,9 +342,22 @@ def main() -> int:
             print("[eval_one_deimv2.py] WARNING: coco_eval_predictions.py failed", flush=True)
 
         rc3 = subprocess.call(
-            [sys.executable, "tools/extra_detection_metrics.py", "--gt", str(ann), "--pred", str(pred_path), "--out_dir", str(out_dir), "--iou_thr", str(float(args.extra_iou_thr))],
+            [
+                sys.executable,
+                "tools/extra_detection_metrics.py",
+                "--gt", str(ann),
+                "--pred", str(pred_path),
+                "--out_dir", str(out_dir),
+
+                "--iou_thr", str(float(args.extra_iou_thr)),
+                "--score_thr", str(float(args.score_thr)),
+                "--optimize_score_thr", str(int(str(args.optimize_score_thr))),
+                "--run_name", safe_slug(str(Path(args.out_dir).resolve().parts[-4])) if len(Path(args.out_dir).resolve().parts) >= 4 else "",
+                "--fold_tag", "final" if Path(args.out_dir).resolve().parts[-1] == "final_location_holdout" else Path(args.out_dir).resolve().parts[-1],
+            ],
             cwd=str(repo_root),
         )
+
         if rc3 != 0:
             print("[eval_one_deimv2.py] WARNING: extra_detection_metrics.py failed", flush=True)
     else:
