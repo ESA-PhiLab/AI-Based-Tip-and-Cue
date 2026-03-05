@@ -10,6 +10,8 @@ RUN_NAME="S_DEFAULT"
 
 DEFAULT_GPU_CHOICE="1"
 
+K_FOLDS="4"
+
 BASE_CONFIG="configs/hyperparameter_search/${RUN_NAME}.yml"
 PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 
@@ -21,8 +23,6 @@ PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 
 TRAIN_ID="reflection_offnadir_glint_255"
 TEST_ID="reflection_offnadir_glint_255"
-
-K_FOLDS="4"
 
 TRAIN_CV="1"
 TRAIN_FINAL="1"

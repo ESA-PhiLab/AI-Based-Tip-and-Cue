@@ -40,7 +40,7 @@ ALLOWED_modes = {
     "reflection_offnadir_no_glint_npy",
 }
 
-mode = "reflection_offnadir_glint_255"
+mode = "reflection_nadir_no_glint_255"
 
 DATASET_PATH = Path("dataset")
 BASE_DIR = DATASET_PATH / "create_dataset" / "0_merged" / mode
