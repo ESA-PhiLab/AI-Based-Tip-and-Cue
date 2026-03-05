@@ -14,7 +14,7 @@ os.chdir(main_path)
 DATASET_PATH = "dataset"
 DATASET_PATH = Path(DATASET_PATH)
 BASE_DIR = DATASET_PATH / "whales_from_space"
-ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "final_annotations.json"
+ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "final_annotations_repaired.json"
 
 DISPLAY_MS = 500                                    # auto-advance delay (ms) when not paused
 UPSCALE_FACTOR = 6                                  # enlarge small images by this factor

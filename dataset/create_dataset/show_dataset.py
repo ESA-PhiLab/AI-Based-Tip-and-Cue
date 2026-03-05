@@ -40,11 +40,11 @@ ALLOWED_modes = {
     "reflection_offnadir_no_glint_npy",
 }
 
-mode = "reflection_nadir_no_glint_255"
+mode = "reflection_offnadir_glint_255"
 
 DATASET_PATH = Path("dataset")
 BASE_DIR = DATASET_PATH / "create_dataset" / "0_merged" / mode
-ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_merged.json"
+ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
 
 DISPLAY_MS = 500
 DISPLAY_ZOOM = 6  # VISUAL zoom only; annotations are still drawn in original patch pixels

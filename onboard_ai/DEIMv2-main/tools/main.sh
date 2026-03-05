@@ -3,16 +3,14 @@ set -euo pipefail
 trap '' HUP
 LAUNCH_DIR="$(pwd)"
 
-FOLDER_ID=1
 # ===================== USER SETTINGS =====================
+
+FOLDER_ID=X
+DEFAULT_GPU_CHOICE="X"
 
 RUN_NAME="S_DEFAULT"
 
-DEFAULT_GPU_CHOICE="1"
-
-K_FOLDS="4"
-
-BASE_CONFIG="configs/hyperparameter_search/${RUN_NAME}.yml"
+BASE_CONFIG="configs/hp_optim_final/${RUN_NAME}.yml"
 PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 
 # BASE_CONFIG="configs/deimv2/deimv2_dinov3_m_coco_whale.yml"
@@ -23,6 +21,8 @@ PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 
 TRAIN_ID="reflection_offnadir_glint_255"
 TEST_ID="reflection_offnadir_glint_255"
+
+K_FOLDS="4"
 
 TRAIN_CV="1"
 TRAIN_FINAL="1"
@@ -92,8 +92,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT_DIR="${REPO_ROOT}/results/${RUN_NAME}"
 FINAL_OUT_DIR="${OUT_DIR}/final_location_holdout"
 
-
 PORT_FILE="${LAUNCH_DIR}/port_forward.txt"
+
+TRAIN_ROOT="${REPO_ROOT}/data/0_merged/${TRAIN_ID}"
+TEST_ROOT="${REPO_ROOT}/data/0_merged/${TEST_ID}"
+
+IMG_ROOT_TRAIN="${TRAIN_ROOT}"
+IMG_ROOT_TEST="${TEST_ROOT}"
+
+COCO_MERGED_TRAIN="${TRAIN_ROOT}/final_annotations_repaired.json"
+COCO_TEST_RAW="${TEST_ROOT}/final_annotations_repaired.json"
 
 # ---------------- GPUs (set mask early) + safer ports ----------------
 
@@ -207,15 +215,7 @@ schedule_tensorboard_shutdown() {
 
 trap 'schedule_tensorboard_shutdown' EXIT INT TERM
 # ----------------------------------------------------------
-
-TRAIN_ROOT="${REPO_ROOT}/data/0_merged/${TRAIN_ID}"
-TEST_ROOT="${REPO_ROOT}/data/0_merged/${TEST_ID}"
-
-IMG_ROOT_TRAIN="${TRAIN_ROOT}"
-IMG_ROOT_TEST="${TEST_ROOT}"
-
-COCO_MERGED_TRAIN="${TRAIN_ROOT}/final_annotations_merged.json"
-COCO_TEST_RAW="${TEST_ROOT}/final_annotations_merged.json"
+# ----------------------------------------------------------
 
 # If no TEST locations are configured, force eval split away from test.
 if [[ -z "${TEST_LOCATIONS// }" ]]; then
