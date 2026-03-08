@@ -553,7 +553,7 @@ def main() -> None:
     n_images = count_images_in_subfolders(Path("dataset") / "whales_from_space")
     balanced_offnadir = True             # For full dataset: True. True = per-image angles 5..60, False = random offnadir, loop by one,.
 
-    offnadir_angles = np.arange(5, 60 +1, 5)
+    offnadir_angles = np.arange(40, 60 +1, 5)
 
     pick_img_seed_0 = 1
     crop_patch_seed = 42
@@ -564,7 +564,7 @@ def main() -> None:
     wind_speed_seed = 123
     wind_speed_range = (4.0, 12.0)      # normal distribution
 
-    show_plot = False
+    show_plot = True
 
     # mode_single options:
     #   "full"      -> only full whales
@@ -578,7 +578,7 @@ def main() -> None:
     #   False -> forbid any whale in (nowhale_max_fraction, whale_min_fraction)
 
     patch_parameters = {
-        "mode_single": "ocean",
+        "mode_single": "full",
         "mode_multiple_allow_partial": False,
         "window_size": 64,
         "nowhale_max_fraction": 0.10,

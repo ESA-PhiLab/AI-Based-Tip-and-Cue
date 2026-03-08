@@ -24,19 +24,20 @@ main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
 DATASET_PATH = Path("dataset")
-BASE_DIR = DATASET_PATH / "whales_from_space"
-ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "final_annotations.json"
-CSV_PATH = BASE_DIR / "WhaleFromSpaceDB_Whales.csv"
+BASE_DIR = DATASET_PATH / "create_dataset" / "0_whales"  / "patch_raw_rot_255"
+ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_whales"  / "patch_raw_rot_255" / "final_annotations.json"
+CSV_PATH = DATASET_PATH / "whales_from_space"  / "WhaleFromSpaceDB_Whales.csv"
 
-IMG_FILE = "Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG"
+# IMG_FILE = "Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG"
 # IMG_FILE = "Ignacio2017/Ignacio_GW_WV3_PS_20170220_B58.PNG"
-DATETIME_UTC = datetime(2025, 6, 11, 8, 0, 0, tzinfo=timezone.utc)
+IMG_FILE = "Ignacio2017/Ignacio_GW_WV3_PS_20170220_B19_001204_F_nadir.PNG"
+DATETIME_UTC = datetime(2025, 3, 11, 14, 0, 0, tzinfo=timezone.utc)
 
-SAT_LAT, SAT_LON, SAT_ALT = 58.0, -5.0, 617000.0
+SAT_LAT, SAT_LON, SAT_ALT = 58.0, -3.0, 617000.0
 TGT_LAT, TGT_LON, TGT_ALT = 53.0, 0.0, 0.0
 
 BOOLS = {
-    "plot_3d": False,
+    "plot_3d": True,
     "plot_result": False,
     "max_glint": False,
     "print_values": True,
@@ -46,7 +47,7 @@ BOOLS = {
 }
 
 WAVE_PROPERTIES = {"wind_speed": 10.0, "num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
-RENDER_RESOLUTION = 124
+RENDER_RESOLUTION = 64
 SAMPLE_COUNT = 512
 DEM_SEED = 42
 
@@ -104,8 +105,8 @@ def draw_overlay_from_polys(img: Image.Image, polys_xy: list, boxes_xywh: list) 
     for pts in polys_xy:
         if len(pts) >= 3:
             draw.line(pts + [pts[0]], fill=(0, 255, 0), width=1)
-    for (x, y, w, h) in boxes_xywh:
-        draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=1)
+    # for (x, y, w, h) in boxes_xywh:
+    #     draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=1)
     return img
 
 def to_uint8_rgb(arr) -> np.ndarray:
@@ -497,7 +498,7 @@ def main() -> None:
     fig = plt.figure(figsize=(22, 12))
     fig.add_subplot(2, 3, 1).imshow(orig_overlay); plt.axis("off"); plt.title("Original + annotation")
     fig.add_subplot(2, 3, 2).imshow(mask_u8, cmap="gray"); plt.axis("off"); plt.title("Original binary mask")
-    fig.add_subplot(2, 3, 3).imshow(mask_off_u8_hi); plt.axis("off"); plt.title(f"Off-nadir mask (hi-res {mask_res_hi}x{mask_res_hi})")
+    fig.add_subplot(2, 3, 3).imshow(mask_tex_rgb01); plt.axis("off"); plt.title(f"Off-nadir mask (hi-res {mask_res_hi}x{mask_res_hi})")
     fig.add_subplot(2, 3, 4).imshow(mask_off_bin.astype(np.uint8) * 255, cmap="gray"); plt.axis("off"); plt.title(f"Off-nadir mask (downsampled {RENDER_RESOLUTION}x{RENDER_RESOLUTION})")
     fig.add_subplot(2, 3, 5).imshow(np.asarray(contour_dbg)); plt.axis("off"); plt.title("Extracted contour + bbox (final res)")
     fig.add_subplot(2, 3, 6).imshow(bbox_id_off_u8); plt.axis("off"); plt.title("Off-nadir bbox ID pass")

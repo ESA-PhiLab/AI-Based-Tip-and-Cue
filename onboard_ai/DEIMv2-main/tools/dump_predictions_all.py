@@ -90,6 +90,7 @@ def main() -> int:
     ap.add_argument("--repo_root", required=True)
     ap.add_argument("--results_dir", required=True)
     ap.add_argument("--img_root", required=True)
+    ap.add_argument("--img_root_test", default="")  # optional; if empty -> use img_root
     ap.add_argument("--eval_name", default="eval_data")
     ap.add_argument("--split", default="val")  # val|test|both
     ap.add_argument("--gpus", default="")
@@ -107,6 +108,7 @@ def main() -> int:
     repo_root = Path(args.repo_root).resolve()
     results_dir = Path(args.results_dir).resolve()
     img_root = Path(args.img_root).resolve()
+    img_root_test = Path(args.img_root_test).resolve() if str(args.img_root_test).strip() else img_root
 
     folds = find_fold_dirs(results_dir)
     if not folds:
@@ -188,7 +190,7 @@ def main() -> int:
                     repo_root=repo_root,
                     base_config=fold_base_cfg,
                     checkpoint=ckpt,
-                    img_root=img_root,
+                    img_root=img_root_test,
                     ann=test_ann,
                     out_dir=out_test,
                     gpus=args.gpus,
@@ -263,7 +265,7 @@ def main() -> int:
                             repo_root=repo_root,
                             base_config=final_base_cfg,
                             checkpoint=ckpt,
-                            img_root=img_root,
+                            img_root=img_root_test,
                             ann=test_ann,
                             out_dir=out_test,
                             gpus=args.gpus,

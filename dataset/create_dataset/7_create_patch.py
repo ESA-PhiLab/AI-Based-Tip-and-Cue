@@ -836,6 +836,15 @@ def plot_patch_after_rotation(patch_bundle: dict) -> None:
     axes[1].set_title(f"Patch ({label_out}) after rotation")
     axes[1].axis("off")
 
+#    fig2, axes2 = plt.subplots(1, 2, figsize=(14, 7))
+#    axes2[0].imshow(img_rgb)
+#    axes2[0].set_title("Full image")
+#    axes2[0].axis("off")
+
+#    axes2[1].imshow(rot_patch)
+#    axes2[1].set_title(f"Patch ({label_out}) after rotation")
+#    axes2[1].axis("off")
+
     plt.tight_layout()
     plt.show()
 

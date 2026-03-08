@@ -64,6 +64,9 @@ notes.txt
 /dataset/phisat-2_data/rgb_outputs/*
 
 
+onboard_ai/RESULTS/*
+
+
 
 # --------------------------------------------------
 # Ignore full DEIM repository

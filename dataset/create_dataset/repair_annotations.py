@@ -423,7 +423,6 @@ def run_for_mode(one_mode: str) -> None:
                 {loc: rep_ann_per.get(loc, 0)},
             )
 
-
 # =========================
 # Main
 # =========================

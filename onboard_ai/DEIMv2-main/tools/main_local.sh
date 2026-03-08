@@ -4,7 +4,8 @@ trap '' HUP
 
 # ===================== USER SETTINGS =====================
 
-RUN_NAME="S_ramp"
+RUN_NAME_DEFAULT="S_ramp"
+RUN_NAME="${1:-${RUN_NAME_OVERRIDE:-${RUN_NAME_DEFAULT}}}"
 
 # BASE_CONFIG="configs/deimv2/deimv2_dinov3_m_coco_whale.yml"
 # PRETRAINED="ckpts/deimv2_dinov3_m_coco.pth"

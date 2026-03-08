@@ -657,7 +657,19 @@ def mirror_rotate_patchlocal_bundle(patch_bundle: dict, rotation_angle_deg: floa
     out["mirror_bool"] = bool(mirror_bool)
     return out
 
+def display_white_on_positive(image_data: np.ndarray):
+    """Displays the image, turning all points greater than 0 to white for all channels."""
+    # Create a mask where the values are greater than 0 for all channels
+    mask = image_data > 0
 
+    # Create an output image initialized to black (0)
+    output_image = np.zeros_like(image_data, dtype=np.uint8)
+
+    # Set all pixels where mask is True to white (255) for all channels
+    output_image[mask] = 255
+
+    # Return the output image
+    return output_image
 # =========================
 # Public API
 # =========================
@@ -856,12 +868,16 @@ def translate_image(patch_bundle: dict,
     contour_dbg = Image.new("RGB", (res, res), (0, 0, 0))
     contour_dbg = draw_overlay_from_polys(contour_dbg, all_polys, boxes_off)
 
+    bbox_id_off_u8_show = display_white_on_positive(bbox_id_off_u8)
+
+
+
     if show_plot:
         fig = plt.figure(figsize=(22, 10))
         fig.add_subplot(2, 3, 1).imshow(orig_overlay); plt.axis("off"); plt.title("Original + annotation")
         fig.add_subplot(2, 3, 2).imshow(np.asarray(contour_dbg)); plt.axis("off"); plt.title("Per-instance contours + bboxes (final res)")
         fig.add_subplot(2, 3, 3).imshow(bbox_dbg_u8); plt.axis("off"); plt.title("BBox ID stamps (texture space)")
-        fig.add_subplot(2, 3, 4).imshow(bbox_id_off_u8); plt.axis("off"); plt.title("Off-nadir bbox ID pass")
+        fig.add_subplot(2, 3, 4).imshow(bbox_id_off_u8_show); plt.axis("off"); plt.title("Off-nadir bbox ID pass")
         plt.tight_layout()
         plt.show()
 

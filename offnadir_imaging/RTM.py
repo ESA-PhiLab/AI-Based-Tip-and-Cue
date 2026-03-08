@@ -130,6 +130,12 @@ if __name__ == "__main__":
     dt = datetime(2025, 6, 11, 16, 0, 0, tzinfo=timezone.utc)
     lat, lon, alt_m = 0.0, 0.0, 0.0
 
+    dt= datetime(2025, 3, 11, 14, 0, 0, tzinfo=timezone.utc)
+
+    lat, lon, alt_m = 53.0, 0.0, 0.0
+
+
+
     script_dir = Path(os.path.dirname(os.path.abspath(__file__)))
     spd_dir = script_dir / "spd_files"
     sun_spd = spd_dir / "solar_direct_normal.spd"

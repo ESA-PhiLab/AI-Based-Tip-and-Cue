@@ -12,9 +12,12 @@ main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
 DATASET_PATH = "dataset"
-DATASET_PATH = Path(DATASET_PATH)
-BASE_DIR = DATASET_PATH / "whales_from_space"
-ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "final_annotations_repaired.json"
+DATASET_PATH = Path("dataset")
+mode = "reflection_offnadir_glint_255"
+
+BASE_DIR = DATASET_PATH / "create_dataset" / "0_merged" / mode
+ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
+
 
 DISPLAY_MS = 500                                    # auto-advance delay (ms) when not paused
 UPSCALE_FACTOR = 6                                  # enlarge small images by this factor

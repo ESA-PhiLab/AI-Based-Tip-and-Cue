@@ -8,9 +8,9 @@ LAUNCH_DIR="$(pwd)"
 FOLDER_ID=X
 DEFAULT_GPU_CHOICE="X"
 
-RUN_NAME="S_DEFAULT"
+RUN_NAME="X"
 
-BASE_CONFIG="configs/hp_optim_final/${RUN_NAME}.yml"
+BASE_CONFIG="configs/schedule_optim/${RUN_NAME}.yml"
 PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 
 # BASE_CONFIG="configs/deimv2/deimv2_dinov3_m_coco_whale.yml"
@@ -76,6 +76,8 @@ OVERWRITE_OUTDIR="0"         # 1|0
 
 
 # =================== DO NOT EDIT BELOW ===================
+
+
 
 ALL_LOCATIONS="Auckland2006,Auckland2011,Ignacio2017,Maui2015,Pelagos2016,Valdes2012,Valdes2014,Valdes2016,Witsand2009"
 if [[ -z "${TEST_LOCATIONS// }" ]]; then
@@ -614,6 +616,7 @@ if [[ "${DUMP_COCO_JSON}" == "1" || "${VAL_TEST_CV}" == "1" ]]; then
   --repo_root "${REPO_ROOT}" \
   --results_dir "${OUT_DIR}" \
   --img_root "${IMG_ROOT_TRAIN}" \
+  --img_root_test "${IMG_ROOT_TEST}" \
   --eval_name "${EVAL_NAME}" \
   --split "${EVAL_SPLIT}" \
   --gpus "${EVAL_GPUS}" \
@@ -632,6 +635,7 @@ if [[ "${DUMP_COCO_JSON}" == "1" || "${VAL_TEST_FINAL}" == "1" ]]; then
     --repo_root "${REPO_ROOT}" \
     --results_dir "${OUT_DIR}" \
     --img_root "${IMG_ROOT_TRAIN}" \
+    --img_root_test "${IMG_ROOT_TEST}" \
     --eval_name "${EVAL_NAME}" \
     --split "${EVAL_SPLIT}" \
     --gpus "${EVAL_GPUS}" \
