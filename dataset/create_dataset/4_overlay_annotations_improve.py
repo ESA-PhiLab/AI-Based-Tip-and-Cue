@@ -24,13 +24,23 @@ main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
 DATASET_PATH = Path("dataset")
+CSV_PATH = DATASET_PATH / "whales_from_space"  / "WhaleFromSpaceDB_Whales.csv"
+
+
 BASE_DIR = DATASET_PATH / "create_dataset" / "0_whales"  / "patch_raw_rot_255"
 ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_whales"  / "patch_raw_rot_255" / "final_annotations.json"
-CSV_PATH = DATASET_PATH / "whales_from_space"  / "WhaleFromSpaceDB_Whales.csv"
+
+
+
+BASE_DIR = DATASET_PATH / "whales_from_space"
+ANNOTATIONS_PATH = DATASET_PATH / "create_annotations" / "final_annotations.json"
 
 # IMG_FILE = "Pelagos2016/PelagosIm4_FW_WV3_PS_20160619_B2.PNG"
 # IMG_FILE = "Ignacio2017/Ignacio_GW_WV3_PS_20170220_B58.PNG"
-IMG_FILE = "Ignacio2017/Ignacio_GW_WV3_PS_20170220_B19_001204_F_nadir.PNG"
+# IMG_FILE = "Ignacio2017/Ignacio_GW_WV3_PS_20170220_B19_001204_F_nadir.PNG"
+IMG_FILE = "Auckland2006/Auckland_SRW_QB2_PS_20060812_B0.PNG"
+RENDER_RESOLUTION = 145
+
 DATETIME_UTC = datetime(2025, 3, 11, 14, 0, 0, tzinfo=timezone.utc)
 
 SAT_LAT, SAT_LON, SAT_ALT = 58.0, -3.0, 617000.0
@@ -47,7 +57,7 @@ BOOLS = {
 }
 
 WAVE_PROPERTIES = {"wind_speed": 10.0, "num_waves": 50, "wave_min": 0.05, "wave_max": 0.5}
-RENDER_RESOLUTION = 64
+
 SAMPLE_COUNT = 512
 DEM_SEED = 42
 
@@ -404,7 +414,7 @@ def main() -> None:
     print("[2/7] Building DEM mesh...")
     get_DEM(str(img_path), dem_tiff_path, gsd, WAVE_PROPERTIES, random_seed=DEM_SEED, waves=True, curvature=True, plot_DEM=False)
     convert_DEM(str(img_path), dem_tiff_path, dem_obj_path, gsd, scale_km=False, print_output=False, plot_DEM=False)
-    _ = get_band_data(satellite, str(main_path / "offnadir_imaging" / "spd_files"))
+    _ = get_band_data("WV3", str(main_path / "offnadir_imaging" / "spd_files"))
 
     # ---- camera geometry ----
     satellite_ecef, target_ecef, sun_ecef = get_ecef_from_lat_lon(

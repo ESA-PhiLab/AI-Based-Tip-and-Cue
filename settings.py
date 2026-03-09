@@ -47,8 +47,8 @@ else:
     flat_dem = False
     exclude_dark = True
 
-nSats_tip = 2
-nSats_cue = 2
+nSats_tip = 4
+nSats_cue = 4
 
 nPlanes_tip = 2
 nPlanes_cue = 2
@@ -59,7 +59,7 @@ delta_t_tipcue = 5 * 60  # Time delay between Tip and Cue satellite (s)
 whale_seed = 42
 
 if not real_run:
-    sim_duration_hours = 5/60 #5826.4/3600
+    sim_duration_hours = 1 #5826.4/3600
     sim_time = 'custom'
 
 else:
@@ -67,7 +67,7 @@ else:
     sim_time = 'slow'
 
 if not real_run:
-    sim_name = "11_trajectory_5m"
+    sim_name = "30000_targets"
 else:
     nm_ext = str()
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
@@ -205,7 +205,7 @@ if real_run:
     n_targets = 500
 
 if not real_run:
-    n_targets = 10000
+    n_targets = 30000
     whale_seed = 42
 
 pos_fraction = 1.0

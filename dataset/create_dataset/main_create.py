@@ -562,7 +562,7 @@ def main() -> None:
     img_rot_seed = 10
 
     wind_speed_seed = 123
-    wind_speed_range = (4.0, 12.0)      # normal distribution
+    wind_speed_range = (2.0, 12.0)      # normal distribution
 
     show_plot = True
 
