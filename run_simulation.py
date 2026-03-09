@@ -624,28 +624,48 @@ while elapsed_seconds <= sim_duration_seconds:
                         will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_tipcue, el_min_deg=elevation_min,  step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
                         moving_towards, _ = eo_tools_dict[actor.name].is_moving_towards_target(r_vec, v_vec, task_coord, t_datetime, dt_check=sim_step_seconds )
 
-                        if (will_be_in_view_soon or in_view) and not (eo_tools_dict[actor.name].move_set and moving_towards):
-                            pointing_vec_lvlh_target, offnadir_bound, offnadir_unbound, time_to_sight = eo_tools_dict[actor.name].point_to_target_bounded(r_eci=r_vec, v_eci=v_vec, target_geodetic=task_coord, t_datetime=t_datetime, offnadir_max=offnadir_limit, mode='max', dt_step_coarse=sim_step_seconds)
+                        if will_be_in_view_later and not (eo_tools_dict[actor.name].move_set and moving_towards):
+                            target_eul_deg, offnadir_at_obs, offnadir_unbound, time_to_obs, pointing_vec_lvlh_target = \
+                                eo_tools_dict[actor.name].compute_optimal_future_attitude(
+                                    r_eci=r_vec,
+                                    v_eci=v_vec,
+                                    target_geodetic=task_coord,
+                                    t_datetime=t_datetime,
+                                    omega_max_rad=omega_max_rad,
+                                    alpha_max_rad=alpha_max_rad,
+                                    zeta=zeta,
+                                    wn_rad=wn_rad,
+                                    offnadir_max=offnadir_limit,
+                                    offnadir_margin=offnadir_margin,
+                                    dt_step_coarse=max(sim_step_seconds, 2.0),
+                                    dt_step_fine=max(sim_step_seconds / 5.0, 0.25),
+                                    dt_max=delta_t_tipcue,
+                                    mode="per_axis"
+                                )
 
-                            eo_tools_dict[actor.name].pointing_vec_lvlh_target = pointing_vec_lvlh_target
-
-                            if time_to_sight != None:
+                            if time_to_obs is not None and target_eul_deg is not None:
                                 eo_tools_dict[actor.name].move_set = True
                                 eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
                                 eo_tools_dict[actor.name].pointing_vec_lvlh_target = pointing_vec_lvlh_target
+                                eo_tools_dict[actor.name].time_to_obs_target = time_to_obs
+                                eo_tools_dict[actor.name].offnadir_at_obs_target = offnadir_at_obs
 
+                                att_models_dict[actor.name]._new_target_attitude_deg = np.asarray(target_eul_deg, float)
 
                             else:
-                                print(f"!! {actor.name}: Target {task_id} won't be in sight, delete task")
+                                print(f"!! {actor.name}: Target {task_id} has no slew-feasible observation solution, delete task")
                                 will_be_in_view_later = False
                                 will_be_in_view_soon = False
                                 in_view = False
                                 eo_tools_dict[actor.name].pointing_vec_lvlh_target = None
+                                eo_tools_dict[actor.name].offnadir_unbound_target = None
+                                eo_tools_dict[actor.name].move_set = False
 
                         pointing_vec = eo_tools_dict[actor.name].pointing_vec_lvlh_target
-                        if (in_view or will_be_in_view_soon) and (eo_tools_dict[actor.name].offnadir_unbound_target is not None) and not (eo_tools_dict[actor.name].offnadir_unbound_target >= (offnadir_limit + offnadir_margin) and not moving_towards):
-                            if pointing_vec is not None:
-                                att_models_dict[actor.name]._new_target_attitude_deg = att_models_dict[actor.name].pointing_attitude_lvlh(pointing_vec)
+
+
+
+
                         if not (in_view or will_be_in_view_later):
                             # Task finished → reset and pick next later
                             print(f"!! {actor.name}: Target {task_id} out of view, delete task")
@@ -696,10 +716,17 @@ while elapsed_seconds <= sim_duration_seconds:
                         new_target_eul = att_models_dict[actor.name]._new_target_attitude_deg
 
 
-                        print(f"!! {actor.name}: Target {task_id} in reach at {offnadir_unbound:.1f} deg"
-                            f" (current={offnadir_cue_current:.1f} deg, target={offnadir_cue_target:.1f} deg, duration={att_models_dict[actor.name].delay_slew_stab:.1f} s)")
-                          #  f"| Roll, pitch, yaw current=[{current_target_eul[0]:.1f}, {current_target_eul[1]:.1f}, {current_target_eul[2]:.2f}] deg "
-                          #  f", set to target=[{new_target_eul[0]:.1f}, {new_target_eul[1]:.1f}, {new_target_eul[2]:.1f}] deg"
+                        off_obs = getattr(eo_tools_dict[actor.name], "offnadir_at_obs_target", None)
+                        t_obs = getattr(eo_tools_dict[actor.name], "time_to_obs_target", None)
+
+                        print(
+                            f"!! {actor.name}: Target {task_id} planned directly to observation attitude"
+                            f" (current off-nadir={offnadir_cue_current:.1f} deg, "
+                            f"target off-nadir now={offnadir_unbound:.1f} deg, "
+                            f"off-nadir at observation={off_obs:.1f} deg, "
+                            f"time_to_obs={t_obs:.1f} s, "
+                            f"slew+stab={att_models_dict[actor.name].delay_slew_stab:.1f} s)"
+                        )
 
                 if att_models_dict[actor.name].slew_active:
                     att_models_dict[actor.name].follow_planned_slew(elapsed_seconds)

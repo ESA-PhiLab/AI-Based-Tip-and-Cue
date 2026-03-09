@@ -214,9 +214,8 @@ class EOTools:
         los_brf /= float(np.linalg.norm(los_brf))
         return los_brf, offnadir
 
-
     def point_to_target_bounded(self, r_eci, v_eci, target_geodetic, t_datetime, offnadir_max=None, mode="max", dt_step_coarse=1.0, dt_step_fine=0.5, dt_step_ultrafine=0.1, dt_max=600.0):
-        """point_to_target_bounded(r_eci,v_eci,target_geodetic,t_datetime,offnadir_max=None,mode="max",dt_step_coarse=1.0,dt_step_fine=0.5,dt_step_ultrafine=0.1,dt_max=600.0) -> tuple[np.ndarray,float,float,float|None]: Return LVLH LOS unit vector, bounded off-nadir, unbounded off-nadir, and time_to_sight (s)."""
+        """point_to_target_bounded(r_eci,v_eci,target_geodetic,t_datetime,offnadir_max=None,mode="max",dt_step_coarse=1.0,dt_step_fine=0.5,dt_step_ultrafine=0.1,dt_max=600.0) -> tuple[np.ndarray,float,float,float|None]: Return LVLH LOS unit vector, bounded off-nadir, unbounded off-nadir, and chosen time_to_sight (s)."""
         pointing_vec_lvlh_target, offnadir_unbound = self.point_to_target_unbounded(
             r_eci, v_eci, target_geodetic, t_datetime, frame="LVLH"
         )
@@ -241,6 +240,105 @@ class EOTools:
             time_to_sight = 0.0
 
         return pointing_vec_lvlh_target, offnadir_deg_target, offnadir_unbound, time_to_sight
+
+    def compute_optimal_future_attitude(self,
+                                        r_eci,
+                                        v_eci,
+                                        target_geodetic,
+                                        t_datetime,
+                                        omega_max_rad,
+                                        alpha_max_rad,
+                                        zeta,
+                                        wn_rad,
+                                        offnadir_max,
+                                        offnadir_margin=0.0,
+                                        dt_step_coarse=5.0,
+                                        dt_step_fine=0.5,
+                                        dt_max=600.0,
+                                        mode="per_axis"):
+        """compute_optimal_future_attitude(...) -> tuple[list[float]|None,float|None,float,float|None,np.ndarray|None]: Return earliest slew-feasible future attitude using future LOS geometry only."""
+        if self.att_model is None:
+            raise RuntimeError("att_model not attached.")
+
+        r0 = np.asarray(r_eci, float).reshape(3)
+        v0 = np.asarray(v_eci, float).reshape(3)
+
+        current_eul = np.asarray(self.att_model._actor_attitude_deg, float).reshape(3)
+        current_w = np.asarray(self.att_model._actor_angular_velocity, float).reshape(3)
+        current_a = np.asarray(self.att_model._actor_angular_acceleration, float).reshape(3)
+
+        _, offnadir_unbound_now = self.point_to_target_unbounded(
+            r0, v0, target_geodetic, t_datetime, frame="LVLH"
+        )
+
+        dt_step_coarse = float(dt_step_coarse)
+        dt_step_fine = min(float(dt_step_fine), dt_step_coarse)
+        dt_max = float(dt_max)
+        off_limit = float(offnadir_max) + float(offnadir_margin)
+
+        best_solution = None
+
+        dt = 0.0
+        while dt <= dt_max + 1e-9:
+            t_future = t_datetime + timedelta(seconds=float(dt))
+            r_future, v_future = self._kepler_propagate_universal(r0, v0, float(dt))
+            r_future = np.asarray(r_future, float).reshape(3)
+            v_future = np.asarray(v_future, float).reshape(3)
+
+            pv_future, off_future = self.point_to_target_unbounded(
+                r_future, v_future, target_geodetic, t_future, frame="LVLH"
+            )
+            off_future = float(off_future)
+
+            if off_future <= off_limit + 1e-9:
+                target_eul_deg = self.att_model.pointing_attitude_lvlh(pv_future)
+
+                t_need, _, _ = self.att_model.get_pointing_stabilization_time(
+                    current_eul=current_eul,
+                    target_eul=target_eul_deg,
+                    omega_max_rad=omega_max_rad,
+                    alpha_max_rad=alpha_max_rad,
+                    zeta=zeta,
+                    wn_rad=wn_rad,
+                    mode=mode,
+                    current_w_rad=current_w,
+                    current_a_rad=current_a
+                )
+
+                if float(dt) >= float(t_need) - 1e-9:
+                    pv_future = np.asarray(pv_future, float).reshape(3)
+                    pv_future /= float(np.linalg.norm(pv_future))
+                    return target_eul_deg, off_future, float(offnadir_unbound_now), float(dt), pv_future
+
+                if best_solution is None:
+                    pv_future = np.asarray(pv_future, float).reshape(3)
+                    pv_future /= float(np.linalg.norm(pv_future))
+                    best_solution = (
+                        target_eul_deg,
+                        off_future,
+                        float(offnadir_unbound_now),
+                        float(dt),
+                        pv_future,
+                        float(t_need),
+                    )
+
+            if off_future > offnadir_max + 5.0:
+                dt += dt_step_coarse
+            else:
+                dt += dt_step_fine
+
+        if best_solution is not None:
+            target_eul_deg, off_future, offnadir_unbound_now, dt_found, pv_future, t_need = best_solution
+            return target_eul_deg, off_future, offnadir_unbound_now, dt_found, pv_future
+
+        return None, None, float(offnadir_unbound_now), None, None
+
+
+
+
+
+
+
 
     # -------------------------------------------------------------------------
     # Visibility
@@ -492,7 +590,7 @@ class EOTools:
     # --- eotools.py: REPLACE set_max_offnadir COMPLETELY ---
 
     def set_max_offnadir(self, offnadir_max, offnadir_unbound, pointing_vec_lvlh_target, r_eci, v_eci, target_geodetic, t_datetime, dt_step_coarse=1.0, dt_step_fine=0.5, dt_step_ultrafine=0.1, dt_max=600.0, mode="max"):
-        """set_max_offnadir(offnadir_max,offnadir_unbound,pointing_vec_lvlh_target,r_eci,v_eci,target_geodetic,t_datetime,dt_step_coarse=1.0,dt_step_fine=0.5,dt_step_ultrafine=0.1,dt_max=600.0,mode="max") -> tuple[np.ndarray,float,float|None]: Enforce off-nadir limit in LVLH; returns (LVLH LOS vec, offnadir_deg, time_to_sight_s)."""
+        """set_max_offnadir(offnadir_max,offnadir_unbound,pointing_vec_lvlh_target,r_eci,v_eci,target_geodetic,t_datetime,dt_step_coarse=1.0,dt_step_fine=0.5,dt_step_ultrafine=0.1,dt_max=600.0,mode="max") -> tuple[np.ndarray,float,float|None]: Enforce off-nadir limit in LVLH; returns (LVLH LOS vec, offnadir_deg, chosen_time_s)."""
         offnadir_max = float(offnadir_max)
         offnadir_unbound = float(offnadir_unbound)
 
@@ -508,28 +606,27 @@ class EOTools:
 
         mode = str(mode).lower()
 
-        # "cap": immediately clamp to the max off-nadir along the great-circle between nadir and target (LVLH).
         if mode == "cap":
             boresight_lvlh = np.array([0.0, 0.0, 1.0], float)
 
             rot_axis = np.cross(boresight_lvlh, pv)
             axn = float(np.linalg.norm(rot_axis))
             if axn < 1e-12:
-                # target is (anti)parallel; just return nadir or 180 case
                 return boresight_lvlh.copy(), offnadir_max, 0.0
             rot_axis /= axn
 
             ang = np.deg2rad(offnadir_max)
-            K = np.array([[0.0, -rot_axis[2], rot_axis[1]],
-                          [rot_axis[2], 0.0, -rot_axis[0]],
-                          [-rot_axis[1], rot_axis[0], 0.0]], float)
+            K = np.array([
+                [0.0, -rot_axis[2], rot_axis[1]],
+                [rot_axis[2], 0.0, -rot_axis[0]],
+                [-rot_axis[1], rot_axis[0], 0.0]
+            ], float)
             R = np.eye(3) + np.sin(ang) * K + (1.0 - np.cos(ang)) * (K @ K)
 
             new_vec = R @ boresight_lvlh
             new_vec /= float(np.linalg.norm(new_vec))
             return new_vec, offnadir_max, 0.0
 
-        # "max": predictive—wait until target comes within the limit (LVLH), return the reachable LVLH vector at that time.
         if mode == "max":
             dt_step_coarse = float(dt_step_coarse)
             dt_step_fine = min(float(dt_step_fine), dt_step_coarse)
