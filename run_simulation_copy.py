@@ -589,22 +589,6 @@ while elapsed_seconds <= sim_duration_seconds:
                 float(eo_tools_dict[actor.name].t_to_obs_expected) - float(slew_finish_steps_early) * float(sim_step_seconds)
             )
             cue_slew_active_timebased = elapsed_since_task_s < t_slew_finish_gate
-
-            if elapsed_since_task_s > eo_tools_dict[actor.name].t_to_obs_expected * 1.1 + 5:
-
-                print("Expected observation time exceeded, clear task")
-
-                current_task = eo_tools_dict[actor.name].current_task
-                task_id = eo_tools_dict[actor.name].current_task["target_id"]
-
-
-                att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
-                _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
-
-                # Global removal happens at the next loop via cleanup_timeout_targets:
-                if task_id in tasked_targets:
-                    cleanup_idx.append(task_id)
-
         else:
             elapsed_since_task_s = None
             t_slew_finish_gate = None
@@ -633,77 +617,114 @@ while elapsed_seconds <= sim_duration_seconds:
                         print(f"!! {actor.name}: Received task for Target {whale_idx}")
                         whale.state_tasked = 1
 
+                        # If no current task, check the queue
 
-                    # If no current task, check the queue
-                    if eo_tools_dict[actor.name].current_task is None and eo_tools_dict[actor.name].task_queue:
-                        candidate_tasks = []
+                    if eo_tools_dict[actor.name].current_task != None:
+                        if t_datetime > eo_tools_dict[actor.name].t_task_assigned + timedelta(eo_tools_dict[actor.name].current_task["time_to_obs"]) * 2 and cleaned_state == False:
+                            # Expected observation time out of range -> recompute task list
+                            print(f"!! {actor.name}: Target {task_id} observation time exceeded, delete task")
 
-                        for task in eo_tools_dict[actor.name].task_queue:
-                            will_be_visible, _ = eo_tools_dict[actor.name].will_be_visible_within(
-                                task["coord"], r_vec, v_vec, t_datetime,
-                                delta_t_tipcue, el_min_deg=elevation_min, step=60.0
-                            )
+                            # reset local EO tool state
+                            att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
+                            _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
 
-                            if not will_be_visible:
-                                continue
+                            # Global removal happens at the next loop via cleanup_timeout_targets:
+                            if task_id in tasked_targets:
+                                cleanup_idx.append(task_id)
 
-                            target_eul_deg, offnadir_at_obs, offnadir_unbound, time_to_obs, pointing_vec_lvlh_target = \
-                                eo_tools_dict[actor.name].compute_optimal_future_attitude(
-                                    r_eci=r_vec,
-                                    v_eci=v_vec,
-                                    target_geodetic=task["coord"],
-                                    t_datetime=t_datetime,
-                                    omega_max_rad=omega_max_rad,
-                                    alpha_max_rad=alpha_max_rad,
-                                    zeta=zeta,
-                                    wn_rad=wn_rad,
-                                    offnadir_max=offnadir_limit,
-                                    offnadir_margin=offnadir_margin,
-                                    dt_step_coarse=max(sim_step_seconds, 2.0),
-                                    dt_step_fine=max(sim_step_seconds / 5.0, 0.25),
-                                    dt_max=delta_t_tipcue,
-                                    mode="per_axis"
+                    if eo_tools_dict[actor.name].task_queue:
+                        if eo_tools_dict[actor.name].current_task != None:
+
+
+                           elapsed_since_task_s = (t_datetime - eo_tools_dict[actor.name].t_task_assigned).total_seconds()
+                           expected_obs_s = float(eo_tools_dict[actor.name].current_task["time_to_obs"])
+
+                           if elapsed_since_task_s > 1.1 * expected_obs_s:
+
+                                print(eo_tools_dict[actor.name].t_task_assigned, eo_tools_dict[actor.name].current_task["time_to_obs"])
+                                print(f"!! {actor.name}: Target {task_id} observation time exceeded, delete task")
+
+                                # reset local EO tool state
+                                att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
+                                _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
+
+                                # Global removal happens at the next loop via cleanup_timeout_targets:
+                                if task_id in tasked_targets:
+                                    cleanup_idx.append(task_id)
+
+                                eo_tools_dict[actor.name].current_task = None
+
+                        if eo_tools_dict[actor.name].current_task is None:
+                            candidate_tasks = []
+
+                            for task in eo_tools_dict[actor.name].task_queue:
+                                will_be_visible, _ = eo_tools_dict[actor.name].will_be_visible_within(
+                                    task["coord"], r_vec, v_vec, t_datetime,
+                                    delta_t_tipcue, el_min_deg=elevation_min, step=60.0
                                 )
 
-                            if target_eul_deg is None or time_to_obs is None:
-                                continue
+                                if not will_be_visible:
+                                    continue
 
-                            task_eval = dict(task)
-                            task_eval["target_eul_deg"] = np.asarray(target_eul_deg, float)
-                            task_eval["offnadir_at_obs"] = float(offnadir_at_obs)
-                            task_eval["offnadir_unbound"] = float(offnadir_unbound)
-                            task_eval["time_to_obs"] = float(time_to_obs)
-                            task_eval["pointing_vec_lvlh_target"] = np.asarray(pointing_vec_lvlh_target, float)
+                                target_eul_deg, offnadir_at_obs, offnadir_unbound, time_to_obs, pointing_vec_lvlh_target = \
+                                    eo_tools_dict[actor.name].compute_optimal_future_attitude(
+                                        r_eci=r_vec,
+                                        v_eci=v_vec,
+                                        target_geodetic=task["coord"],
+                                        t_datetime=t_datetime,
+                                        omega_max_rad=omega_max_rad,
+                                        alpha_max_rad=alpha_max_rad,
+                                        zeta=zeta,
+                                        wn_rad=wn_rad,
+                                        offnadir_max=offnadir_limit,
+                                        offnadir_margin=offnadir_margin,
+                                        dt_step_coarse=max(sim_step_seconds, 2.0),
+                                        dt_step_fine=max(sim_step_seconds / 5.0, 0.25),
+                                        dt_max=delta_t_tipcue,
+                                        mode="per_axis"
+                                    )
 
-                            candidate_tasks.append(task_eval)
+                                if target_eul_deg is None or time_to_obs is None:
+                                    continue
 
-                        if candidate_tasks:
-                            eo_tools_dict[actor.name].current_task = min(
-                                candidate_tasks,
-                                key=lambda task: task["time_to_obs"]
-                            )
+                                task_eval = dict(task)
+                                task_eval["target_eul_deg"] = np.asarray(target_eul_deg, float)
+                                task_eval["offnadir_at_obs"] = float(offnadir_at_obs)
+                                task_eval["offnadir_unbound"] = float(offnadir_unbound)
+                                task_eval["time_to_obs"] = float(time_to_obs)
+                                task_eval["pointing_vec_lvlh_target"] = np.asarray(pointing_vec_lvlh_target, float)
 
-                            eo_tools_dict[actor.name].task_queue = [
-                                t for t in eo_tools_dict[actor.name].task_queue
-                                if t.get("target_id") != eo_tools_dict[actor.name].current_task["target_id"]
-                            ]
 
-                            task_id = eo_tools_dict[actor.name].current_task["target_id"]
+                                if time_to_obs < t_start_task_ahead:
+                                    candidate_tasks.append(task_eval)
 
-                            eo_tools_dict[actor.name].t_task_assigned = t_datetime
-                            eo_tools_dict[actor.name].t_to_obs_expected = float(
-                                eo_tools_dict[actor.name].current_task["time_to_obs"]
-                            )
+                            if candidate_tasks:
+                                eo_tools_dict[actor.name].current_task = min(
+                                    candidate_tasks,
+                                    key=lambda task: task["time_to_obs"]
+                                )
 
-                            print(
-                                f"!! {actor.name}: Starting task for Target {task_id} "
-                                f"(expected obs in {eo_tools_dict[actor.name].t_to_obs_expected:.1f} s)"
-                            )
+                                eo_tools_dict[actor.name].task_queue = [
+                                    t for t in eo_tools_dict[actor.name].task_queue
+                                    if t.get("target_id") != eo_tools_dict[actor.name].current_task["target_id"]
+                                ]
 
-                            if task_id in all_targets:
-                                all_targets[task_id].t_tasked_cue = t_datetime
+                                task_id = eo_tools_dict[actor.name].current_task["target_id"]
 
-                            n_tasked_cue += 1
+                                eo_tools_dict[actor.name].t_task_assigned = t_datetime
+                                eo_tools_dict[actor.name].t_to_obs_expected = float(
+                                    eo_tools_dict[actor.name].current_task["time_to_obs"]
+                                )
+
+                                print(
+                                    f"!! {actor.name}: Starting task for Target {task_id} "
+                                    f"(expected obs in {eo_tools_dict[actor.name].t_to_obs_expected:.1f} s)"
+                                )
+
+                                if task_id in all_targets:
+                                    all_targets[task_id].t_tasked_cue = t_datetime
+
+                                n_tasked_cue += 1
 
 
 
@@ -732,7 +753,6 @@ while elapsed_seconds <= sim_duration_seconds:
                             eo_tools_dict[actor.name].pointing_vec_lvlh_target = pointing_vec_lvlh_target
                             eo_tools_dict[actor.name].time_to_obs_target = time_to_obs
                             eo_tools_dict[actor.name].offnadir_at_obs_target = offnadir_at_obs
-
                             att_models_dict[actor.name]._new_target_attitude_deg = np.asarray(target_eul_deg, float)
 
 
@@ -778,13 +798,11 @@ while elapsed_seconds <= sim_duration_seconds:
                 if actor_not_default or new_target_not_default:
                     att_models_dict[actor.name]._new_target_attitude_deg = np.asarray(eul_ang_cue_default, float)
 
-                    
+
                     print(
                         f"!! {actor.name}: Set roll, pitch, yaw target back to default "
                         f"{eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg"
                     )
-
-                    # eo_tools_dict[actor.name].offnadir_unbound_target = None
 
             # CUE ATTITUDE CONTROL
             if model_attitude_control:

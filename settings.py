@@ -38,7 +38,7 @@ if real_run:
 else:
     # Feel free to modify
     print_values = False
-    plot_3d = True
+    plot_3d = False
     plot_result = False
     max_glint = False
     generate_radiation = True
