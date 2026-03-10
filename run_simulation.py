@@ -43,7 +43,7 @@ from pathlib import Path
 
 show_constellation = False
 show_orbits = False
-plot_propagation, uhd = False, False #True, True
+plot_propagation, uhd = False, False
 plot_footprints = True
 plot_whale_trajectories = False
 
@@ -58,7 +58,7 @@ verbose = False
 if real_run:
     show_constellation = False
     show_orbits = False
-    plot_propagation, uhd = False, False # True, True
+    plot_propagation, uhd = True, True
     plot_footprints = True
     plot_whale_trajectories = False
 
@@ -73,6 +73,8 @@ if real_run:
 
     logging = True
     verbose = False
+
+slew_finish_steps_early = 0     # Debugging
 
 
 # Initialize Orekit
@@ -170,9 +172,19 @@ n_targets_pos = int(round(n_targets * pos_fraction))
 n_targets_neg = n_targets - n_targets_pos
 
 # EO Tools
+# EO Tools
 eo_tools_dict = init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, offnadir_limit)
-att_models_dict = init_attitude_models(tip_actors, cue_actors, eul_ang_tip_default, eul_ang_cue_default, omega_max_rad, alpha_max_rad, zeta, wn_rad, offnadir_limit, offnadir_margin)
+att_models_dict = init_attitude_models(
+    tip_actors, cue_actors,
+    eul_ang_tip_default, eul_ang_cue_default,
+    omega_max_rad, alpha_max_rad, zeta, wn_rad,
+    offnadir_limit, offnadir_margin
+)
 link_eo_attitude(eo_tools_dict, att_models_dict)
+
+for actor in cue_actors:
+    eo_tools_dict[actor.name].t_task_assigned = None
+    eo_tools_dict[actor.name].t_to_obs_expected = None
 
 if len(tip_actors) != 0:
     sim = paseos.init_sim(local_actor=tip_actors[0])
@@ -557,14 +569,38 @@ while elapsed_seconds <= sim_duration_seconds:
     for actor in cue_actors:
         cue_observed = False
         cue_confirmed = False
+        slew_was_active = False
+        slew_just_finished = False
 
         r_vec, v_vec, r, v = propagate_actor(actor, t_pykep, trajectories, n_steps, show_orbits)
         cue_positions.append(r)
 
         eo_tools_dict[actor.name]._actor = actor
 
+
+        t_task_assigned_actor = getattr(eo_tools_dict[actor.name], "t_task_assigned", None)
+        t_to_obs_expected_actor = getattr(eo_tools_dict[actor.name], "t_to_obs_expected", None)
+
+        if (
+                eo_tools_dict[actor.name].current_task is not None
+                and t_task_assigned_actor is not None
+                and t_to_obs_expected_actor is not None
+        ):
+            elapsed_since_task_s = (t_datetime - t_task_assigned_actor).total_seconds()
+            t_slew_finish_gate = max(
+                0.0,
+                float(t_to_obs_expected_actor) - float(slew_finish_steps_early) * float(sim_step_seconds)
+            )
+            cue_slew_active_timebased = elapsed_since_task_s < t_slew_finish_gate
+        else:
+            elapsed_since_task_s = None
+            t_slew_finish_gate = None
+            cue_slew_active_timebased = False
+
         try:
             cue_illuminated = not satellite_in_shadow(r_vec, sun_vec_eci, earth.getEquatorialRadius())
+
+
         except:
             cue_illuminated = True
             print(f"!! {actor.name}: failed to compute illumination state, set to True preventing exclusion.")
@@ -640,7 +676,16 @@ while elapsed_seconds <= sim_duration_seconds:
                             ]
 
                             task_id = eo_tools_dict[actor.name].current_task["target_id"]
-                            print(f"!! {actor.name}: Starting task for Target {task_id}")
+
+                            eo_tools_dict[actor.name].t_task_assigned = t_datetime
+                            eo_tools_dict[actor.name].t_to_obs_expected = float(
+                                eo_tools_dict[actor.name].current_task["time_to_obs"]
+                            )
+
+                            print(
+                                f"!! {actor.name}: Starting task for Target {task_id} "
+                                f"(expected obs in {eo_tools_dict[actor.name].t_to_obs_expected:.1f} s)"
+                            )
 
                             if task_id in all_targets:
                                 all_targets[task_id].t_tasked_cue = t_datetime
@@ -681,14 +726,18 @@ while elapsed_seconds <= sim_duration_seconds:
 
                                 att_models_dict[actor.name]._new_target_attitude_deg = np.asarray(target_eul_deg, float)
 
+
                             else:
                                 print(f"!! {actor.name}: Target {task_id} has no stored slew-feasible observation solution, delete task")
+
                                 will_be_in_view_later = False
                                 will_be_in_view_soon = False
                                 in_view = False
                                 eo_tools_dict[actor.name].pointing_vec_lvlh_target = None
                                 eo_tools_dict[actor.name].offnadir_unbound_target = None
                                 eo_tools_dict[actor.name].move_set = False
+                                eo_tools_dict[actor.name].t_task_assigned = None
+                                eo_tools_dict[actor.name].t_to_obs_expected = None
 
                         pointing_vec = eo_tools_dict[actor.name].pointing_vec_lvlh_target
 
@@ -701,7 +750,11 @@ while elapsed_seconds <= sim_duration_seconds:
 
                             # reset local EO tool state
                             att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
-                            _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_ang_cue_default)
+                            _clear_actor_task(actor.name, whale_idx, eo_tools_dict, att_models_dict)
+                            eo_tools_dict[actor.name].t_task_assigned = None
+                            eo_tools_dict[actor.name].t_to_obs_expected = None
+                            eo_tools_dict[actor.name].t_task_assigned = None
+                            eo_tools_dict[actor.name].t_to_obs_expected = None
 
                             # Global removal happens at the next loop via cleanup_timeout_targets:
                             if task_id in tasked_targets:
@@ -721,29 +774,36 @@ while elapsed_seconds <= sim_duration_seconds:
                 # --- Handle new target attitude ---
                 if not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=0.1):
 
-                    if not att_models_dict[actor.name].slew_active or not np.allclose(att_models_dict[actor.name]._new_target_attitude_deg, att_models_dict[actor.name]._target_attitude_deg, atol=5.0):
-
-                            att_models_dict[actor.name]._planned_start_eul = att_models_dict[actor.name]._actor_attitude_deg.copy()
-                            att_models_dict[actor.name]._planned_start_time = elapsed_seconds
-
-                            task_update_mode = "new"
-
+                    if not cue_slew_active_timebased or not np.allclose(
+                        att_models_dict[actor.name]._new_target_attitude_deg,
+                        att_models_dict[actor.name]._target_attitude_deg,
+                        atol=5.0
+                    ):
+                        att_models_dict[actor.name]._planned_start_eul = att_models_dict[actor.name]._actor_attitude_deg.copy()
+                        att_models_dict[actor.name]._planned_start_time = elapsed_seconds
+                        task_update_mode = "new"
                     else:
                         task_update_mode = "taken"
 
+                    att_models_dict[actor.name].plan_slew(
+                        start_eul_deg=att_models_dict[actor.name]._planned_start_eul,
+                        target_eul_deg=att_models_dict[actor.name]._new_target_attitude_deg,
+                        omega_max_rad=omega_max_rad,
+                        alpha_max_rad=alpha_max_rad,
+                        zeta=zeta,
+                        wn_rad=wn_rad,
+                        dt=sim_step_seconds / 10,
+                        mode="per_axis",
+                        t_start=att_models_dict[actor.name]._planned_start_time,
+                        w_stab_res=omega_stab_res,
+                        a_stab_res=alpha_stab_res
+                    )
 
-
-                    att_models_dict[actor.name].plan_slew( start_eul_deg=att_models_dict[actor.name]._planned_start_eul, target_eul_deg=att_models_dict[actor.name]._new_target_attitude_deg,
-                        omega_max_rad=omega_max_rad, alpha_max_rad=alpha_max_rad, zeta=zeta, wn_rad=wn_rad, dt=sim_step_seconds/10, mode="per_axis",
-                        t_start=att_models_dict[actor.name]._planned_start_time, w_stab_res=omega_stab_res, a_stab_res=alpha_stab_res )
-
-                    if task_update_mode == 'new' and eo_tools_dict[actor.name].offnadir_unbound_target != None:
+                    if task_update_mode == "new" and eo_tools_dict[actor.name].offnadir_unbound_target is not None:
                         offnadir_unbound = eo_tools_dict[actor.name].offnadir_unbound_target
-                        offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._actor_attitude_deg)
-                        offnadir_cue_target, _ = att_models_dict[actor.name].offnadir_from_euler(att_models_dict[actor.name]._new_target_attitude_deg)
-                        current_target_eul = att_models_dict[actor.name]._actor_attitude_deg
-                        new_target_eul = att_models_dict[actor.name]._new_target_attitude_deg
-
+                        offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(
+                            att_models_dict[actor.name]._actor_attitude_deg
+                        )
 
                         off_obs = getattr(eo_tools_dict[actor.name], "offnadir_at_obs_target", None)
                         t_obs = getattr(eo_tools_dict[actor.name], "time_to_obs_target", None)
@@ -798,7 +858,8 @@ while elapsed_seconds <= sim_duration_seconds:
 
             continue
 
-        if cue_illuminated and not att_models_dict[actor.name].slew_active: #and not slew_just_finished:
+        if cue_illuminated and not cue_slew_active_timebased:
+        # only observe if stable according to task timing
         # only observe if stable
 
             for whale_idx, whale in all_targets.items():

@@ -23,7 +23,7 @@ img_path = os.path.join(images_folder, img_file)
 anns_folder = "dataset/create_dataset/"
 anns_path = os.path.join(anns_folder, "final_annotations.json")
 
-real_run = False
+real_run = True
 
 if real_run:
     print_values = False
@@ -53,7 +53,7 @@ nPlanes_tip = 1
 nPlanes_cue = 1
 
 offnadir_limit = 40  # Maximum off-nadir observation angle (deg), max 62.5 deg
-delta_t_tipcue = 5 * 60  # Time delay between Tip and Cue satellite (s)
+delta_t_tipcue = 1 * 60  # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
 
@@ -92,7 +92,7 @@ elif sim_time == 'fast':
     movie_orbit_sec = 60.0
 
 else:
-    sim_step_seconds = 1
+    sim_step_seconds = 0.5
     plot_fov_interval = 1
     plot_pyvista_interval = 1
     print_interval = 10
@@ -111,7 +111,7 @@ argp_cue_deg = 110.0511  # Argument of periapsis [deg]
 M_cue_deg = 250.1394  # Mean anomaly [deg]
 
 if not real_run:
-    M_cue_deg += 147
+    M_cue_deg += 147 + 10
     t0 += timedelta(seconds=-3 * 60)
 
 rp = R_earth + hp
@@ -201,10 +201,10 @@ alpha_stab_res = alpha_max_rad / 10
 # WHALES
 
 if real_run:
-    n_targets = 500
+    n_targets = 1000
 
 if not real_run:
-    n_targets = 10000
+    n_targets = 500
     whale_seed = 42
 
 pos_fraction = 1.0
