@@ -753,12 +753,24 @@ while elapsed_seconds <= sim_duration_seconds:
                                 cleanup_idx.append(task_id)
 
             if eo_tools_dict[actor.name].current_task is None:
-                if not np.allclose(att_models_dict[actor.name]._target_attitude_deg, eul_ang_cue_default, atol=0.1):
-                    att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
-                    print(f"!! {actor.name}: Set roll, pitch, yaw target back to default {eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg")
+                actor_eul = np.asarray(att_models_dict[actor.name]._actor_attitude_deg, float)
+                target_eul = np.asarray(att_models_dict[actor.name]._target_attitude_deg, float)
+                new_target_eul = np.asarray(att_models_dict[actor.name]._new_target_attitude_deg, float)
+                default_eul = np.asarray(eul_ang_cue_default, float)
 
+                actor_not_default = not np.allclose(actor_eul, default_eul, atol=0.1)
+                target_not_default = not np.allclose(target_eul, default_eul, atol=0.1)
+                new_target_not_default = not np.allclose(new_target_eul, default_eul, atol=0.1)
 
-                    # eo_tools_dict[actor.name].offnadir_unbound_target = None
+                should_issue_return = actor_not_default and (target_not_default or new_target_not_default)
+
+                if should_issue_return:
+                    att_models_dict[actor.name]._new_target_attitude_deg = default_eul.copy()
+
+                    print(
+                        f"!! {actor.name}: Set roll, pitch, yaw target back to default "
+                        f"{eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg"
+                    )
 
             # CUE ATTITUDE CONTROL
             if model_attitude_control:

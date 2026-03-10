@@ -112,7 +112,7 @@ M_cue_deg = 250.1394  # Mean anomaly [deg]
 
 if not real_run:
     argp_cue_deg +=90  # RAAN [deg]
-    M_cue_deg += 147 - 80
+    M_cue_deg += 147 - 90
     RAAN_cue_deg +=52
     t0 += timedelta(seconds=-3 * 60)
 
@@ -206,7 +206,7 @@ if real_run:
     n_targets = 500
 
 if not real_run:
-    n_targets = 500
+    n_targets = 10000
     whale_seed = 1
 
 pos_fraction = 1.0

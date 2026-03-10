@@ -128,8 +128,8 @@ def cleanup_timeout_targets(all_targets, tasked_targets, current_time, timeout, 
 
     return all_cleanup_idx
 
-def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_default=(0.0, 0.0, 0.0)):
-    """_clear_actor_task(actor_name,task_id,eo_tools_dict,att_models_dict,eul_default=(0.0,0.0,0.0)) -> None: Remove one task from queue and only clear active task/attitude state if that task is the actor's current task."""
+def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_default=(0.0, 0.0, 0.0)) -> None:
+    """Remove one task from queue and clear active task bookkeeping without forcing the actor attitude state."""
     if actor_name is None or actor_name not in eo_tools_dict:
         return
 
@@ -140,11 +140,9 @@ def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_d
     current_task_id = current_task.get("target_id") if current_task is not None else None
     is_active_task = (current_task_id == task_id)
 
-    # Always remove queued copies of this task
     if hasattr(eo, "task_queue") and eo.task_queue:
         eo.task_queue = [t for t in eo.task_queue if t.get("target_id") != task_id]
 
-    # Only clear EO/tasking state if this task is actually the active one
     if is_active_task:
         eo.current_task = None
         eo.move_set = False
@@ -160,13 +158,10 @@ def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_d
             eo.visibility_miss_count = 0
 
         if att is not None:
+            # Request return to default, but do not overwrite the active target
+            # or cancel the controller state here. The main loop should detect
+            # the target change and plan the return slew.
             att._new_target_attitude_deg = np.array(eul_default, float)
-            att.set_target_euler(eul_default)
-            att.slew_active = False
-            att._planned_traj = []
-            att._planned_start_eul = None
-            att._planned_start_time = None
-            att.delay_slew_stab = None
 
     eo_tools_dict[actor_name] = eo
 
