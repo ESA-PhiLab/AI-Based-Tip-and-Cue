@@ -53,12 +53,12 @@ nPlanes_tip = 1
 nPlanes_cue = 1
 
 offnadir_limit = 40  # Maximum off-nadir observation angle (deg), max 62.5 deg
-delta_t_tipcue = 5 * 60  # Time delay between Tip and Cue satellite (s)
+delta_t_tipcue = 1 * 60  # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
 
 if not real_run:
-    sim_duration_hours = 10/60 #5826.4/3600
+    sim_duration_hours = 5/60 #5826.4/3600
     sim_time = 'slow'
 
 else:
@@ -111,7 +111,7 @@ argp_cue_deg = 110.0511  # Argument of periapsis [deg]
 M_cue_deg = 250.1394  # Mean anomaly [deg]
 
 if not real_run:
-    M_cue_deg += 147
+    M_cue_deg += 167
     t0 += timedelta(seconds=-3 * 60)
 
 rp = R_earth + hp

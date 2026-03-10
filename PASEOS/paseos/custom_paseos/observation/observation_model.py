@@ -255,7 +255,8 @@ class EOTools:
                                         dt_step_coarse=5.0,
                                         dt_step_fine=1.0,
                                         dt_max=600.0,
-                                        mode="per_axis"):
+                                        mode="per_axis",
+                                        margin_obs_time=3.0):
         """compute_optimal_future_attitude(...) -> tuple[list[float]|None,float|None,float,float|None,np.ndarray|None]: Return earliest slew-feasible future attitude using future LOS geometry only."""
         if self.att_model is None:
             raise RuntimeError("att_model not attached.")
@@ -279,7 +280,7 @@ class EOTools:
         best_solution = None
 
         dt = 0.0
-        while dt <= dt_max + 1e-9:
+        while dt <= dt_max:
             t_future = t_datetime + timedelta(seconds=float(dt))
             r_future, v_future = self._kepler_propagate_universal(r0, v0, float(dt))
             r_future = np.asarray(r_future, float).reshape(3)
@@ -290,10 +291,10 @@ class EOTools:
             )
             off_future = float(off_future)
 
-            if off_future <= off_limit + 1e-9:
+            if off_future <= off_limit:
                 target_eul_deg = self.att_model.pointing_attitude_lvlh(pv_future)
 
-                t_need, _, _ = self.att_model.get_pointing_stabilization_time(
+                t_need, t_slew, t_settle = self.att_model.get_pointing_stabilization_time(
                     current_eul=current_eul,
                     target_eul=target_eul_deg,
                     omega_max_rad=omega_max_rad,
@@ -305,7 +306,8 @@ class EOTools:
                     current_a_rad=current_a
                 )
 
-                if float(dt) >= float(t_need) - 1e-9:
+                if float(dt) > float(t_need):
+                    print("t_need:", t_need)
                     pv_future = np.asarray(pv_future, float).reshape(3)
                     pv_future /= float(np.linalg.norm(pv_future))
                     return target_eul_deg, off_future, float(offnadir_unbound_now), float(dt), pv_future

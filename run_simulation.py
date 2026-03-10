@@ -610,8 +610,8 @@ while elapsed_seconds <= sim_duration_seconds:
                                     wn_rad=wn_rad,
                                     offnadir_max=offnadir_limit,
                                     offnadir_margin=offnadir_margin,
-                                    dt_step_coarse=sim_step_seconds*5,
-                                    dt_step_fine=sim_step_seconds,
+                                    dt_step_coarse=max(sim_step_seconds, 2.0),
+                                    dt_step_fine=max(sim_step_seconds / 5.0, 0.25),
                                     dt_max=delta_t_tipcue,
                                     mode="per_axis"
                                 )
@@ -647,7 +647,14 @@ while elapsed_seconds <= sim_duration_seconds:
 
                             n_tasked_cue += 1
 
+                    # If still no current task, assign this whale now
+                    if eo_tools_dict[actor.name].current_task is None and whale.assigned_cue == actor.name:
 
+                        eo_tools_dict[actor.name].current_task = {
+                            "target_id": whale_idx,
+                            "coord": whale.coord_observed
+                        }
+                        print(f"!! {actor.name}: New task assigned: Target {whale_idx}")
 
                     # Work on the current task if one exists
                     if eo_tools_dict[actor.name].current_task and eo_tools_dict[actor.name].current_task["target_id"] == whale_idx:
@@ -757,25 +764,18 @@ while elapsed_seconds <= sim_duration_seconds:
                             f"slew+stab={att_models_dict[actor.name].delay_slew_stab:.1f} s)"
                         )
 
-                slew_was_active = bool(att_models_dict[actor.name].slew_active)
-
-                if slew_was_active:
+                if att_models_dict[actor.name].slew_active:
                     att_models_dict[actor.name].follow_planned_slew(elapsed_seconds)
 
-                slew_just_finished = slew_was_active and (not att_models_dict[actor.name].slew_active)
+                    if np.allclose(att_models_dict[actor.name]._actor_attitude_deg,  att_models_dict[actor.name]._target_attitude_deg,  atol=0.1) and np.any(np.abs(att_models_dict[actor.name]._actor_angular_velocity)) <= 0.01 and np.any(np.abs(att_models_dict[actor.name]._actor_angular_acceleration) <= 0.01):
+                        att_models_dict[actor.name].slew_active = False
+                        current_eul = att_models_dict[actor.name]._actor_attitude_deg
+                        offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(current_eul)
+                        print(f"!! {actor.name}: Completed move to roll, pitch, yaw {current_eul[0]:.1f}, {current_eul[1]:.1f}, {current_eul[2]:.1f} deg | Off-nadir {offnadir_cue_current:.2f} deg")
 
-                if slew_just_finished:
-                    current_eul = np.asarray(att_models_dict[actor.name]._actor_attitude_deg, float)
-                    offnadir_cue_current, _ = att_models_dict[actor.name].offnadir_from_euler(current_eul)
 
-                    print(
-                        f"!! {actor.name}: Completed move to roll, pitch, yaw "
-                        f"{current_eul[0]:.1f}, {current_eul[1]:.1f}, {current_eul[2]:.1f} deg "
-                        f"| Off-nadir {offnadir_cue_current:.2f} deg"
-                    )
-
-                    eo_tools_dict[actor.name].slew_stab_time = att_models_dict[actor.name].delay_slew_stab
-                    att_models_dict[actor.name].delay_slew_stab = None
+                        eo_tools_dict[actor.name].slew_stab_time = att_models_dict[actor.name].delay_slew_stab
+                        att_models_dict[actor.name].delay_slew_stab = None
 
             #   if verbose and n_steps % print_interval == 0:
               #       delta_move_eul = eul_new_deg - prev_eul
@@ -798,7 +798,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
             continue
 
-        if cue_illuminated and not att_models_dict[actor.name].slew_active and not slew_just_finished:
+        if cue_illuminated and not att_models_dict[actor.name].slew_active:
         # only observe if stable
 
             for whale_idx, whale in all_targets.items():
