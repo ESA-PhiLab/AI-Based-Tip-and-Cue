@@ -253,7 +253,7 @@ class EOTools:
                                         offnadir_max,
                                         offnadir_margin=0.0,
                                         dt_step_coarse=5.0,
-                                        dt_step_fine=0.5,
+                                        dt_step_fine=1.0,
                                         dt_max=600.0,
                                         mode="per_axis"):
         """compute_optimal_future_attitude(...) -> tuple[list[float]|None,float|None,float,float|None,np.ndarray|None]: Return earliest slew-feasible future attitude using future LOS geometry only."""
@@ -327,12 +327,7 @@ class EOTools:
             else:
                 dt += dt_step_fine
 
-        if best_solution is not None:
-            target_eul_deg, off_future, offnadir_unbound_now, dt_found, pv_future, t_need = best_solution
-            return target_eul_deg, off_future, offnadir_unbound_now, dt_found, pv_future
-
         return None, None, float(offnadir_unbound_now), None, None
-
 
 
 

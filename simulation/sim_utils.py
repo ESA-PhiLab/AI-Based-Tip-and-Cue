@@ -213,16 +213,47 @@ def convert_M_to_lv(orbital_elements, epoch):
 # -----------------------------------------------------------------------------
 # Tasking cost / coverage
 # -----------------------------------------------------------------------------
-def pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime):
-    """
-    Compute angular cost of retargeting to task.
-    Lower = easier to point.
-    """
-    d_brf, offnadir_unbound = eo_tools.point_to_target_unbounded(
-        r_vec, v_vec, task["coord"], t_datetime)
-    eul_target = eo_tools.att_model.pointing_attitude_brf(d_brf)
-    delta = np.abs(np.array(eul_target) - eo_tools.att_model._actor_attitude_deg)
-    return np.linalg.norm(delta)
+
+def pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime,
+                  omega_max_rad, alpha_max_rad, zeta, wn_rad,
+                  offnadir_limit, offnadir_margin, delta_t_tipcue, sim_step_seconds) -> tuple[float, float]:
+
+    print("evaluate cost")
+    """Return (earliest feasible time-to-observation [s], wrapped Euler-change norm [deg]); inf if infeasible."""
+    target_eul_deg, _, _, time_to_obs, _ = eo_tools.compute_optimal_future_attitude(
+        r_eci=r_vec,
+        v_eci=v_vec,
+        target_geodetic=task["coord"],
+        t_datetime=t_datetime,
+        omega_max_rad=omega_max_rad,
+        alpha_max_rad=alpha_max_rad,
+        zeta=zeta,
+        wn_rad=wn_rad,
+        offnadir_max=offnadir_limit,
+        offnadir_margin=offnadir_margin,
+        dt_step_coarse=5*sim_step_seconds,
+        dt_step_fine=sim_step_seconds,
+        dt_max=delta_t_tipcue,
+        mode="per_axis"
+    )
+
+    if target_eul_deg is None or time_to_obs is None:
+        return float("inf"), float("inf")
+
+    current_eul = np.asarray(eo_tools.att_model._actor_attitude_deg, float)
+    target_eul = np.asarray(target_eul_deg, float)
+    delta = (target_eul - current_eul + 180.0) % 360.0 - 180.0
+    delta_norm = float(np.linalg.norm(delta))
+
+    return float(time_to_obs), delta_norm
+
+
+
+
+
+
+
+
 
 
 def count_orbits_completed(a_m, sim_duration_seconds):

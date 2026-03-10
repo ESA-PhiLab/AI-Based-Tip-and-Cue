@@ -24,7 +24,6 @@ anns_folder = "dataset/create_dataset/"
 anns_path = os.path.join(anns_folder, "final_annotations.json")
 
 real_run = False
-plot_whale_trajectories = True
 
 if real_run:
     print_values = False
@@ -67,7 +66,7 @@ else:
     sim_time = 'slow'
 
 if not real_run:
-    sim_name = "30000_targets"
+    sim_name = "test1"
 else:
     nm_ext = str()
     nm_ext += "T" if nSats_tip * nPlanes_tip > 0 else ""
@@ -205,7 +204,7 @@ if real_run:
     n_targets = 500
 
 if not real_run:
-    n_targets = 2000
+    n_targets = 10000
     whale_seed = 42
 
 pos_fraction = 1.0
