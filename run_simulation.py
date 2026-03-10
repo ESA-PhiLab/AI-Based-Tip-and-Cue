@@ -43,7 +43,7 @@ from pathlib import Path
 
 show_constellation = False
 show_orbits = False
-plot_propagation, uhd = False, False
+plot_propagation, uhd = True, True
 plot_footprints = True
 plot_whale_trajectories = False
 
@@ -578,18 +578,15 @@ while elapsed_seconds <= sim_duration_seconds:
         eo_tools_dict[actor.name]._actor = actor
 
 
-        t_task_assigned_actor = getattr(eo_tools_dict[actor.name], "t_task_assigned", None)
-        t_to_obs_expected_actor = getattr(eo_tools_dict[actor.name], "t_to_obs_expected", None)
-
         if (
                 eo_tools_dict[actor.name].current_task is not None
-                and t_task_assigned_actor is not None
-                and t_to_obs_expected_actor is not None
+                and eo_tools_dict[actor.name].t_task_assigned is not None
+                and eo_tools_dict[actor.name].t_to_obs_expected is not None
         ):
-            elapsed_since_task_s = (t_datetime - t_task_assigned_actor).total_seconds()
+            elapsed_since_task_s = (t_datetime - eo_tools_dict[actor.name].t_task_assigned).total_seconds()
             t_slew_finish_gate = max(
                 0.0,
-                float(t_to_obs_expected_actor) - float(slew_finish_steps_early) * float(sim_step_seconds)
+                float(eo_tools_dict[actor.name].t_to_obs_expected) - float(slew_finish_steps_early) * float(sim_step_seconds)
             )
             cue_slew_active_timebased = elapsed_since_task_s < t_slew_finish_gate
         else:
@@ -697,52 +694,51 @@ while elapsed_seconds <= sim_duration_seconds:
                     # Work on the current task if one exists
                     if eo_tools_dict[actor.name].current_task and eo_tools_dict[actor.name].current_task["target_id"] == whale_idx:
 
+                        current_task = eo_tools_dict[actor.name].current_task
                         task_id = eo_tools_dict[actor.name].current_task["target_id"]
                         task_coord = eo_tools_dict[actor.name].current_task["coord"]
+
 
                         if "pointing_vec_lvlh_target" not in eo_tools_dict[actor.name].__dict__:
                             eo_tools_dict[actor.name].pointing_vec_lvlh_target = None
 
+
+
+                        target_eul_deg = current_task.get("target_eul_deg")
+                        offnadir_at_obs = current_task.get("offnadir_at_obs")
+                        offnadir_unbound = current_task.get("offnadir_unbound")
+                        time_to_obs = current_task.get("time_to_obs")
+                        pointing_vec_lvlh_target = current_task.get("pointing_vec_lvlh_target")
+
+                        if time_to_obs is not None and target_eul_deg is not None:
+                            eo_tools_dict[actor.name].move_set = True
+                            eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
+                            eo_tools_dict[actor.name].pointing_vec_lvlh_target = pointing_vec_lvlh_target
+                            eo_tools_dict[actor.name].time_to_obs_target = time_to_obs
+                            eo_tools_dict[actor.name].offnadir_at_obs_target = offnadir_at_obs
+
+                            att_models_dict[actor.name]._new_target_attitude_deg = np.asarray(target_eul_deg, float)
+
+
+                        else:
+                            print(f"!! {actor.name}: Target {task_id} has no stored slew-feasible observation solution, delete task")
+
+                            in_view = False
+                            eo_tools_dict[actor.name].pointing_vec_lvlh_target = None
+                            eo_tools_dict[actor.name].offnadir_unbound_target = None
+                            eo_tools_dict[actor.name].move_set = False
+                            eo_tools_dict[actor.name].t_task_assigned = None
+                            eo_tools_dict[actor.name].t_to_obs_expected = None
+
+
+
                         in_view = eo_tools_dict[actor.name].is_in_sight(task_coord, r_vec, v_vec, t_datetime, el_min_deg=elevation_min)
-                        will_be_in_view_soon, t_until = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, att_models_dict[actor.name].slew_stab_time_max, el_min_deg=elevation_min, step=30.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
-                        will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_tipcue, el_min_deg=elevation_min,  step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
-                        moving_towards, _ = eo_tools_dict[actor.name].is_moving_towards_target(r_vec, v_vec, task_coord, t_datetime, dt_check=sim_step_seconds )
-
-                        if will_be_in_view_later and not (eo_tools_dict[actor.name].move_set and moving_towards):
-                            current_task = eo_tools_dict[actor.name].current_task
-
-                            target_eul_deg = current_task.get("target_eul_deg")
-                            offnadir_at_obs = current_task.get("offnadir_at_obs")
-                            offnadir_unbound = current_task.get("offnadir_unbound")
-                            time_to_obs = current_task.get("time_to_obs")
-                            pointing_vec_lvlh_target = current_task.get("pointing_vec_lvlh_target")
-
-                            if time_to_obs is not None and target_eul_deg is not None:
-                                eo_tools_dict[actor.name].move_set = True
-                                eo_tools_dict[actor.name].offnadir_unbound_target = offnadir_unbound
-                                eo_tools_dict[actor.name].pointing_vec_lvlh_target = pointing_vec_lvlh_target
-                                eo_tools_dict[actor.name].time_to_obs_target = time_to_obs
-                                eo_tools_dict[actor.name].offnadir_at_obs_target = offnadir_at_obs
-
-                                att_models_dict[actor.name]._new_target_attitude_deg = np.asarray(target_eul_deg, float)
-
-
-                            else:
-                                print(f"!! {actor.name}: Target {task_id} has no stored slew-feasible observation solution, delete task")
-
-                                will_be_in_view_later = False
-                                will_be_in_view_soon = False
-                                in_view = False
-                                eo_tools_dict[actor.name].pointing_vec_lvlh_target = None
-                                eo_tools_dict[actor.name].offnadir_unbound_target = None
-                                eo_tools_dict[actor.name].move_set = False
-                                eo_tools_dict[actor.name].t_task_assigned = None
-                                eo_tools_dict[actor.name].t_to_obs_expected = None
-
-                        pointing_vec = eo_tools_dict[actor.name].pointing_vec_lvlh_target
-
-
-
+                        will_be_in_view_soon, t_until = eo_tools_dict[actor.name].will_be_visible_within(
+                            task_coord, r_vec, v_vec, t_datetime,
+                            att_models_dict[actor.name].slew_stab_time_max,
+                            el_min_deg=elevation_min, step=30.0
+                        )
+                        will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_tipcue, el_min_deg=elevation_min, step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
 
                         if not (in_view or will_be_in_view_later):
                             # Task finished → reset and pick next later
@@ -750,11 +746,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
                             # reset local EO tool state
                             att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
-                            _clear_actor_task(actor.name, whale_idx, eo_tools_dict, att_models_dict)
-                            eo_tools_dict[actor.name].t_task_assigned = None
-                            eo_tools_dict[actor.name].t_to_obs_expected = None
-                            eo_tools_dict[actor.name].t_task_assigned = None
-                            eo_tools_dict[actor.name].t_to_obs_expected = None
+                            _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
 
                             # Global removal happens at the next loop via cleanup_timeout_targets:
                             if task_id in tasked_targets:
@@ -805,11 +797,13 @@ while elapsed_seconds <= sim_duration_seconds:
                             att_models_dict[actor.name]._actor_attitude_deg
                         )
 
+                        active_task = eo_tools_dict[actor.name].current_task
+                        active_task_id = active_task["target_id"] if active_task is not None else None
                         off_obs = getattr(eo_tools_dict[actor.name], "offnadir_at_obs_target", None)
                         t_obs = getattr(eo_tools_dict[actor.name], "time_to_obs_target", None)
 
                         print(
-                            f"!! {actor.name}: Target {task_id} planned directly to observation attitude"
+                            f"!! {actor.name}: Target {active_task_id} planned directly to observation attitude"
                             f" (current off-nadir={offnadir_cue_current:.1f} deg, "
                             f"target off-nadir now={offnadir_unbound:.1f} deg, "
                             f"off-nadir at observation={off_obs:.1f} deg, "
@@ -859,8 +853,8 @@ while elapsed_seconds <= sim_duration_seconds:
             continue
 
         if cue_illuminated and not cue_slew_active_timebased:
-        # only observe if stable according to task timing
-        # only observe if stable
+            current_task = eo_tools_dict[actor.name].current_task
+            current_task_id = current_task["target_id"] if current_task is not None else None
 
             for whale_idx, whale in all_targets.items():
                 if whale_idx not in illuminated_targets:
@@ -870,8 +864,17 @@ while elapsed_seconds <= sim_duration_seconds:
                 in_footprint = eo_tools_dict[actor.name].check_point_in_footprint(target_coord, FovPoints)
                 _, offnadir_cue_deg = eo_tools_dict[actor.name].point_to_target_unbounded(r_vec, v_vec, target_coord, t_datetime)
 
+                allow_observation = False
+
+                if current_task_id is None:
+                    allow_observation = True
+                elif whale_idx == current_task_id:
+                    allow_observation = True
+                else:
+                    allow_observation = False
+
                 # CUE OBSERVATION
-                if in_footprint and whale.state_observing != 2 and offnadir_cue_deg <= (offnadir_limit + offnadir_margin):
+                if allow_observation and in_footprint and whale.state_observing != 2 and offnadir_cue_deg <= (offnadir_limit + offnadir_margin):
 
                     print(f"!! {actor.name}: Observed Target {whale_idx} at off-nadir {offnadir_cue_deg:.2f} deg")
 
@@ -964,7 +967,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
                         log_img(writer_img_gen, whale.detection_id, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1],target_coord[2], t_datetime, dem_seed)
 
-                    _clear_actor_task(actor.name, whale_idx, eo_tools_dict, att_models_dict)
+                    _clear_actor_task(actor.name, whale_idx, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
 
                 # CUE CONFIRMATION
                 if whale.t_observed_cue != None and whale.state_confirming < 2 and t_datetime > (whale.t_observed_cue + timedelta(seconds=delay_confirmation_cue)):

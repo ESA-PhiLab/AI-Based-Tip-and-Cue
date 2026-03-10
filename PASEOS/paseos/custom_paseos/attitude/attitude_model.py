@@ -573,17 +573,15 @@ class AttitudeModel:
                   t_start=0.0,
                   w_stab_res=None,
                   a_stab_res=None):
-        """
-        Plan a slew + stabilization trajectory.
-        Stores [(abs_time, eul_deg, vel_rad, acc_rad), ...].
-        """
-        # Normalize residuals: allow scalar or vector
+        """plan_slew(start_eul_deg,target_eul_deg,omega_max_rad,alpha_max_rad,zeta=0.8,wn_rad=0.42,dt=1.0,mode='per_axis',t_start=0.0,w_stab_res=None,a_stab_res=None) -> None: Plan and store a slew trajectory with safe handling for very short or zero-duration maneuvers."""
+        if dt is None or float(dt) <= 0.0:
+            raise ValueError("dt must be > 0 in plan_slew.")
+
         if w_stab_res is not None:
             w_stab_res = np.broadcast_to(np.atleast_1d(w_stab_res), (3,))
         if a_stab_res is not None:
             a_stab_res = np.broadcast_to(np.atleast_1d(a_stab_res), (3,))
 
-        # Compute slew + stabilization durations
         delay_slew_stab, delay_slew, delay_stab = self.get_pointing_stabilization_time(
             current_eul=start_eul_deg,
             target_eul=target_eul_deg,
@@ -598,11 +596,10 @@ class AttitudeModel:
         self.delay_slew_stab = delay_slew_stab
         self._planned_start_time = t_start
 
-        # Generate trajectory (includes stabilization hold)
         euler_traj, times = self.generate_euler_trajectory(
             current_eul=start_eul_deg,
             target_eul=target_eul_deg,
-            dt=dt,
+            dt=float(dt),
             omega_max_rad=omega_max_rad,
             alpha_max_rad=alpha_max_rad,
             settle_seconds=delay_stab,
@@ -611,29 +608,38 @@ class AttitudeModel:
             current_a_rad=None
         )
 
-        # Compute velocities and accelerations
-        euler_rad = np.deg2rad(euler_traj)
-        vel = np.gradient(euler_rad, times, axis=0)
-        acc = np.gradient(vel, times, axis=0)
+        times = np.asarray(times, float)
+        euler_traj = np.asarray(euler_traj, float)
 
-        # Overwrite stabilization portion with given residuals
+        if times.ndim != 1 or len(times) == 0 or euler_traj.shape[0] == 0:
+            times = np.array([0.0], dtype=float)
+            euler_traj = np.asarray(start_eul_deg, float).reshape(1, 3)
+
+        euler_rad = np.deg2rad(euler_traj)
+
+        if len(times) <= 1:
+            vel = np.zeros_like(euler_rad)
+            acc = np.zeros_like(euler_rad)
+        else:
+            vel = np.gradient(euler_rad, times, axis=0)
+            acc = np.gradient(vel, times, axis=0)
+
         if (w_stab_res is not None) and (a_stab_res is not None):
             mask = times >= delay_slew
             vel[mask] = w_stab_res
             acc[mask] = a_stab_res
 
-        # Ensure last point is rest (override)
         vel[-1] = np.zeros(3)
         acc[-1] = np.zeros(3)
 
-        # Store final trajectory
         self._planned_traj = [
-            (t_start + t_rel, eul, v, a)
+            (float(t_start) + float(t_rel), eul, v, a)
             for t_rel, eul, v, a in zip(times, euler_traj, vel, acc)
         ]
 
         self.slew_active = True
         self.set_target_euler(target_eul_deg)
+
 
     def follow_planned_slew(self, elapsed_seconds):
         """

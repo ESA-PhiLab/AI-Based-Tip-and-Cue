@@ -128,25 +128,45 @@ def cleanup_timeout_targets(all_targets, tasked_targets, current_time, timeout, 
 
     return all_cleanup_idx
 
-
 def _clear_actor_task(actor_name, task_id, eo_tools_dict, att_models_dict, eul_default=(0.0, 0.0, 0.0)):
-    """Clear a specific task from an actor and reset its attitude target."""
+    """_clear_actor_task(actor_name,task_id,eo_tools_dict,att_models_dict,eul_default=(0.0,0.0,0.0)) -> None: Remove one task from queue and only clear active task/attitude state if that task is the actor's current task."""
     if actor_name is None or actor_name not in eo_tools_dict:
         return
 
     eo = eo_tools_dict[actor_name]
+    att = att_models_dict.get(actor_name, None)
 
-    eo.current_task = None
-    eo.offnadir_unbound_target = None
-    eo.move_set = False
+    current_task = getattr(eo, "current_task", None)
+    current_task_id = current_task.get("target_id") if current_task is not None else None
+    is_active_task = (current_task_id == task_id)
 
-    eo_tools_dict[actor_name].move_set = False
-    eo_tools_dict[actor_name].offnadir_unbound_target = None
-    eo_tools_dict[actor_name].pointing_vec_lvlh_target = None
-
-    # Always clean the task queue
+    # Always remove queued copies of this task
     if hasattr(eo, "task_queue") and eo.task_queue:
         eo.task_queue = [t for t in eo.task_queue if t.get("target_id") != task_id]
+
+    # Only clear EO/tasking state if this task is actually the active one
+    if is_active_task:
+        eo.current_task = None
+        eo.move_set = False
+        eo.offnadir_unbound_target = None
+        eo.pointing_vec_lvlh_target = None
+        eo.time_to_obs_target = None
+        eo.offnadir_at_obs_target = None
+        eo.t_task_assigned = None
+        eo.t_to_obs_expected = None
+        eo.slew_stab_time = None
+
+        if hasattr(eo, "visibility_miss_count"):
+            eo.visibility_miss_count = 0
+
+        if att is not None:
+            att._new_target_attitude_deg = np.array(eul_default, float)
+            att.set_target_euler(eul_default)
+            att.slew_active = False
+            att._planned_traj = []
+            att._planned_start_eul = None
+            att._planned_start_time = None
+            att.delay_slew_stab = None
 
     eo_tools_dict[actor_name] = eo
 
