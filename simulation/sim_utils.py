@@ -231,7 +231,7 @@ def pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime,
         wn_rad=wn_rad,
         offnadir_max=offnadir_limit,
         offnadir_margin=offnadir_margin,
-        dt_step_coarse=sim_step_seconds,
+        dt_step_coarse=5*sim_step_seconds,
         dt_step_fine=sim_step_seconds,
         dt_max=delta_t_tipcue,
         mode="per_axis"
