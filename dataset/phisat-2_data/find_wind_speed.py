@@ -563,21 +563,21 @@ if __name__ == "__main__":
     bools["plot_3d"] = False
 
     product_names = [
-       # "PHISAT-2_L1_000001987_20250410143947_20250410143950_B05E6C3E",
+        "PHISAT-2_L1_000001987_20250410143947_20250410143950_B05E6C3E",
         "PHISAT-2_L1_000002103_20250423144634_20250423144637_B69C2A81",
     ]
 
     png_images = [
-        #"Auckland_SRW_QB2_PS_20060812_B32_002794_O_nadir",
-        #"Auckland_SRW_WV2_PS_20110827_B26_002042_O_nadir",
-        #"Maui_HB_WV3_PS_20150109_B16_000885_O_nadir",
+        "Auckland_SRW_QB2_PS_20060812_B32_002794_O_nadir",
+        "Auckland_SRW_WV2_PS_20110827_B26_002042_O_nadir",
+        "Maui_HB_WV3_PS_20150109_B16_000885_O_nadir",
         "PelagosIm2_FW_WV3_PS_20160619_B1_000136_O_nadir",
         "Valdes_SRW_WV2_PS_20160923_B109_001361_O_nadir",
     ]
 
     WIND_MIN = 2.0
     WIND_MAX = 12.0
-    WIND_STEP = 4.0 #0.25
+    WIND_STEP = 0.25
 
     LEGEND_FONTSIZE = 14
     AXIS_FONTSIZE = 16

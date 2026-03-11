@@ -55,7 +55,7 @@ nPlanes_cue = 1
 offnadir_limit = 40  # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 10 * 60  # Time delay between Tip and Cue satellite (s)
 
-whale_seed = 17
+whale_seed = 42
 
 if not real_run:
     sim_duration_hours = 10/60 #5826.4/3600
@@ -205,7 +205,7 @@ if real_run:
 
 if not real_run:
     n_targets = 500
-    whale_seed = 17
+    whale_seed = 42
 
 pos_fraction = 1.0
 
