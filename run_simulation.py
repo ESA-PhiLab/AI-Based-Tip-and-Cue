@@ -590,12 +590,13 @@ while elapsed_seconds <= sim_duration_seconds:
             )
             cue_slew_active_timebased = elapsed_since_task_s < t_slew_finish_gate
 
-            if elapsed_since_task_s > eo_tools_dict[actor.name].t_to_obs_expected * 1.1 + 5:
-
-                print("Expected observation time exceeded, clear task")
+            if elapsed_since_task_s > eo_tools_dict[actor.name].t_to_obs_expected * 1.1 + 15 * sim_step_seconds:
 
                 current_task = eo_tools_dict[actor.name].current_task
                 task_id = eo_tools_dict[actor.name].current_task["target_id"]
+
+                print(f"!! {actor.name}: Expected observation time for Target {task_id} exceeded, clear task")
+
 
 
                 att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
@@ -778,11 +779,11 @@ while elapsed_seconds <= sim_duration_seconds:
                 if actor_not_default or new_target_not_default:
                     att_models_dict[actor.name]._new_target_attitude_deg = np.asarray(eul_ang_cue_default, float)
 
-                    
                     print(
                         f"!! {actor.name}: Set roll, pitch, yaw target back to default "
                         f"{eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg"
                     )
+                            # This printing statement has to be fixed, it prints continuously along the slew.
 
                     # eo_tools_dict[actor.name].offnadir_unbound_target = None
 

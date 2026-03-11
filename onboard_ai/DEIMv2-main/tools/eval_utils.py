@@ -14,8 +14,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-
-
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 

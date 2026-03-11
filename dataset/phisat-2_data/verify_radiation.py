@@ -6,6 +6,12 @@ from PIL import Image
 import rasterio
 
 
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+
 
 from settings import *
 from offnadir_imaging.rendering import generate_image
@@ -25,9 +31,10 @@ from read_image_L1_full import (
     save_rgb_png,
 )
 
-
 from offnadir_imaging.functions.convert_reference_frames import get_ecef_from_lat_lon
 from offnadir_imaging.functions.intermediate_functions import is_dark_from_sun_dir
+
+bools["plot_3d"] = False
 
 def refl_to_radiance(L_refl, Ebar, cos_theta_s):
     """refl_to_radiance(L_refl,Ebar,cos_theta_s) -> np.ndarray: Expected radiance from reflectance under Lambertian assumption."""

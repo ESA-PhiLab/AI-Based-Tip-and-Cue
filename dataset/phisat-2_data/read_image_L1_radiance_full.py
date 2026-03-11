@@ -41,7 +41,7 @@ def save_rgb_png(tiff_path: Path, rgb_bands_1based: tuple[int, int, int], out_pa
     plt.imsave(out_path.as_posix(), rgb8)
     return out_path
 
-def find_product_files(base_dir: Path, product_name: str, prefer_level: str = "auto") -> ProductPaths:
+def find_product_files(base_dir: Path, product_name: str, prefer_level: str = "auto", prefer: str="BC") -> ProductPaths:
     """find_product_files(base_dir,product_name,prefer_level='auto') -> ProductPaths: Select best multiband TIFF by product level (BC/AC/RR/auto) + GL_scene + metadata."""
     product_dir = (base_dir / "dataset" / product_name).resolve()
     if not product_dir.exists():

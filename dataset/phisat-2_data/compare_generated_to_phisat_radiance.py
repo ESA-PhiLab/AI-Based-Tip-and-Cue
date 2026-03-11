@@ -10,6 +10,16 @@ import numpy as np
 import rasterio
 from PIL import Image
 
+
+import os
+
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+
 # Your project imports (keep these as-is in your repo)
 from settings import *
 from offnadir_imaging.rendering import generate_image
@@ -313,14 +323,19 @@ def main() -> None:
 
     # ---- CONFIG YOU WILL EDIT ----
     product = str(ROOT / "dataset" / "phisat-2_data" / "dataset" / "offnadir_ocean2" / "PHISAT-2_L1_000001987_20250410143947_20250410143950_B05E6C3E")  # or full path to product dir
+    # product = str(ROOT / "dataset" / "phisat-2_data" / "dataset" / "offnadir_ocean2" / "PHISAT-2_L1_000002103_20250423144634_20250423144637_B69C2A81")  # or full path to product dir
+
     prefer_level = "RR"
     crop_sz = 512
 
-    wind_speed = 5.0  # m/s
+    wind_speed = 3.0  # m/s
     wave_properties['wind_speed'] = wind_speed
+    bools["plot_3d"] = False
 
 
-    img_path = str(ROOT / "dataset" / "phisat-2_data" / "Auckland_SRW_WV2_PS_20110827_B26_002042_O_nadir.PNG")
+
+
+    # img_path = str(ROOT / "dataset" / "phisat-2_data" / "Auckland_SRW_WV2_PS_20110827_B26_002042_O_nadir.PNG")
     anns_path = None
     # ------------------------------
 
