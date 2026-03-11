@@ -18,6 +18,7 @@ from openpyxl import Workbook
 
 import sys
 
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -39,6 +40,14 @@ from read_image_L1_full import (
     save_rgb_png,
 )
 
+@dataclass(frozen=True)
+class SweepPlotEntry:
+    dataset: str
+    input_img: str
+    rows: list[Any]
+    best_wind: float
+    orig_stats: dict[str, Any]
+
 
 @dataclass(frozen=True)
 class RunResult:
@@ -53,6 +62,86 @@ class BestResultEntry:
     dataset: str
     input_img: str
     best: RunResult
+    true_stats: dict[str, Any]
+    input_stats: dict[str, Any]
+
+def plot_band_combined(
+    entries: list[SweepPlotEntry],
+    dataset: str,
+    channel: str,
+    stat_key: str,
+    out_path: Path,
+    legend_fontsize: int = 12,
+    axis_fontsize: int = 14,
+) -> None:
+    """plot_band_combined(entries,dataset,channel,stat_key,out_path,legend_fontsize,axis_fontsize) -> None"""
+
+    if not entries:
+        return
+
+    label_map = {
+        "Auckland_SRW_QB2_PS_20060812_B32_002794_O_nadir": "Auckland 2006",
+        "Auckland_SRW_WV2_PS_20110827_B26_002042_O_nadir": "Auckland 2011",
+        "Maui_HB_WV3_PS_20150109_B16_000885_O_nadir": "Maui 2015",
+        "PelagosIm2_FW_WV3_PS_20160619_B1_000136_O_nadir": "Pelagos 2016",
+        "Valdes_SRW_WV2_PS_20160923_B109_001361_O_nadir": "Valdes 2014",
+    }
+
+    shade_maps = {
+        "R": plt.cm.Reds(np.linspace(0.45, 0.9, max(len(entries), 2))),
+        "G": plt.cm.Greens(np.linspace(0.45, 0.9, max(len(entries), 2))),
+        "B": plt.cm.Blues(np.linspace(0.45, 0.9, max(len(entries), 2))),
+    }
+
+    colors = shade_maps[channel]
+
+    plt.figure()
+
+    for i, entry in enumerate(entries):
+
+        winds = np.array([r.wind_speed for r in entry.rows], dtype=np.float64)
+        gen_vals = np.array([getattr(r, f"{channel}_{stat_key}") for r in entry.rows], dtype=np.float64)
+
+        orig_val = float(entry.orig_stats["channels"][channel][stat_key])
+        color = colors[i]
+
+        label = label_map.get(entry.input_img, entry.input_img)
+
+        plt.plot(
+            winds,
+            gen_vals,
+            linewidth=2,
+            label=label,
+            color=color,
+        )
+
+        plt.scatter(
+            [entry.best_wind],
+            [orig_val],
+            s=90,
+            marker="o",
+            color=color,
+        )
+
+    plt.xlabel("Wind speed (m/s)", fontsize=axis_fontsize)
+    plt.ylabel("Reflectance", fontsize=axis_fontsize)
+
+    plt.title(
+        f"{dataset} {channel} reflectance vs wind speed ({stat_key})",
+        fontsize=axis_fontsize + 2,
+    )
+
+    plt.grid(True)
+
+    plt.legend(fontsize=legend_fontsize)
+
+    plt.ylim(0.0, 0.4)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    plt.savefig(out_path, dpi=200, bbox_inches="tight")
+
+    plt.close()
 
 
 def extract_id(name: str) -> str:
@@ -70,8 +159,43 @@ def dataset_tag_from_product_name(product_name: str) -> str:
     return product_id
 
 
+def compute_channel_mean_rows(rows: list[list[Any]]) -> list[Any]:
+    """compute_channel_mean_rows(rows) -> list[Any]: Mean row for stats columns, optional blanks for non-applicable columns."""
+    if not rows:
+        return ["", "MEAN", "", "", "", "", "", "", "", "", "", "", "", ""]
+
+    n_vals = [float(r[4]) for r in rows]
+    min_vals = [float(r[5]) for r in rows]
+    max_vals = [float(r[6]) for r in rows]
+    mean_vals = [float(r[7]) for r in rows]
+    p1_vals = [float(r[8]) for r in rows]
+    p50_vals = [float(r[9]) for r in rows]
+    p99_vals = [float(r[10]) for r in rows]
+
+    def mean_optional(col_idx: int) -> float | str:
+        vals = [r[col_idx] for r in rows if r[col_idx] not in ("", None)]
+        return float(np.mean([float(v) for v in vals])) if vals else ""
+
+    return [
+        "",
+        "MEAN",
+        "",
+        "",
+        int(round(np.mean(n_vals))),
+        float(np.mean(min_vals)),
+        float(np.mean(max_vals)),
+        float(np.mean(mean_vals)),
+        float(np.mean(p1_vals)),
+        float(np.mean(p50_vals)),
+        float(np.mean(p99_vals)),
+        mean_optional(11),
+        mean_optional(12),
+        mean_optional(13),
+    ]
+
+
 def write_grouped_dataset_excel(xlsx_path: Path, dataset: str, results: list[BestResultEntry]) -> None:
-    """write_grouped_dataset_excel(xlsx_path,dataset,results) -> None: Write one Excel grouped by channel R, then G, then B."""
+    """write_grouped_dataset_excel(xlsx_path,dataset,results) -> None: Write grouped Excel with generated rows, means, true rows, true means, input PNG rows, and input PNG means."""
     wb = Workbook()
     ws = wb.active
     ws.title = "best_results"
@@ -79,6 +203,7 @@ def write_grouped_dataset_excel(xlsx_path: Path, dataset: str, results: list[Bes
     ws.append([
         "dataset",
         "input_img",
+        "source",
         "channel",
         "n",
         "min",
@@ -93,30 +218,145 @@ def write_grouped_dataset_excel(xlsx_path: Path, dataset: str, results: list[Bes
     ])
 
     for ch in ["R", "G", "B"]:
+        gen_rows: list[list[Any]] = []
+        true_rows: list[list[Any]] = []
+        input_rows: list[list[Any]] = []
+
         for item in results:
-            c = item.best.gen_stats["channels"][ch]
-            ws.append([
+            c_gen = item.best.gen_stats["channels"][ch]
+            gen_rows.append([
                 dataset,
                 item.input_img,
+                "generated_best",
                 ch,
-                int(c["n"]),
-                float(c["min"]),
-                float(c["max"]),
-                float(c["mean"]),
-                float(c["p1"]),
-                float(c["p50"]),
-                float(c["p99"]),
+                int(c_gen["n"]),
+                float(c_gen["min"]),
+                float(c_gen["max"]),
+                float(c_gen["mean"]),
+                float(c_gen["p1"]),
+                float(c_gen["p50"]),
+                float(c_gen["p99"]),
                 float(item.best.wind),
                 float(item.best.score),
                 float(item.best.offnadir_deg),
             ])
 
+            c_true = item.true_stats["channels"][ch]
+            true_rows.append([
+                dataset,
+                item.input_img,
+                "phisat_true",
+                ch,
+                int(c_true["n"]),
+                float(c_true["min"]),
+                float(c_true["max"]),
+                float(c_true["mean"]),
+                float(c_true["p1"]),
+                float(c_true["p50"]),
+                float(c_true["p99"]),
+                float(item.best.wind),
+                float(item.best.score),
+                float(item.best.offnadir_deg),
+            ])
+
+            c_input = item.input_stats["channels"][ch]
+            input_rows.append([
+                dataset,
+                item.input_img,
+                "input_png",
+                ch,
+                int(c_input["n"]),
+                float(c_input["min"]),
+                float(c_input["max"]),
+                float(c_input["mean"]),
+                float(c_input["p1"]),
+                float(c_input["p50"]),
+                float(c_input["p99"]),
+                "",
+                "",
+                "",
+            ])
+
+        for row in gen_rows:
+            ws.append(row)
+
+        mean_gen = compute_channel_mean_rows(gen_rows)
+        ws.append([
+            dataset,
+            mean_gen[1],
+            "generated_best",
+            ch,
+            mean_gen[4],
+            mean_gen[5],
+            mean_gen[6],
+            mean_gen[7],
+            mean_gen[8],
+            mean_gen[9],
+            mean_gen[10],
+            mean_gen[11],
+            mean_gen[12],
+            mean_gen[13],
+        ])
+
+        for row in true_rows:
+            ws.append(row)
+
+        mean_true = compute_channel_mean_rows(true_rows)
+        ws.append([
+            dataset,
+            mean_true[1],
+            "phisat_true",
+            ch,
+            mean_true[4],
+            mean_true[5],
+            mean_true[6],
+            mean_true[7],
+            mean_true[8],
+            mean_true[9],
+            mean_true[10],
+            mean_true[11],
+            mean_true[12],
+            mean_true[13],
+        ])
+
+        for row in input_rows:
+            ws.append(row)
+
+        mean_input = compute_channel_mean_rows(input_rows)
+        ws.append([
+            dataset,
+            mean_input[1],
+            "input_png",
+            ch,
+            mean_input[4],
+            mean_input[5],
+            mean_input[6],
+            mean_input[7],
+            mean_input[8],
+            mean_input[9],
+            mean_input[10],
+            mean_input[11],
+            mean_input[12],
+            mean_input[13],
+        ])
+
+        ws.append([""] * 14)
+
     xlsx_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(xlsx_path)
 
 
-def plot_reflectance_vs_wind(rows: list[Any], orig_stats: dict[str, Any], best_wind: float, out_path: Path, stat_key: str) -> None:
-    """plot_reflectance_vs_wind(rows,orig_stats,best_wind,out_path,stat_key) -> None: Plot generated stat vs wind in RGB colors, original as colored dot."""
+def plot_reflectance_vs_wind(
+    rows: list[Any],
+    orig_stats: dict[str, Any],
+    best_wind: float,
+    out_path: Path,
+    stat_key: str,
+    axis_fontsize: int = 14,
+    legend_fontsize: int = 12,
+) -> None:
+    """plot_reflectance_vs_wind(rows,orig_stats,best_wind,out_path,stat_key,axis_fontsize,legend_fontsize) -> None"""
+
     winds = np.array([r.wind_speed for r in rows], dtype=np.float64)
 
     gen_R = np.array([getattr(r, f"R_{stat_key}") for r in rows], dtype=np.float64)
@@ -137,15 +377,24 @@ def plot_reflectance_vs_wind(rows: list[Any], orig_stats: dict[str, Any], best_w
     plt.scatter([best_wind], [orig_G], color="green", s=80, marker="o", label=f"Original G ({stat_key})")
     plt.scatter([best_wind], [orig_B], color="blue", s=80, marker="o", label=f"Original B ({stat_key})")
 
-    plt.xlabel("Wind speed (m/s)")
-    plt.ylabel("Reflectance")
-    plt.title(f"Reflectance vs wind speed ({stat_key})")
+    plt.xlabel("Wind speed (m/s)", fontsize=axis_fontsize)
+    plt.ylabel("Reflectance", fontsize=axis_fontsize)
+
+    plt.title(
+        f"Reflectance vs wind speed ({stat_key})",
+        fontsize=axis_fontsize + 2,
+    )
+
     plt.grid(True)
-    plt.legend()
+
+    plt.legend(fontsize=legend_fontsize)
+
     plt.ylim(0.0, 0.4)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
     plt.savefig(out_path, dpi=200, bbox_inches="tight")
+
     plt.close()
 
 
@@ -314,22 +563,30 @@ if __name__ == "__main__":
     bools["plot_3d"] = False
 
     product_names = [
-        "PHISAT-2_L1_000001987_20250410143947_20250410143950_B05E6C3E",
+       # "PHISAT-2_L1_000001987_20250410143947_20250410143950_B05E6C3E",
         "PHISAT-2_L1_000002103_20250423144634_20250423144637_B69C2A81",
     ]
 
     png_images = [
-        "Auckland_SRW_QB2_PS_20060812_B32_002794_O_nadir",
-        "Auckland_SRW_WV2_PS_20110827_B26_002042_O_nadir",
-        "Maui_HB_WV3_PS_20150109_B16_000885_O_nadir",
+        #"Auckland_SRW_QB2_PS_20060812_B32_002794_O_nadir",
+        #"Auckland_SRW_WV2_PS_20110827_B26_002042_O_nadir",
+        #"Maui_HB_WV3_PS_20150109_B16_000885_O_nadir",
         "PelagosIm2_FW_WV3_PS_20160619_B1_000136_O_nadir",
         "Valdes_SRW_WV2_PS_20160923_B109_001361_O_nadir",
     ]
+
+    WIND_MIN = 2.0
+    WIND_MAX = 12.0
+    WIND_STEP = 4.0 #0.25
+
+    LEGEND_FONTSIZE = 14
+    AXIS_FONTSIZE = 16
 
     ROOT = Path(__file__).resolve().parents[2]
     os.chdir(ROOT)
 
     dataset_results: dict[str, list[BestResultEntry]] = {"C3E": [], "A81": []}
+    dataset_plot_entries: dict[str, list[SweepPlotEntry]] = {"C3E": [], "A81": []}
 
     for prod in product_names:
         PRODUCT_NAME = "phisat-2_data/dataset/offnadir_ocean2/" + str(prod)
@@ -348,9 +605,6 @@ if __name__ == "__main__":
 
             NORAD_ID = 60470
             CROP_MULT = 4
-            WIND_MIN = 2.0
-            WIND_MAX = 12.0
-            WIND_STEP = 0.25
             METRIC = "both"
 
             out_dir = ROOT / "rgb_outputs" / dataset
@@ -406,6 +660,9 @@ if __name__ == "__main__":
             )
             orig_stats = reflectance_stats_rgb(orig_refl, mask=None, name="ORIGINAL (TIFF cropped)")
             print_stats(orig_refl, name="ORIGINAL reflectance (TIFF crop)")
+
+            input_img_arr = np.asarray(Image.open(IMG_PATH).convert("RGB"), dtype=np.float32) / 255.0
+            input_img_stats = reflectance_stats_rgb(input_img_arr, mask=None, name="INPUT PNG")
 
             jd_mid = datetime_to_jd(tm)
             tle1, tle2, tle_epoch = fetch_nearest_tle_from_satchecker(NORAD_ID, jd_mid)
@@ -572,10 +829,9 @@ if __name__ == "__main__":
 
             print(f"\nWrote sweep table: {out_csv.resolve()}")
 
-            plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_p50_{img_id}_{extension}.png", stat_key="p50")
-            plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_p99_{img_id}_{extension}.png", stat_key="p99")
-            plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_mean_{img_id}_{extension}.png", stat_key="mean")
-
+            plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_p50_{img_id}_{extension}.png", stat_key="p50", axis_fontsize=AXIS_FONTSIZE, legend_fontsize=LEGEND_FONTSIZE)
+            plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_p99_{img_id}_{extension}.png", stat_key="p99", axis_fontsize=AXIS_FONTSIZE, legend_fontsize=LEGEND_FONTSIZE)
+            plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_mean_{img_id}_{extension}.png", stat_key="mean", axis_fontsize=AXIS_FONTSIZE, legend_fontsize=LEGEND_FONTSIZE)
             print(f"Saved plots to: {out_dir.resolve()}")
 
             dataset_results.setdefault(dataset, []).append(
@@ -583,6 +839,18 @@ if __name__ == "__main__":
                     dataset=dataset,
                     input_img=img_handle,
                     best=best,
+                    true_stats=orig_stats,
+                    input_stats=input_img_stats,
+                )
+            )
+
+            dataset_plot_entries.setdefault(dataset, []).append(
+                SweepPlotEntry(
+                    dataset=dataset,
+                    input_img=img_handle,
+                    rows=rows,
+                    best_wind=best.wind,
+                    orig_stats=orig_stats,
                 )
             )
 
@@ -592,3 +860,22 @@ if __name__ == "__main__":
         out_xlsx = ROOT / "rgb_outputs" / f"best_wind_summary_{dataset}.xlsx"
         write_grouped_dataset_excel(out_xlsx, dataset, results)
         print(f"Wrote grouped Excel for {dataset}: {out_xlsx.resolve()}")
+
+    for dataset, entries in dataset_plot_entries.items():
+        if not entries:
+            continue
+
+        plot_dir = ROOT / "rgb_outputs" / dataset
+
+        for channel in ["R", "G", "B"]:
+            plot_band_combined(
+                entries=entries,
+                dataset=dataset,
+                channel=channel,
+                stat_key="mean",
+                out_path=plot_dir / f"reflectance_vs_wind_all_{channel}_{dataset}.png",
+                legend_fontsize=LEGEND_FONTSIZE,
+                axis_fontsize=AXIS_FONTSIZE,
+            )
+
+        print(f"Saved combined channel plots for {dataset}: {plot_dir.resolve()}")
