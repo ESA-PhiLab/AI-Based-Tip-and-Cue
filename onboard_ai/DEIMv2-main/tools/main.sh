@@ -10,7 +10,7 @@ DEFAULT_GPU_CHOICE="X"
 
 RUN_NAME="X"
 
-BASE_CONFIG="configs/2_lr_optim/${RUN_NAME}.yml"
+BASE_CONFIG="configs/4_epoch_optim/${RUN_NAME}.yml"
 PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 
 # BASE_CONFIG="configs/deimv2/deimv2_dinov3_m_coco_whale.yml"

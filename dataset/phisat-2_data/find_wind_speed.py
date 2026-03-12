@@ -65,6 +65,26 @@ class BestResultEntry:
     true_stats: dict[str, Any]
     input_stats: dict[str, Any]
 
+
+@dataclass(frozen=True)
+class Row:
+    wind_speed: float
+    score: float
+    offnadir_deg: float
+    R_mean: float
+    R_p1: float
+    R_p50: float
+    R_p99: float
+    G_mean: float
+    G_p1: float
+    G_p50: float
+    G_p99: float
+    B_mean: float
+    B_p1: float
+    B_p50: float
+    B_p99: float
+
+
 def plot_band_combined(
     entries: list[SweepPlotEntry],
     dataset: str,
@@ -97,14 +117,24 @@ def plot_band_combined(
 
     plt.figure()
 
+    orig_vals = []
+    best_winds = []
+
     for i, entry in enumerate(entries):
 
         winds = np.array([r.wind_speed for r in entry.rows], dtype=np.float64)
-        gen_vals = np.array([getattr(r, f"{channel}_{stat_key}") for r in entry.rows], dtype=np.float64)
+
+        gen_vals = np.array(
+            [getattr(r, f"{channel}_{stat_key}") for r in entry.rows],
+            dtype=np.float64,
+        )
 
         orig_val = float(entry.orig_stats["channels"][channel][stat_key])
-        color = colors[i]
+        orig_vals.append(orig_val)
 
+        best_winds.append(entry.best_wind)
+
+        color = colors[i]
         label = label_map.get(entry.input_img, entry.input_img)
 
         plt.plot(
@@ -115,13 +145,24 @@ def plot_band_combined(
             color=color,
         )
 
-        plt.scatter(
-            [entry.best_wind],
-            [orig_val],
-            s=90,
-            marker="o",
-            color=color,
-        )
+    mean_orig = float(np.mean(orig_vals))
+    mean_best_wind = float(np.mean(best_winds))
+
+    obs_color_map = {
+        "R": plt.cm.Reds(0.95),
+        "G": plt.cm.Greens(0.95),
+        "B": plt.cm.Blues(0.95),
+    }
+
+    plt.scatter(
+        [mean_best_wind],
+        [mean_orig],
+        s=140,
+        marker="o",
+        color=obs_color_map[channel],
+        label="Phi-Sat-2",
+        zorder=5,
+    )
 
     plt.xlabel("Wind speed (m/s)", fontsize=axis_fontsize)
     plt.ylabel("Reflectance", fontsize=axis_fontsize)
@@ -144,6 +185,8 @@ def plot_band_combined(
     plt.close()
 
 
+
+
 def extract_id(name: str) -> str:
     """extract_id(name) -> str: Return last underscore-separated token from filename string."""
     return name.split("_")[-1]
@@ -159,10 +202,12 @@ def dataset_tag_from_product_name(product_name: str) -> str:
     return product_id
 
 
-def compute_channel_mean_rows(rows: list[list[Any]]) -> list[Any]:
-    """compute_channel_mean_rows(rows) -> list[Any]: Mean row for stats columns, optional blanks for non-applicable columns."""
+def compute_channel_summary_rows(rows: list[list[Any]]) -> tuple[list[Any], list[Any]]:
+    """compute_channel_summary_rows(rows) -> tuple[list[Any],list[Any]]: Return mean row and variance row for stats columns."""
     if not rows:
-        return ["", "MEAN", "", "", "", "", "", "", "", "", "", "", "", ""]
+        empty = ["", "MEAN", "", "", "", "", "", "", "", "", "", "", "", ""]
+        empty_var = ["", "VAR", "", "", "", "", "", "", "", "", "", "", "", ""]
+        return empty, empty_var
 
     n_vals = [float(r[4]) for r in rows]
     min_vals = [float(r[5]) for r in rows]
@@ -176,7 +221,11 @@ def compute_channel_mean_rows(rows: list[list[Any]]) -> list[Any]:
         vals = [r[col_idx] for r in rows if r[col_idx] not in ("", None)]
         return float(np.mean([float(v) for v in vals])) if vals else ""
 
-    return [
+    def var_optional(col_idx: int) -> float | str:
+        vals = [r[col_idx] for r in rows if r[col_idx] not in ("", None)]
+        return float(np.var([float(v) for v in vals], ddof=0)) if vals else ""
+
+    mean_row = [
         "",
         "MEAN",
         "",
@@ -193,9 +242,29 @@ def compute_channel_mean_rows(rows: list[list[Any]]) -> list[Any]:
         mean_optional(13),
     ]
 
+    var_row = [
+        "",
+        "VAR",
+        "",
+        "",
+        float(np.var(n_vals, ddof=0)),
+        float(np.var(min_vals, ddof=0)),
+        float(np.var(max_vals, ddof=0)),
+        float(np.var(mean_vals, ddof=0)),
+        float(np.var(p1_vals, ddof=0)),
+        float(np.var(p50_vals, ddof=0)),
+        float(np.var(p99_vals, ddof=0)),
+        var_optional(11),
+        var_optional(12),
+        var_optional(13),
+    ]
+
+    return mean_row, var_row
+
+
 
 def write_grouped_dataset_excel(xlsx_path: Path, dataset: str, results: list[BestResultEntry]) -> None:
-    """write_grouped_dataset_excel(xlsx_path,dataset,results) -> None: Write grouped Excel with generated rows, means, true rows, true means, input PNG rows, and input PNG means."""
+    """write_grouped_dataset_excel(xlsx_path,dataset,results) -> None: Write grouped Excel with generated rows, mean/var rows, true rows, and input rows."""
     wb = Workbook()
     ws = wb.active
     ws.title = "best_results"
@@ -280,7 +349,7 @@ def write_grouped_dataset_excel(xlsx_path: Path, dataset: str, results: list[Bes
         for row in gen_rows:
             ws.append(row)
 
-        mean_gen = compute_channel_mean_rows(gen_rows)
+        mean_gen, var_gen = compute_channel_summary_rows(gen_rows)
         ws.append([
             dataset,
             mean_gen[1],
@@ -297,11 +366,27 @@ def write_grouped_dataset_excel(xlsx_path: Path, dataset: str, results: list[Bes
             mean_gen[12],
             mean_gen[13],
         ])
+        ws.append([
+            dataset,
+            var_gen[1],
+            "generated_best",
+            ch,
+            var_gen[4],
+            var_gen[5],
+            var_gen[6],
+            var_gen[7],
+            var_gen[8],
+            var_gen[9],
+            var_gen[10],
+            var_gen[11],
+            var_gen[12],
+            var_gen[13],
+        ])
 
         for row in true_rows:
             ws.append(row)
 
-        mean_true = compute_channel_mean_rows(true_rows)
+        mean_true, var_true = compute_channel_summary_rows(true_rows)
         ws.append([
             dataset,
             mean_true[1],
@@ -318,11 +403,27 @@ def write_grouped_dataset_excel(xlsx_path: Path, dataset: str, results: list[Bes
             mean_true[12],
             mean_true[13],
         ])
+        ws.append([
+            dataset,
+            var_true[1],
+            "phisat_true",
+            ch,
+            var_true[4],
+            var_true[5],
+            var_true[6],
+            var_true[7],
+            var_true[8],
+            var_true[9],
+            var_true[10],
+            var_true[11],
+            var_true[12],
+            var_true[13],
+        ])
 
         for row in input_rows:
             ws.append(row)
 
-        mean_input = compute_channel_mean_rows(input_rows)
+        mean_input, var_input = compute_channel_summary_rows(input_rows)
         ws.append([
             dataset,
             mean_input[1],
@@ -338,6 +439,22 @@ def write_grouped_dataset_excel(xlsx_path: Path, dataset: str, results: list[Bes
             mean_input[11],
             mean_input[12],
             mean_input[13],
+        ])
+        ws.append([
+            dataset,
+            var_input[1],
+            "input_png",
+            ch,
+            var_input[4],
+            var_input[5],
+            var_input[6],
+            var_input[7],
+            var_input[8],
+            var_input[9],
+            var_input[10],
+            var_input[11],
+            var_input[12],
+            var_input[13],
         ])
 
         ws.append([""] * 14)
@@ -369,13 +486,13 @@ def plot_reflectance_vs_wind(
 
     plt.figure()
 
-    plt.plot(winds, gen_R, color="red", linewidth=2, label=f"Generated R ({stat_key})")
-    plt.plot(winds, gen_G, color="green", linewidth=2, label=f"Generated G ({stat_key})")
-    plt.plot(winds, gen_B, color="blue", linewidth=2, label=f"Generated B ({stat_key})")
+    plt.plot(winds, gen_R, color="red", linewidth=2, label=f"Generated R")
+    plt.plot(winds, gen_G, color="green", linewidth=2, label=f"Generated G")
+    plt.plot(winds, gen_B, color="blue", linewidth=2, label=f"Generated B")
 
-    plt.scatter([best_wind], [orig_R], color="red", s=80, marker="o", label=f"Original R ({stat_key})")
-    plt.scatter([best_wind], [orig_G], color="green", s=80, marker="o", label=f"Original G ({stat_key})")
-    plt.scatter([best_wind], [orig_B], color="blue", s=80, marker="o", label=f"Original B ({stat_key})")
+    plt.scatter([best_wind], [orig_R], color="red", s=80, marker="o", label=f"Phi-Sat-2 R")
+    plt.scatter([best_wind], [orig_G], color="green", s=80, marker="o", label=f"Phi-Sat-2 G")
+    plt.scatter([best_wind], [orig_B], color="blue", s=80, marker="o", label=f"Phi-Sat-2 B")
 
     plt.xlabel("Wind speed (m/s)", fontsize=axis_fontsize)
     plt.ylabel("Reflectance", fontsize=axis_fontsize)
@@ -585,6 +702,9 @@ if __name__ == "__main__":
     ROOT = Path(__file__).resolve().parents[2]
     os.chdir(ROOT)
 
+    run_main = True
+    rebuild_plots_from_csv = True
+
     dataset_results: dict[str, list[BestResultEntry]] = {"C3E": [], "A81": []}
     dataset_plot_entries: dict[str, list[SweepPlotEntry]] = {"C3E": [], "A81": []}
 
@@ -592,267 +712,370 @@ if __name__ == "__main__":
         PRODUCT_NAME = "phisat-2_data/dataset/offnadir_ocean2/" + str(prod)
         dataset = dataset_tag_from_product_name(PRODUCT_NAME)
 
-        for img0 in png_images:
-            print(f"START TASK FOR {img0}")
+        if run_main:
 
-            img_handle = img0
-            img_name = img_handle + ".PNG"
+            for img0 in png_images:
+                print(f"START TASK FOR {img0}")
 
-            IMG_PATH = os.path.join("dataset", "phisat-2_data", img_name)
+                img_handle = img0
+                img_name = img_handle + ".PNG"
 
-            extension = img_handle
-            img_id = extract_id(PRODUCT_NAME)
+                IMG_PATH = os.path.join("dataset", "phisat-2_data", img_name)
 
-            NORAD_ID = 60470
-            CROP_MULT = 4
-            METRIC = "both"
+                extension = img_handle
+                img_id = extract_id(PRODUCT_NAME)
 
-            out_dir = ROOT / "rgb_outputs" / dataset
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_csv = out_dir / f"wind_sweep_results_{img_id}_{extension}.csv"
+                NORAD_ID = 60470
+                CROP_MULT = 4
+                METRIC = "both"
 
-            paths = find_product_files(ROOT, PRODUCT_NAME)
+                out_dir = ROOT / "rgb_outputs" / dataset
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_csv = out_dir / f"wind_sweep_results_{img_id}_{extension}.csv"
 
-            t0, t1, tm = extract_acquisition_times_from_product_path(str(paths.product_dir))
+                paths = find_product_files(ROOT, PRODUCT_NAME)
 
-            gl_size = 4096
-            try:
-                with rasterio.open(paths.bands_tiff) as ds:
-                    gl_size = int(max(ds.width, ds.height))
-            except Exception:
+                t0, t1, tm = extract_acquisition_times_from_product_path(str(paths.product_dir))
+
                 gl_size = 4096
-
-            extracted, (tgt_lat, tgt_lon) = extract_corners_and_center(paths.geoloc_json, size=gl_size)
-
-            tgt_alt = 0.0
-            ctr = extracted.get("center")
-            if ctr and ctr.get("Alt") is not None:
                 try:
-                    tgt_alt = float(ctr["Alt"])
+                    with rasterio.open(paths.bands_tiff) as ds:
+                        gl_size = int(max(ds.width, ds.height))
                 except Exception:
-                    tgt_alt = 0.0
+                    gl_size = 4096
 
-            rgb_bands = (3, 2, 1)
-            if paths.metadata_json is not None:
-                try:
-                    wl = load_band_center_wavelengths(paths.metadata_json)
-                    if wl:
-                        with rasterio.open(paths.bands_tiff) as ds:
-                            rgb_bands = choose_rgb_bands_from_wavelengths(wl, ds.count)
-                except Exception:
-                    rgb_bands = (3, 2, 1)
+                extracted, (tgt_lat, tgt_lon) = extract_corners_and_center(paths.geoloc_json, size=gl_size)
 
-            r_b, g_b, b_b = rgb_bands
-            phisat_png = paths.product_dir / f"rgb_reflectance_R{r_b}_G{g_b}_B{b_b}.png"
-            if not phisat_png.exists():
-                save_rgb_png(paths.bands_tiff, rgb_bands, phisat_png)
+                tgt_alt = 0.0
+                ctr = extracted.get("center")
+                if ctr and ctr.get("Alt") is not None:
+                    try:
+                        tgt_alt = float(ctr["Alt"])
+                    except Exception:
+                        tgt_alt = 0.0
 
-            crop_sz = 128 * int(CROP_MULT)
-            img_full = np.asarray(Image.open(phisat_png).convert("RGB"))
-            img_crop, (x0, y0) = center_crop_uint8(img_full, crop_sz)
+                rgb_bands = (3, 2, 1)
+                if paths.metadata_json is not None:
+                    try:
+                        wl = load_band_center_wavelengths(paths.metadata_json)
+                        if wl:
+                            with rasterio.open(paths.bands_tiff) as ds:
+                                rgb_bands = choose_rgb_bands_from_wavelengths(wl, ds.count)
+                    except Exception:
+                        rgb_bands = (3, 2, 1)
 
-            orig_refl = read_reflectance_rgb_from_tiff_crop(
-                tiff_path=paths.bands_tiff,
-                rgb_bands_1based=rgb_bands,
-                x0=x0,
-                y0=y0,
-                crop=crop_sz,
-            )
-            orig_stats = reflectance_stats_rgb(orig_refl, mask=None, name="ORIGINAL (TIFF cropped)")
-            print_stats(orig_refl, name="ORIGINAL reflectance (TIFF crop)")
+                r_b, g_b, b_b = rgb_bands
+                phisat_png = paths.product_dir / f"rgb_reflectance_R{r_b}_G{g_b}_B{b_b}.png"
+                if not phisat_png.exists():
+                    save_rgb_png(paths.bands_tiff, rgb_bands, phisat_png)
 
-            input_img_arr = np.asarray(Image.open(IMG_PATH).convert("RGB"), dtype=np.float32) / 255.0
-            input_img_stats = reflectance_stats_rgb(input_img_arr, mask=None, name="INPUT PNG")
+                crop_sz = 128 * int(CROP_MULT)
+                img_full = np.asarray(Image.open(phisat_png).convert("RGB"))
+                img_crop, (x0, y0) = center_crop_uint8(img_full, crop_sz)
 
-            jd_mid = datetime_to_jd(tm)
-            tle1, tle2, tle_epoch = fetch_nearest_tle_from_satchecker(NORAD_ID, jd_mid)
-            lla = sat_lla_from_tle_at_time(tle1, tle2, tm)
+                orig_refl = read_reflectance_rgb_from_tiff_crop(
+                    tiff_path=paths.bands_tiff,
+                    rgb_bands_1based=rgb_bands,
+                    x0=x0,
+                    y0=y0,
+                    crop=crop_sz,
+                )
+                orig_stats = reflectance_stats_rgb(orig_refl, mask=None, name="Phi-Sat-2 (TIFF cropped)")
+                print_stats(orig_refl, name="Phi-Sat-2 reflectance (TIFF crop)")
 
-            sat_lat = float(lla.lat_deg)
-            sat_lon = float(lla.lon_deg)
-            sat_alt = float(lla.alt_km * 1000.0)
-            dt = tm
+                input_img_arr = np.asarray(Image.open(IMG_PATH).convert("RGB"), dtype=np.float32) / 255.0
+                input_img_stats = reflectance_stats_rgb(input_img_arr, mask=None, name="INPUT PNG")
 
-            cos_theta_s, sun_elev_deg = cos_theta_s_from_geometry(
-                dt=dt,
-                sat_lat=sat_lat,
-                sat_lon=sat_lon,
-                sat_alt_m=sat_alt,
-                tgt_lat=tgt_lat,
-                tgt_lon=tgt_lon,
-                tgt_alt_m=tgt_alt,
-            )
+                jd_mid = datetime_to_jd(tm)
+                tle1, tle2, tle_epoch = fetch_nearest_tle_from_satchecker(NORAD_ID, jd_mid)
+                lla = sat_lla_from_tle_at_time(tle1, tle2, tm)
 
-            sensor_phisat = dict(sensor_characteristics)
-            sensor_phisat["resolution"] = int(crop_sz)
-            sensor_phisat["GSD"] = float(gsd_from_gl(extracted, gl_size=gl_size))
+                sat_lat = float(lla.lat_deg)
+                sat_lon = float(lla.lon_deg)
+                sat_alt = float(lla.alt_km * 1000.0)
+                dt = tm
 
-            anns_path = None
-            bools_local = dict(bools)
-            bools_local["use_annotations"] = False
-            bools_local["generate_radiation"] = True
-            bools_local["plot_result"] = False
-
-            wave_base = dict(wave_properties)
-
-            spd_folder = ROOT / "offnadir_imaging" / "spd_files"
-            _ = get_band_data(satellite, str(spd_folder))
-
-            winds = frange(WIND_MIN, WIND_MAX, WIND_STEP)
-
-            @dataclass(frozen=True)
-            class Row:
-                wind_speed: float
-                score: float
-                offnadir_deg: float
-                R_mean: float
-                R_p50: float
-                R_p99: float
-                G_mean: float
-                G_p50: float
-                G_p99: float
-                B_mean: float
-                B_p50: float
-                B_p99: float
-
-            rows: list[Row] = []
-            best: RunResult | None = None
-
-            for wind in winds:
-                wave_cur = dict(wave_base)
-                wave_cur["wind_speed"] = float(wind)
-
-                (
-                    texture_disp,
-                    radiance_no_glint,
-                    radiance_disp_no_glint,
-                    rho_no_glint,
-                    rho_disp_no_glint,
-                    radiance_final,
-                    radiance_disp_final,
-                    rho_final,
-                    rho_disp_final,
-                    black_mask_full,
-                    scale,
-                    offnadir_deg,
-                ) = generate_image(
-                    IMG_PATH,
-                    anns_path,
-                    satellite,
-                    sat_lat,
-                    sat_lon,
-                    sat_alt,
-                    tgt_lat,
-                    tgt_lon,
-                    tgt_alt,
-                    dt,
-                    sensor_phisat,
-                    wave_cur,
-                    bools_local,
-                    seed_dem,
+                cos_theta_s, sun_elev_deg = cos_theta_s_from_geometry(
+                    dt=dt,
+                    sat_lat=sat_lat,
+                    sat_lon=sat_lon,
+                    sat_alt_m=sat_alt,
+                    tgt_lat=tgt_lat,
+                    tgt_lon=tgt_lon,
+                    tgt_alt_m=tgt_alt,
                 )
 
-                if rho_final is None:
-                    print(f"[wind={wind:.3f}] rho_final is None -> skipping")
-                    continue
+                sensor_phisat = dict(sensor_characteristics)
+                sensor_phisat["resolution"] = int(crop_sz)
+                sensor_phisat["GSD"] = float(gsd_from_gl(extracted, gl_size=gl_size))
 
-                gen_mask = black_mask_full.astype(bool) if black_mask_full is not None else None
-                gen_stats = reflectance_stats_rgb(rho_final.astype(np.float32), mask=gen_mask, name=f"GEN wind={wind:.3f}")
+                anns_path = None
+                bools_local = dict(bools)
+                bools_local["use_annotations"] = False
+                bools_local["generate_radiation"] = True
+                bools_local["plot_result"] = False
 
-                score = 0.0
-                if METRIC == "logratio" or METRIC == "both":
-                    score_log = objective_log_ratio(orig_stats, gen_stats, keys=("mean", "p50"))
-                    print(score_log)
-                    score += score_log
+                wave_base = dict(wave_properties)
 
-                if METRIC == "rmse" or METRIC == "both":
-                    score_rmse = objective_rmse(orig_stats, gen_stats, keys=("mean", "p50"))
-                    print(score_rmse)
-                    score += score_rmse * 50.0
+                spd_folder = ROOT / "offnadir_imaging" / "spd_files"
+                _ = get_band_data(satellite, str(spd_folder))
 
-                bd = score_breakdown_logratio(orig_stats, gen_stats, keys=("mean", "p50"))
-                print("score breakdown (|log(gen/orig)|, p50+p99):", bd)
+                winds = frange(WIND_MIN, WIND_MAX, WIND_STEP)
 
-                rr = RunResult(wind=float(wind), score=float(score), offnadir_deg=float(offnadir_deg), gen_stats=gen_stats)
-                if best is None or rr.score < best.score:
-                    best = rr
 
-                ch = gen_stats["channels"]
-                rows.append(
-                    Row(
-                        wind_speed=float(wind),
-                        score=float(score),
-                        offnadir_deg=float(offnadir_deg),
-                        R_mean=float(ch["R"]["mean"]),
-                        R_p50=float(ch["R"]["p50"]),
-                        R_p99=float(ch["R"]["p99"]),
-                        G_mean=float(ch["G"]["mean"]),
-                        G_p50=float(ch["G"]["p50"]),
-                        G_p99=float(ch["G"]["p99"]),
-                        B_mean=float(ch["B"]["mean"]),
-                        B_p50=float(ch["B"]["p50"]),
-                        B_p99=float(ch["B"]["p99"]),
+
+
+                rows: list[Row] = []
+                best: RunResult | None = None
+
+                for wind in winds:
+                    wave_cur = dict(wave_base)
+                    wave_cur["wind_speed"] = float(wind)
+
+                    (
+                        texture_disp,
+                        radiance_no_glint,
+                        radiance_disp_no_glint,
+                        rho_no_glint,
+                        rho_disp_no_glint,
+                        radiance_final,
+                        radiance_disp_final,
+                        rho_final,
+                        rho_disp_final,
+                        black_mask_full,
+                        scale,
+                        offnadir_deg,
+                    ) = generate_image(
+                        IMG_PATH,
+                        anns_path,
+                        satellite,
+                        sat_lat,
+                        sat_lon,
+                        sat_alt,
+                        tgt_lat,
+                        tgt_lon,
+                        tgt_alt,
+                        dt,
+                        sensor_phisat,
+                        wave_cur,
+                        bools_local,
+                        seed_dem,
+                    )
+
+                    if rho_final is None:
+                        print(f"[wind={wind:.3f}] rho_final is None -> skipping")
+                        continue
+
+                    gen_mask = black_mask_full.astype(bool) if black_mask_full is not None else None
+                    gen_stats = reflectance_stats_rgb(rho_final.astype(np.float32), mask=gen_mask, name=f"GEN wind={wind:.3f}")
+
+                    score = 0.0
+                    if METRIC == "logratio" or METRIC == "both":
+                        score_log = objective_log_ratio(orig_stats, gen_stats, keys=("mean", "p50"))
+                        print(score_log)
+                        score += score_log
+
+                    if METRIC == "rmse" or METRIC == "both":
+                        score_rmse = objective_rmse(orig_stats, gen_stats, keys=("mean", "p50"))
+                        print(score_rmse)
+                        score += score_rmse * 50.0
+
+                    bd = score_breakdown_logratio(orig_stats, gen_stats, keys=("mean", "p50"))
+                    print("score breakdown (|log(gen/orig)|, p50+p99):", bd)
+
+                    rr = RunResult(wind=float(wind), score=float(score), offnadir_deg=float(offnadir_deg), gen_stats=gen_stats)
+                    if best is None or rr.score < best.score:
+                        best = rr
+
+                    ch = gen_stats["channels"]
+                    rows.append(
+                        Row(
+                            wind_speed=float(wind),
+                            score=float(score),
+                            offnadir_deg=float(offnadir_deg),
+                            R_mean=float(ch["R"]["mean"]),
+                            R_p1=float(ch["R"]["p1"]),
+                            R_p50=float(ch["R"]["p50"]),
+                            R_p99=float(ch["R"]["p99"]),
+                            G_mean=float(ch["G"]["mean"]),
+                            G_p1=float(ch["G"]["p1"]),
+                            G_p50=float(ch["G"]["p50"]),
+                            G_p99=float(ch["G"]["p99"]),
+                            B_mean=float(ch["B"]["mean"]),
+                            B_p1=float(ch["B"]["p1"]),
+                            B_p50=float(ch["B"]["p50"]),
+                            B_p99=float(ch["B"]["p99"]),
+                        )
+                    )
+
+                    print(f"[wind={wind:.3f}] score={score:.6f}  offnadir={offnadir_deg:.2f} deg")
+
+                if best is None:
+                    raise RuntimeError("No successful runs; check renderer outputs and paths.")
+
+                print("\n=== BEST MATCH ===")
+                print(f"dataset    : {dataset}")
+                print(f"input_img  : {img_handle}")
+                print(f"metric     : {METRIC}")
+                print(f"wind_speed : {best.wind:.6f} m/s")
+                print(f"score      : {best.score:.6f}")
+                print(f"offnadir   : {best.offnadir_deg:.2f} deg")
+
+                with out_csv.open("w", newline="", encoding="utf-8") as f:
+                    wcsv = csv.writer(f)
+                    wcsv.writerow([
+                        "wind_speed", "score", "offnadir_deg",
+                        "R_mean", "R_p1", "R_p50", "R_p99",
+                        "G_mean", "G_p1", "G_p50", "G_p99",
+                        "B_mean", "B_p1", "B_p50", "B_p99",
+                    ])
+
+
+                    for r in rows:
+                        wcsv.writerow([
+                            f"{r.wind_speed:.6f}",
+                            f"{r.score:.12f}",
+                            f"{r.offnadir_deg:.6f}",
+                            f"{r.R_mean:.8f}",
+                            f"{r.R_p1:.8f}",
+                            f"{r.R_p50:.8f}",
+                            f"{r.R_p99:.8f}",
+                            f"{r.G_mean:.8f}",
+                            f"{r.G_p1:.8f}",
+                            f"{r.G_p50:.8f}",
+                            f"{r.G_p99:.8f}",
+                            f"{r.B_mean:.8f}",
+                            f"{r.B_p1:.8f}",
+                            f"{r.B_p50:.8f}",
+                            f"{r.B_p99:.8f}",
+                        ])
+
+                print(f"\nWrote sweep table: {out_csv.resolve()}")
+
+                plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_p50_{img_id}_{extension}.png", stat_key="p50", axis_fontsize=AXIS_FONTSIZE, legend_fontsize=LEGEND_FONTSIZE)
+                plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_p99_{img_id}_{extension}.png", stat_key="p99", axis_fontsize=AXIS_FONTSIZE, legend_fontsize=LEGEND_FONTSIZE)
+                plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_mean_{img_id}_{extension}.png", stat_key="mean", axis_fontsize=AXIS_FONTSIZE, legend_fontsize=LEGEND_FONTSIZE)
+                print(f"Saved plots to: {out_dir.resolve()}")
+
+                dataset_results.setdefault(dataset, []).append(
+                    BestResultEntry(
+                        dataset=dataset,
+                        input_img=img_handle,
+                        best=best,
+                        true_stats=orig_stats,
+                        input_stats=input_img_stats,
                     )
                 )
 
-                print(f"[wind={wind:.3f}] score={score:.6f}  offnadir={offnadir_deg:.2f} deg")
 
-            if best is None:
-                raise RuntimeError("No successful runs; check renderer outputs and paths.")
 
-            print("\n=== BEST MATCH ===")
-            print(f"dataset    : {dataset}")
-            print(f"input_img  : {img_handle}")
-            print(f"metric     : {METRIC}")
-            print(f"wind_speed : {best.wind:.6f} m/s")
-            print(f"score      : {best.score:.6f}")
-            print(f"offnadir   : {best.offnadir_deg:.2f} deg")
-
-            with out_csv.open("w", newline="", encoding="utf-8") as f:
-                wcsv = csv.writer(f)
-                wcsv.writerow(["wind_speed", "score", "offnadir_deg", "R_mean", "R_p50", "R_p99", "G_mean", "G_p50", "G_p99", "B_mean", "B_p50", "B_p99"])
-                for r in rows:
-                    wcsv.writerow([
-                        f"{r.wind_speed:.6f}",
-                        f"{r.score:.12f}",
-                        f"{r.offnadir_deg:.6f}",
-                        f"{r.R_mean:.8f}",
-                        f"{r.R_p50:.8f}",
-                        f"{r.R_p99:.8f}",
-                        f"{r.G_mean:.8f}",
-                        f"{r.G_p50:.8f}",
-                        f"{r.G_p99:.8f}",
-                        f"{r.B_mean:.8f}",
-                        f"{r.B_p50:.8f}",
-                        f"{r.B_p99:.8f}",
-                    ])
-
-            print(f"\nWrote sweep table: {out_csv.resolve()}")
-
-            plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_p50_{img_id}_{extension}.png", stat_key="p50", axis_fontsize=AXIS_FONTSIZE, legend_fontsize=LEGEND_FONTSIZE)
-            plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_p99_{img_id}_{extension}.png", stat_key="p99", axis_fontsize=AXIS_FONTSIZE, legend_fontsize=LEGEND_FONTSIZE)
-            plot_reflectance_vs_wind(rows, orig_stats, best.wind, out_dir / f"reflectance_vs_wind_mean_{img_id}_{extension}.png", stat_key="mean", axis_fontsize=AXIS_FONTSIZE, legend_fontsize=LEGEND_FONTSIZE)
-            print(f"Saved plots to: {out_dir.resolve()}")
-
-            dataset_results.setdefault(dataset, []).append(
-                BestResultEntry(
-                    dataset=dataset,
-                    input_img=img_handle,
-                    best=best,
-                    true_stats=orig_stats,
-                    input_stats=input_img_stats,
+                dataset_plot_entries.setdefault(dataset, []).append(
+                    SweepPlotEntry(
+                        dataset=dataset,
+                        input_img=img_handle,
+                        rows=rows,
+                        best_wind=best.wind,
+                        orig_stats=orig_stats,
+                    )
                 )
-            )
 
-            dataset_plot_entries.setdefault(dataset, []).append(
-                SweepPlotEntry(
-                    dataset=dataset,
-                    input_img=img_handle,
-                    rows=rows,
-                    best_wind=best.wind,
-                    orig_stats=orig_stats,
+        elif rebuild_plots_from_csv:
+            out_dir = ROOT / "rgb_outputs" / dataset
+            img_id = extract_id(PRODUCT_NAME)
+
+            for img0 in png_images:
+                img_handle = img0
+                extension = img_handle
+                csv_path = out_dir / f"wind_sweep_results_{img_id}_{extension}.csv"
+
+                if not csv_path.exists():
+                    print(f"Missing CSV, skipping: {csv_path}")
+                    continue
+
+                PRODUCT_NAME_LOCAL = "phisat-2_data/dataset/offnadir_ocean2/" + str(prod)
+                paths = find_product_files(ROOT, PRODUCT_NAME_LOCAL)
+
+                gl_size = 4096
+                try:
+                    with rasterio.open(paths.bands_tiff) as ds:
+                        gl_size = int(max(ds.width, ds.height))
+                except Exception:
+                    gl_size = 4096
+
+                extracted, (tgt_lat, tgt_lon) = extract_corners_and_center(paths.geoloc_json, size=gl_size)
+
+                rgb_bands = (3, 2, 1)
+                if paths.metadata_json is not None:
+                    try:
+                        wl = load_band_center_wavelengths(paths.metadata_json)
+                        if wl:
+                            with rasterio.open(paths.bands_tiff) as ds:
+                                rgb_bands = choose_rgb_bands_from_wavelengths(wl, ds.count)
+                    except Exception:
+                        rgb_bands = (3, 2, 1)
+
+                r_b, g_b, b_b = rgb_bands
+                phisat_png = paths.product_dir / f"rgb_reflectance_R{r_b}_G{g_b}_B{b_b}.png"
+                if not phisat_png.exists():
+                    save_rgb_png(paths.bands_tiff, rgb_bands, phisat_png)
+
+                crop_sz = 128 * 4
+                img_full = np.asarray(Image.open(phisat_png).convert("RGB"))
+                _, (x0, y0) = center_crop_uint8(img_full, crop_sz)
+
+                orig_refl = read_reflectance_rgb_from_tiff_crop(
+                    tiff_path=paths.bands_tiff,
+                    rgb_bands_1based=rgb_bands,
+                    x0=x0,
+                    y0=y0,
+                    crop=crop_sz,
                 )
-            )
+                orig_stats = reflectance_stats_rgb(orig_refl, mask=None, name="Phi-Sat-2 (TIFF cropped)")
+
+
+
+                rows = []
+
+                with csv_path.open("r", newline="", encoding="utf-8") as f:
+                    rcsv = csv.DictReader(f)
+                    for row in rcsv:
+                        rows.append(
+                            Row(
+                                wind_speed=float(row["wind_speed"]),
+                                score=float(row["score"]),
+                                offnadir_deg=float(row["offnadir_deg"]),
+                                R_mean=float(row["R_mean"]),
+                                R_p1=float(row["R_p1"]),
+                                R_p50=float(row["R_p50"]),
+                                R_p99=float(row["R_p99"]),
+                                G_mean=float(row["G_mean"]),
+                                G_p1=float(row["G_p1"]),
+                                G_p50=float(row["G_p50"]),
+                                G_p99=float(row["G_p99"]),
+                                B_mean=float(row["B_mean"]),
+                                B_p1=float(row["B_p1"]),
+                                B_p50=float(row["B_p50"]),
+                                B_p99=float(row["B_p99"]),
+                            )
+                        )
+
+                if not rows:
+                    print(f"No rows in CSV, skipping: {csv_path}")
+                    continue
+
+                best_row = min(rows, key=lambda r: r.score)
+
+                dataset_plot_entries.setdefault(dataset, []).append(
+                    SweepPlotEntry(
+                        dataset=dataset,
+                        input_img=img_handle,
+                        rows=rows,
+                        best_wind=best_row.wind_speed,
+                        orig_stats=orig_stats,
+                    )
+                )
+
+            print(f"Rebuilt plotting data from CSV for {dataset}")
 
     for dataset, results in dataset_results.items():
         if not results:
@@ -866,16 +1089,18 @@ if __name__ == "__main__":
             continue
 
         plot_dir = ROOT / "rgb_outputs" / dataset
+        stat_keys = ["p1", "p50", "p99", "mean"]
 
-        for channel in ["R", "G", "B"]:
-            plot_band_combined(
-                entries=entries,
-                dataset=dataset,
-                channel=channel,
-                stat_key="mean",
-                out_path=plot_dir / f"reflectance_vs_wind_all_{channel}_{dataset}.png",
-                legend_fontsize=LEGEND_FONTSIZE,
-                axis_fontsize=AXIS_FONTSIZE,
-            )
+        for stat_key in stat_keys:
+            for channel in ["R", "G", "B"]:
+                plot_band_combined(
+                    entries=entries,
+                    dataset=dataset,
+                    channel=channel,
+                    stat_key=stat_key,
+                    out_path=plot_dir / f"reflectance_vs_wind_all_{channel}_{dataset}_{stat_key}.png",
+                    legend_fontsize=LEGEND_FONTSIZE,
+                    axis_fontsize=AXIS_FONTSIZE,
+                )
 
         print(f"Saved combined channel plots for {dataset}: {plot_dir.resolve()}")

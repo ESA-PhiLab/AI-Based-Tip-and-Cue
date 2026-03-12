@@ -53,7 +53,7 @@ nPlanes_tip = 1
 nPlanes_cue = 1
 
 offnadir_limit = 40  # Maximum off-nadir observation angle (deg), max 62.5 deg
-delta_t_tipcue = 10 * 60  # Time delay between Tip and Cue satellite (s)
+delta_t_tipcue = 1 * 60  # Time delay between Tip and Cue satellite (s)
 
 whale_seed = 42
 

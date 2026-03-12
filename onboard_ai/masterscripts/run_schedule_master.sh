@@ -7,7 +7,7 @@ set -euo pipefail
 SRC_FILE="${1:-$HOME/generated_configs.txt}"
 
 # Only use these repos
-FOLDERS=(2 3 4 5 6 7 8)
+FOLDERS=(1 2 3 4 5 6 7 8 9)
 REPO_PREFIX="$HOME/DEIMv2-main"
 
 # Poll interval in seconds
@@ -17,7 +17,7 @@ POLL_SEC=30
 MASTER_LOG="$HOME/master_log.txt"
 
 # Configs must exist here (relative to repo root)
-CFG_DIR_REL="configs/schedule_optim"
+CFG_DIR_REL="configs/4_epoch_optim"
 
 # Conda env
 CONDA_ENV="deimv2"
