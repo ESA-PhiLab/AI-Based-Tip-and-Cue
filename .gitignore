@@ -101,3 +101,4 @@ output_images/*
 /rgb_outputs
 dataset/phisat-2_data/Auckland_SRW_QB2_PS_20060812_B32_002794_O_nadir.PNG
 /rgb_outputs
+/img_diff

@@ -21,6 +21,36 @@ from .functions.intermediate_functions import rmse, normalize, get_scene_charact
 from .functions import image_utils as iu
 from .functions.mask_functions import get_whale_mask_for_image, coco_segmentation_to_mask, load_coco_index, rgb_png_to_reflectance, compute_hit_mask_full, compute_hit_mask_old, plot_whale_mask_for_img_path
 
+PLOT_FONT_SIZE_TITLE = 18
+PLOT_FONT_SIZE_AXIS = 18
+PLOT_FONT_SIZE_TICKS = 16
+PLOT_FONT_SIZE_LEGEND = 18
+PLOT_FONT_SIZE_LEGEND_LARGE = 18
+
+plt.style.use("seaborn-v0_8-whitegrid")
+
+plt.rcParams.update({
+    "lines.linewidth": 1.4,
+    "lines.antialiased": True,
+
+    "axes.titlesize": PLOT_FONT_SIZE_TITLE,
+    "axes.labelsize": PLOT_FONT_SIZE_AXIS,
+
+    "xtick.labelsize": PLOT_FONT_SIZE_TICKS,
+    "ytick.labelsize": PLOT_FONT_SIZE_TICKS,
+
+    "legend.fontsize": PLOT_FONT_SIZE_LEGEND,
+    "legend.frameon": False,
+
+    "grid.alpha": 0.3,
+    "grid.linewidth": 0.8,
+
+    "figure.dpi": 120,
+    "axes.labelpad": 12
+})
+
+
+
 _COCO_CACHE = {}
 
 def load_coco_index_cached(anns_path: str):
@@ -680,11 +710,20 @@ def generate_image(img_path, anns_path, satellite, satellite_lat, satellite_lon,
 
 if __name__ == "__main__":
 
+
+
     from pathlib import Path
+
+    # --- Make repo root the working dir and importable ---
+    PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    os.chdir(PROJECT_ROOT)
+    sys.path.insert(0, str(PROJECT_ROOT))
+
     from settings import *
 
+
     bools["plot_result"] = False
-    bools["max_glint"] = False
+    bools["max_glint"] = True
     bools['plot_3d'] = False
 
     THIS_DIR = Path(__file__).resolve().parent

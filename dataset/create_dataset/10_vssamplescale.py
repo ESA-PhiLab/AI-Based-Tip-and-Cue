@@ -7,12 +7,47 @@ import numpy as np
 from PIL import Image
 from matplotlib import pyplot as plt
 
-# --- Make repo root the working dir ---
+import os
+import sys
+from pathlib import Path
+
+# --- Make repo root the working dir and importable ---
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 os.chdir(PROJECT_ROOT)
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from settings import satellite, sensor_characteristics, wave_properties, bools, seed_dem
 from offnadir_imaging.rendering import generate_image
+
+PLOT_FONT_SIZE_TITLE = 16
+PLOT_FONT_SIZE_AXIS = 16
+PLOT_FONT_SIZE_TICKS = 14
+PLOT_FONT_SIZE_LEGEND = 16
+PLOT_FONT_SIZE_LEGEND_LARGE = 16
+plt.style.use("seaborn-v0_8-whitegrid")
+
+plt.style.use("seaborn-v0_8-whitegrid")
+
+plt.rcParams.update({
+    "lines.linewidth": 1.4,
+    "lines.antialiased": True,
+
+    "axes.titlesize": PLOT_FONT_SIZE_TITLE,
+    "axes.labelsize": PLOT_FONT_SIZE_AXIS,
+
+    "xtick.labelsize": PLOT_FONT_SIZE_TICKS,
+    "ytick.labelsize": PLOT_FONT_SIZE_TICKS,
+
+    "legend.fontsize": PLOT_FONT_SIZE_LEGEND,
+    "legend.frameon": False,
+
+    "grid.alpha": 0.3,
+    "grid.linewidth": 0.8,
+
+    "figure.dpi": 120,
+    "axes.labelpad": 10
+})
+
 
 
 def load_rgb_uint8(path: str) -> np.ndarray:

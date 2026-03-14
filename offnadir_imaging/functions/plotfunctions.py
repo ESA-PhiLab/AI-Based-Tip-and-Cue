@@ -311,7 +311,13 @@ def plot_radiance_timeline_show_save(datetime_lst, series, labels, styles, ylabe
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     ax.grid(True)
-    ax.legend()
+    ax.legend(
+        loc='upper right',
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        frameon=True,
+        framealpha=0.95
+    )
 
     # Force HH:MM tick labels (no date)
     locator = mdates.AutoDateLocator()

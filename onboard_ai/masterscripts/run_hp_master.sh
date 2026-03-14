@@ -17,7 +17,7 @@ POLL_SEC=30
 MASTER_LOG="$HOME/master_log.txt"
 
 # Configs must exist here (relative to repo root)
-CFG_DIR_REL="configs/4_epoch_optim"
+CFG_DIR_REL="configs/5_aug_tuning"
 
 # Conda env
 CONDA_ENV="deimv2"

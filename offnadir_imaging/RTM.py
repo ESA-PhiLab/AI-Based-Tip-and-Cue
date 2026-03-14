@@ -4,6 +4,34 @@ from pathlib import Path
 from pySMARTS.main import SMARTSTimeLocation, IOUT_to_code
 from matplotlib import pyplot as plt
 
+PLOT_FONT_SIZE_TITLE = 18
+PLOT_FONT_SIZE_AXIS = 18
+PLOT_FONT_SIZE_TICKS = 16
+PLOT_FONT_SIZE_LEGEND = 16
+PLOT_FONT_SIZE_LEGEND_LARGE = 18
+
+plt.style.use("seaborn-v0_8-whitegrid")
+
+plt.rcParams.update({
+    "lines.linewidth": 1.4,
+    "lines.antialiased": True,
+
+    "axes.titlesize": PLOT_FONT_SIZE_TITLE,
+    "axes.labelsize": PLOT_FONT_SIZE_AXIS,
+
+    "xtick.labelsize": PLOT_FONT_SIZE_TICKS,
+    "ytick.labelsize": PLOT_FONT_SIZE_TICKS,
+
+    "legend.fontsize": PLOT_FONT_SIZE_LEGEND,
+    "legend.frameon": False,
+
+    "grid.alpha": 0.3,
+    "grid.linewidth": 0.8,
+
+    "figure.dpi": 120,
+    "axes.labelpad": 12
+})
+
 
 def delete_if_exists(*paths) -> None:
     """Delete each path if it exists; ignore missing paths."""
@@ -115,7 +143,7 @@ def generate_sun_and_sky_spds(datetime_utc: datetime,
         plt.plot(wl, e_dif_h, label="Diffuse horizontal irradiance (E_dif, sky)")
         plt.plot(wl, e_dir, label="Direct normal irradiance (E_dir,n, sun)")
         plt.xlabel("Wavelength [nm]")
-        plt.ylabel("Spectral Irradiance [W m⁻² nm⁻¹]")
+        plt.ylabel(r"Spectral Irradiance [W m$^{-2}$ nm$^{-1}$]")
         plt.grid(True)
         plt.legend()
         plt.tight_layout()

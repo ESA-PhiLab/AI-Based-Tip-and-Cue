@@ -1430,34 +1430,38 @@ if logging:
 print("\n")
 at_exit(save_name=sim_name, main_path=main_path, pl=(pl if plot_propagation else None), verbose_def=False, verbose_error=False)
 
-if plot_footprints:
 
-    print(f"\n\n\tGenerate footprint plots with len {len(fov_polygons_cue)}")
-    t1 = time.time()
 
-    fov_polygons_tip = [f for f in fov_polygons_tip if f is not None]
-    fov_polygons_cue = [f for f in fov_polygons_cue if f is not None]
+try:
+    if plot_footprints:
+            print(f"\n\n\tGenerate footprint plots with len {len(fov_polygons_cue)}")
+            t1 = time.time()
 
-    t2 = time.time()
+            if (len(fov_polygons_cue) > 0 and len(fov_polygons_cue) <= 1e6) or (len(fov_polygons_tip) > 0 and len(fov_polygons_tip) <= 1e6):
+                whale_plot_state = {}
+                for idx, w in all_targets.items():
+                    whale_plot_state[idx] = {
+                        "current": (float(w.lat), float(w.lon)),
+                        "last_capture": last_capture_pos.get(idx, None),
+                        "t_last_capture": last_capture_time.get(idx, None),
+                    }
+            else:
+                print("Footprint list too long, skip plotting footprint projections.")
 
-    whale_plot_state = {}
-    for idx, w in all_targets.items():
-        whale_plot_state[idx] = {
-            "current": (float(w.lat), float(w.lon)),
-            "last_capture": last_capture_pos.get(idx, None),
-            "t_last_capture": last_capture_time.get(idx, None),
-        }
+            if len(fov_polygons_tip) > 0 and len(fov_polygons_tip) <= 1e6:
+                fov_polygons_tip = [f for f in fov_polygons_tip if f is not None]
+                plot_all_fov_footprints_plotly(fov_polygons_tip, all_targets, observed_targets_tip, nPlanes_tip, nSats_tip, extension="tip", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories, whale_plot_state=whale_plot_state)
 
-    if len(fov_polygons_tip) > 0 and len(fov_polygons_tip) <= 1e6:
-        plot_all_fov_footprints_plotly(fov_polygons_tip, all_targets, observed_targets_tip, nPlanes_tip, nSats_tip, extension="tip", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories, whale_plot_state=whale_plot_state)
+            if len(fov_polygons_cue) > 0 and len(fov_polygons_cue) <= 1e6:
+                fov_polygons_cue = [f for f in fov_polygons_cue if f is not None]
+                plot_all_fov_footprints_plotly(fov_polygons_cue, all_targets, observed_targets_cue, nPlanes_cue, nSats_cue, extension="cue", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories, whale_plot_state=whale_plot_state)
 
-    if len(fov_polygons_cue) > 0 and len(fov_polygons_cue) <= 1e6:
-        plot_all_fov_footprints_plotly(fov_polygons_cue, all_targets, observed_targets_cue, nPlanes_cue, nSats_cue, extension="cue", plot_whale_trajectories=plot_whale_trajectories, whale_trajectories=whale_trajectories, whale_plot_state=whale_plot_state)
 
-    else:
-        print("Footprints too long, skip plotting")
-    t3 = time.time()
-    print(f"\tFOV: footprints plotting time: {format_hms(t3 - t2)}\n ")
+            t2 = time.time()
+            print(f"\tFOV: footprints plotting time: {format_hms(t2 - t1)}\n ")
+
+except:
+    print("Skip plotting footprints")
 
 if show_orbits:
     plot_orbits(trajectories)

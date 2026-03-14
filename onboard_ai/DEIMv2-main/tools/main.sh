@@ -10,7 +10,7 @@ DEFAULT_GPU_CHOICE="X"
 
 RUN_NAME="X"
 
-BASE_CONFIG="configs/4_epoch_optim/${RUN_NAME}.yml"
+BASE_CONFIG="configs/5_aug_tuning/${RUN_NAME}.yml"
 PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 
 # BASE_CONFIG="configs/deimv2/deimv2_dinov3_m_coco_whale.yml"
@@ -25,9 +25,9 @@ TEST_ID="reflection_offnadir_glint_255"
 K_FOLDS="4"
 
 TRAIN_CV="1"
-TRAIN_FINAL="1"
+TRAIN_FINAL="0"
 VAL_TEST_CV="1"      # to eval existing folds under cross_validation/
-VAL_TEST_FINAL="1"   # to eval final_location_holdout/ (if it exists)
+VAL_TEST_FINAL="0"   # to eval final_location_holdout/ (if it exists)
 DUMP_COCO_JSON="1"   # optional, but you already use it
 
 EVAL_AFTER_EACH_FOLD="1"     # 1|0
