@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 from __future__ import annotations
 
@@ -9,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -112,6 +112,10 @@ SUPPORTING_SPLITS = [
     "reflection_offnadir_no_glint_npy",
 ]
 
+POSTPROCESS_CATEGORY_IDS_0_BASED = True
+POSTPROCESS_REPAIR_BBOX = True
+POSTPROCESSED_NAME = "annotations_postprocessed.json"
+
 
 def normalize_header(value: object) -> str:
     """Normalize Excel header text."""
@@ -171,21 +175,7 @@ def ensure_generation_sheet(excel_path: Path) -> None:
         wb.close()
 
 
-def upsert_generation_row(
-    excel_path: Path,
-    row_number: int,
-    detection_id: str,
-    wind_speed: float,
-    location: str,
-    image_file: str,
-    patch_seed: int,
-    whale_present: bool,
-    rotation_angle_deg: int,
-    mirror_bool: bool,
-    patch_name: str,
-    offnadir_deg: float | None,
-    saved_image: str,
-) -> None:
+def upsert_generation_row(excel_path: Path, row_number: int, detection_id: str, wind_speed: float, location: str, image_file: str, patch_seed: int, whale_present: bool, rotation_angle_deg: int, mirror_bool: bool, patch_name: str, offnadir_deg: float | None, saved_image: str) -> None:
     """Upsert one row in dataset_generaton sheet keyed by detection_id and row_number."""
     wb = load_workbook(excel_path)
     try:
@@ -348,25 +338,7 @@ def choose_rotation_and_mirror() -> tuple[int, bool]:
     return rotation_angle_deg, mirror_bool
 
 
-def build_worker_common_cmd(
-    img_file: str,
-    patch_seed: int,
-    dem_seed: int,
-    sat_lat: float,
-    sat_lon: float,
-    sat_alt: float,
-    tgt_lat: float,
-    tgt_lon: float,
-    tgt_alt: float,
-    datetime_utc: datetime,
-    sensor_chars: dict,
-    wave_props: dict,
-    meta_out: Path,
-    run_idx: int,
-    mode_single: str,
-    rotation_angle_deg: int,
-    mirror_bool: bool,
-) -> list[str]:
+def build_worker_common_cmd(img_file: str, patch_seed: int, dem_seed: int, sat_lat: float, sat_lon: float, sat_alt: float, tgt_lat: float, tgt_lon: float, tgt_alt: float, datetime_utc: datetime, sensor_chars: dict, wave_props: dict, meta_out: Path, run_idx: int, mode_single: str, rotation_angle_deg: int, mirror_bool: bool) -> list[str]:
     """Build worker_run.py common CLI arguments."""
     return [
         sys.executable,
@@ -418,25 +390,7 @@ def run_worker(stage: str, cmd_common: list[str], patch_name: str = "") -> None:
     subprocess.run(cmd, check=True, env=env, cwd=str(PROJECT_ROOT))
 
 
-def run_one_pipeline(
-    img_file: str,
-    patch_seed: int,
-    dem_seed: int,
-    sat_lat: float,
-    sat_lon: float,
-    sat_alt: float,
-    tgt_lat: float,
-    tgt_lon: float,
-    tgt_alt: float,
-    datetime_utc: datetime,
-    sensor_chars: dict,
-    wave_props: dict,
-    meta_out: Path,
-    run_idx: int,
-    mode_single: str,
-    rotation_angle_deg: int,
-    mirror_bool: bool,
-) -> dict:
+def run_one_pipeline(img_file: str, patch_seed: int, dem_seed: int, sat_lat: float, sat_lon: float, sat_alt: float, tgt_lat: float, tgt_lon: float, tgt_alt: float, datetime_utc: datetime, sensor_chars: dict, wave_props: dict, meta_out: Path, run_idx: int, mode_single: str, rotation_angle_deg: int, mirror_bool: bool) -> dict:
     """Run nadir then offnadir worker pipeline and return meta json."""
     if meta_out.exists():
         meta_out.unlink()
@@ -655,23 +609,7 @@ def get_image_size_for_annotation(path: Path) -> tuple[int, int]:
     raise ValueError(f"Unsupported annotation image type: {path}")
 
 
-def append_split_annotations(
-    split_dir: Path,
-    image_path: Path,
-    anns: list[dict],
-    coco_meta: dict,
-    detection_id: str,
-    image_file: str,
-    row_number: int,
-    patch_seed: int,
-    wind_speed: float,
-    location: str,
-    whale_present: bool,
-    patch_name: str,
-    offnadir_deg: float | None,
-    rotation_angle_deg: int | float,
-    mirror_bool: bool,
-) -> None:
+def append_split_annotations(split_dir: Path, image_path: Path, anns: list[dict], coco_meta: dict, detection_id: str, image_file: str, row_number: int, patch_seed: int, wind_speed: float, location: str, whale_present: bool, patch_name: str, offnadir_deg: float | None, rotation_angle_deg: int | float, mirror_bool: bool) -> None:
     """Write annotations.json inside one supporting split folder."""
     json_path = split_dir / "annotations.json"
     coco = load_or_init_coco(json_path=json_path, coco_meta=coco_meta)
@@ -713,19 +651,7 @@ def append_split_annotations(
         json.dump(coco, f, indent=2)
 
 
-def append_satellite_annotations(
-    result_folder: Path,
-    saved_image_path: Path,
-    meta: dict,
-    detection_id: str,
-    image_file: str,
-    row_number: int,
-    patch_seed: int,
-    wind_speed: float,
-    location: str,
-    whale_present: bool,
-    coco_meta: dict,
-) -> None:
+def append_satellite_annotations(result_folder: Path, saved_image_path: Path, meta: dict, detection_id: str, image_file: str, row_number: int, patch_seed: int, wind_speed: float, location: str, whale_present: bool, coco_meta: dict) -> None:
     """Append one satellite image and its offnadir annotations to satellite_dta/annotations.json."""
     satellite_dir = result_folder / SATELLITE_DIRNAME
     satellite_dir.mkdir(parents=True, exist_ok=True)
@@ -773,19 +699,7 @@ def append_satellite_annotations(
         json.dump(coco, f, indent=2)
 
 
-def append_supporting_annotations(
-    result_folder: Path,
-    moved_outputs: dict[str, list[Path]],
-    meta: dict,
-    detection_id: str,
-    image_file: str,
-    row_number: int,
-    patch_seed: int,
-    wind_speed: float,
-    location: str,
-    whale_present: bool,
-    coco_meta: dict,
-) -> None:
+def append_supporting_annotations(result_folder: Path, moved_outputs: dict[str, list[Path]], meta: dict, detection_id: str, image_file: str, row_number: int, patch_seed: int, wind_speed: float, location: str, whale_present: bool, coco_meta: dict) -> None:
     """Write per-split annotations.json inside supporting_dataset subfolders."""
     supporting_dir = result_folder / SUPPORTING_DIRNAME
     supporting_dir.mkdir(parents=True, exist_ok=True)
@@ -837,24 +751,160 @@ def cleanup_empty_generated_dirs(img_file: str) -> None:
             pass
 
 
-def run_pipeline_with_retries(
-    dataset_choices: list[Path],
-    dem_seed: int,
-    cue_lat: float,
-    cue_lon: float,
-    cue_alt: float,
-    tgt_lat: float,
-    tgt_lon: float,
-    tgt_alt: float,
-    t_datetime: datetime,
-    sensor_chars: dict,
-    wave_props: dict,
-    meta_out: Path,
-    run_idx: int,
-    whale_present: bool,
-    rotation_angle_deg: int,
-    mirror_bool: bool,
-) -> tuple[dict, str, int, str]:
+def load_json(path: Path) -> dict:
+    """Read JSON utf-8."""
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def save_json(path: Path, data: dict) -> None:
+    """Write JSON utf-8 pretty."""
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def remap_categories_0_based(coco: dict) -> dict:
+    """Remap category ids to 0..K-1 and update annotations."""
+    coco2 = dict(coco)
+    cats = [dict(c) for c in coco.get("categories", [])]
+    anns = [dict(a) for a in coco.get("annotations", [])]
+
+    ids = set()
+    for c in cats:
+        if "id" in c:
+            ids.add(c["id"])
+    for a in anns:
+        if "category_id" in a:
+            ids.add(a["category_id"])
+
+    if not ids:
+        coco2["categories"] = cats
+        coco2["annotations"] = anns
+        return coco2
+
+    old_ids = sorted(ids)
+    mapping = {old: new for new, old in enumerate(old_ids)}
+
+    for c in cats:
+        if "id" in c:
+            c["id"] = mapping[c["id"]]
+
+    for a in anns:
+        if "category_id" in a:
+            a["category_id"] = mapping[a["category_id"]]
+
+    coco2["categories"] = cats
+    coco2["annotations"] = anns
+    return coco2
+
+
+def bbox_from_segmentation(seg: object) -> list[float] | None:
+    """Compute [x,y,w,h] from COCO polygon segmentation."""
+    if not isinstance(seg, list) or not seg:
+        return None
+
+    xs: list[float] = []
+    ys: list[float] = []
+
+    for poly in seg:
+        if not isinstance(poly, list) or len(poly) < 6 or len(poly) % 2 != 0:
+            continue
+        for i in range(0, len(poly), 2):
+            try:
+                xs.append(float(poly[i]))
+                ys.append(float(poly[i + 1]))
+            except Exception:
+                return None
+
+    if not xs or not ys:
+        return None
+
+    x0 = min(xs)
+    y0 = min(ys)
+    x1 = max(xs)
+    y1 = max(ys)
+    w = x1 - x0
+    h = y1 - y0
+    if w <= 0 or h <= 0:
+        return None
+    return [x0, y0, w, h]
+
+
+def is_valid_bbox(b: object) -> bool:
+    """True if bbox is [x,y,w,h] with w,h>0."""
+    if not isinstance(b, (list, tuple)) or len(b) != 4:
+        return False
+    try:
+        w = float(b[2])
+        h = float(b[3])
+    except Exception:
+        return False
+    return w > 0 and h > 0
+
+
+def repair_annotations_bboxes(coco: dict) -> tuple[dict, dict]:
+    """Fix missing bbox from seg or drop invalid annotations."""
+    coco2 = dict(coco)
+    anns = [dict(a) for a in coco.get("annotations", [])]
+
+    fixed = 0
+    dropped = 0
+    kept: list[dict] = []
+
+    for a in anns:
+        if is_valid_bbox(a.get("bbox")):
+            kept.append(a)
+            continue
+
+        b = bbox_from_segmentation(a.get("segmentation"))
+        if b is not None:
+            a["bbox"] = b
+            fixed += 1
+            kept.append(a)
+            continue
+
+        dropped += 1
+
+    coco2["annotations"] = kept
+    return coco2, {"bbox_fixed_from_segmentation": fixed, "bbox_dropped_no_bbox_no_seg": dropped}
+
+
+def postprocess_one_annotation_file(json_path: Path) -> None:
+    """Read annotations.json and write annotations_postprocessed.json."""
+    if not json_path.exists():
+        return
+
+    coco = load_json(json_path)
+
+    if POSTPROCESS_REPAIR_BBOX:
+        coco, stats = repair_annotations_bboxes(coco)
+    else:
+        stats = {"bbox_fixed_from_segmentation": 0, "bbox_dropped_no_bbox_no_seg": 0}
+
+    if POSTPROCESS_CATEGORY_IDS_0_BASED:
+        coco = remap_categories_0_based(coco)
+
+    out_path = json_path.with_name(POSTPROCESSED_NAME)
+    save_json(out_path, coco)
+
+    print(
+        f"POSTPROCESSED: {out_path} | "
+        f"bbox_fixed={stats['bbox_fixed_from_segmentation']} | "
+        f"bbox_dropped={stats['bbox_dropped_no_bbox_no_seg']}"
+    )
+
+
+def postprocess_result_folder(result_folder: Path) -> None:
+    """Postprocess all annotations.json files inside one result folder."""
+    sat_json = result_folder / SATELLITE_DIRNAME / SATELLITE_JSON_NAME
+    postprocess_one_annotation_file(sat_json)
+
+    supporting_root = result_folder / SUPPORTING_DIRNAME
+    if supporting_root.exists():
+        for split_name in SUPPORTING_SPLITS:
+            split_json = supporting_root / split_name / "annotations.json"
+            postprocess_one_annotation_file(split_json)
+
+
+def run_pipeline_with_retries(dataset_choices: list[Path], dem_seed: int, cue_lat: float, cue_lon: float, cue_alt: float, tgt_lat: float, tgt_lon: float, tgt_alt: float, t_datetime: datetime, sensor_chars: dict, wave_props: dict, meta_out: Path, run_idx: int, whale_present: bool, rotation_angle_deg: int, mirror_bool: bool) -> tuple[dict, str, int, str]:
     """Retry with new source images until one valid patch succeeds."""
     mode_single = "full" if whale_present else "ocean"
     last_error: Exception | None = None
@@ -898,14 +948,9 @@ def run_pipeline_with_retries(
             except Exception:
                 pass
 
-            print(
-                f"[retry {attempt_idx + 1}/{PATCH_ATTEMPT_LIMIT}] "
-                f"failed for {image_file} mode={mode_single}: {exc}"
-            )
+            print(f"[retry {attempt_idx + 1}/{PATCH_ATTEMPT_LIMIT}] failed for {image_file} mode={mode_single}: {exc}")
 
-    raise RuntimeError(
-        f"Failed to generate a valid '{mode_single}' sample after {PATCH_ATTEMPT_LIMIT} attempts"
-    ) from last_error
+    raise RuntimeError(f"Failed to generate a valid '{mode_single}' sample after {PATCH_ATTEMPT_LIMIT} attempts") from last_error
 
 
 def main() -> None:
@@ -921,6 +966,7 @@ def main() -> None:
     meta_dir.mkdir(parents=True, exist_ok=True)
 
     run_idx = 0
+    current_folder: Path | None = None
 
     for (
         result_folder,
@@ -936,6 +982,12 @@ def main() -> None:
         t_datetime,
         dem_seed,
     ) in iter_all_results(SCRIPT_DIR):
+
+        if current_folder is None:
+            current_folder = result_folder
+        elif result_folder != current_folder:
+            postprocess_result_folder(current_folder)
+            current_folder = result_folder
 
         whale_present, _mode_single = choose_patch_mode()
         rotation_angle_deg, mirror_bool = choose_rotation_and_mirror()
@@ -1044,6 +1096,9 @@ def main() -> None:
         )
 
         run_idx += 1
+
+    if current_folder is not None:
+        postprocess_result_folder(current_folder)
 
 
 if __name__ == "__main__":

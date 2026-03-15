@@ -13,7 +13,7 @@ from openpyxl import load_workbook, Workbook
 # CONFIG
 # =========================
 
-FINAL_DIRNAME = "0_FINAL"
+FINAL_DIRNAME = "FINAL_RESULTS"
 OUTPUT_XLSX_NAME = "summary_results.xlsx"
 
 # Keys are your output columns. Values must match the exact label text in the run Excel (col A).
