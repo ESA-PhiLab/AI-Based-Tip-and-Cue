@@ -233,42 +233,61 @@ def upsert_generation_row(excel_path: Path, row_number: int, detection_id: str, 
     finally:
         wb.close()
 
-
-def iter_img_rows(excel_path: Path):
-    """Yield parsed Img rows with row number."""
+def read_img_rows(excel_path: Path) -> list[tuple[int, str, float, float, float, float, float, float, datetime, int]]:
+    """Read all Img rows into memory, then close workbook before later writes."""
     wb = load_workbook(excel_path, data_only=True, read_only=True)
+    parsed_rows: list[tuple[int, str, float, float, float, float, float, float, datetime, int]] = []
 
     try:
         if SOURCE_SHEET not in wb.sheetnames:
-            return
+            return parsed_rows
 
         ws = wb[SOURCE_SHEET]
         rows = ws.iter_rows(values_only=True)
-        header = next(rows)
+        header = next(rows, None)
+        if header is None:
+            return parsed_rows
 
         header_map = {normalize_header(value): idx for idx, value in enumerate(header)}
+
+        missing = [col for col in READ_COLUMNS if col not in header_map]
+        if missing:
+            raise KeyError(f"Missing required columns in '{SOURCE_SHEET}': {missing}")
+
         idx = [header_map[col] for col in READ_COLUMNS]
 
         for row_number, row in enumerate(rows, start=2):
+            if row is None:
+                continue
+
             extracted = [row[i] if i < len(row) else None for i in idx]
 
-            detection_id = str(extracted[0]).strip() if extracted[0] is not None else ""
-            cue_lat = float(extracted[1])
-            cue_lon = float(extracted[2])
-            cue_alt = float(extracted[3])
-            tgt_lat = float(extracted[4])
-            tgt_lon = float(extracted[5])
-            tgt_alt = float(extracted[6])
-            t_datetime = parse_datetime_utc(extracted[7])
-            dem_seed = int(extracted[8])
+            if all(value is None or str(value).strip() == "" for value in extracted):
+                continue
 
-            yield row_number, detection_id, cue_lat, cue_lon, cue_alt, tgt_lat, tgt_lon, tgt_alt, t_datetime, dem_seed
+            detection_id = str(extracted[0]).strip() if extracted[0] is not None else ""
+            if not detection_id:
+                continue
+
+            parsed_rows.append((
+                row_number,
+                detection_id,
+                float(extracted[1]),
+                float(extracted[2]),
+                float(extracted[3]),
+                float(extracted[4]),
+                float(extracted[5]),
+                float(extracted[6]),
+                parse_datetime_utc(extracted[7]),
+                int(extracted[8]),
+            ))
+
+        return parsed_rows
     finally:
         wb.close()
 
-
 def iter_all_results(base_dir: Path):
-    """Yield result folder, excel path, and row values."""
+    """Yield result folders and cached Img rows so workbook is closed before writes."""
     final_results = base_dir / FINAL_RESULTS_DIR
     if not final_results.is_dir():
         raise FileNotFoundError(f"Missing folder: {final_results}")
@@ -283,7 +302,8 @@ def iter_all_results(base_dir: Path):
 
         ensure_generation_sheet(excel_file)
 
-        for row in iter_img_rows(excel_file):
+        rows = read_img_rows(excel_file)
+        for row in rows:
             yield folder, excel_file, *row
 
 

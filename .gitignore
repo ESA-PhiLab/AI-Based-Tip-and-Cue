@@ -106,3 +106,4 @@ onboard_ai/masterscripts/generated_configs.txt
 /dataset/create_dataset/generated_dataset/_meta
 /dataset/create_dataset/generated_dataset
 /dataset/create_dataset/0_results/FINAL_RESULTS
+/figures/output_images

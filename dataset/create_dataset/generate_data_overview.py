@@ -1,8 +1,15 @@
+from __future__ import annotations
+
 import json
 import os
-import matplotlib.pyplot as plt
+from collections import defaultdict
 from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw
+
 
 # =========================
 # Config
@@ -11,7 +18,7 @@ from PIL import Image, ImageDraw
 main_path = Path(__file__).resolve().parents[2]
 os.chdir(main_path)
 
-ALLOWED_modes = {
+ALLOWED_MODES = {
     "patch_raw_255",
     "patch_raw_rot_255",
 
@@ -39,191 +46,255 @@ ALLOWED_modes = {
     "reflection_offnadir_no_glint_npy",
 }
 
-mode = "reflection_offnadir_glint_255"
 mode = "texture_offnadir_255"
 
+# Example 1: original dataset structure
 DATASET_PATH = Path("dataset")
 BASE_DIR = DATASET_PATH / "create_dataset" / "0_merged" / mode
 ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
 
-# Output directory to save images
-OUTPUT_DIR = Path("output_images")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # Create the output directory if it doesn't exist
+# Example 2: custom folder with image subfolders
+# DATASET_PATH = Path(r"C:/Users/nadine/Documents/Phi-Lab_MasterThesis/2_Full_Thesis/Report/V5_Report/figures/results/off-nadir-angle")
+# BASE_DIR = DATASET_PATH
+# ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
 
-GRID_ROWS = 15
-GRID_COLS = 10
-IMAGE_SIZE = (64, 64)  # Resize images for display
+
+DATASET_PATH = Path(r"C:/Users/nadine/Documents/Phi-Lab_MasterThesis/2_Full_Thesis/Report/V5_Report/figures/dataset/whales_from_space_samples")
+BASE_DIR = DATASET_PATH
+ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
+
+
+OUTPUT_DIR = Path("figures/output_images")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+GRID_ROWS = 9
+GRID_COLS = 6
+IMAGE_SIZE = (64, 64)
+VALID_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 
 # =========================
 # Helpers
 # =========================
 def load_json(path: str | Path) -> dict:
-    """load_json(path) -> dict: Read JSON utf-8."""
+    """Read JSON file and return dict."""
     p = Path(path)
     with p.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def load_images_from_folder(folder: Path, segmentation: bool = False) -> list:
-    """Load images from the folder and its subdirectories, returning them as a list."""
+def load_plain_image(image_path: Path) -> Image.Image | None:
+    """Load image, convert to RGB, resize, return PIL image."""
+    try:
+        img = Image.open(image_path).convert("RGB")
+        return img.resize(IMAGE_SIZE)
+    except Exception as e:
+        print(f"Error loading image {image_path}: {e}")
+        return None
+
+
+def prepare_annotation_data(annotation_path: Path) -> tuple[dict | None, dict[str, dict], dict[int, list[dict]]]:
+    """Load COCO annotations and build lookup maps, else return empty maps."""
+    if not annotation_path.is_file():
+        print("No annotations found, generating plots without annotations.")
+        return None, {}, {}
+
+    try:
+        coco = load_json(annotation_path)
+    except Exception as e:
+        print(f"Could not read annotations file {annotation_path}: {e}")
+        print("No annotations found, generating plots without annotations.")
+        return None, {}, {}
+
+    images_by_file_name = {}
+    anns_by_image_id = defaultdict(list)
+
+    for img in coco.get("images", []):
+        file_name = str(img.get("file_name", "")).replace("\\", "/")
+        images_by_file_name[file_name] = img
+
+    for ann in coco.get("annotations", []):
+        image_id = ann.get("image_id")
+        if image_id is not None:
+            anns_by_image_id[image_id].append(ann)
+
+    return coco, images_by_file_name, dict(anns_by_image_id)
+
+
+def draw_overlay(img: Image.Image, anns: list, scale_x: float = 1.0, scale_y: float = 1.0) -> Image.Image:
+    """Draw segmentation polygons and boxes on image."""
+    draw = ImageDraw.Draw(img)
+
+    for ann in anns:
+        for seg in ann.get("segmentation", []):
+            if not seg:
+                continue
+            pts = [(seg[i] * scale_x, seg[i + 1] * scale_y) for i in range(0, len(seg), 2)]
+            if len(pts) >= 3:
+                draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
+
+        bbox = ann.get("bbox")
+        if bbox and len(bbox) == 4:
+            x, y, w, h = bbox
+            x1 = x * scale_x
+            y1 = y * scale_y
+            x2 = (x + w) * scale_x
+            y2 = (y + h) * scale_y
+            draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0), width=2)
+
+    return img
+
+
+def get_image_with_annotations(image_path: Path, anns: list) -> Image.Image:
+    """Load image, draw overlays, resize, return PIL image."""
+    try:
+        base = Image.open(image_path).convert("RGB")
+    except Exception as e:
+        print(f"Error reading {image_path}: {e}")
+        fallback = Image.new("RGB", IMAGE_SIZE, color=(20, 20, 20))
+        ImageDraw.Draw(fallback).text((5, 5), "Read error", fill=(255, 80, 80))
+        return fallback
+
+    original_w, original_h = base.size
+    resized = base.resize(IMAGE_SIZE)
+    scale_x = IMAGE_SIZE[0] / original_w if original_w else 1.0
+    scale_y = IMAGE_SIZE[1] / original_h if original_h else 1.0
+
+    resized = draw_overlay(resized, anns, scale_x=scale_x, scale_y=scale_y)
+    return resized
+
+
+def build_relative_filename(image_path: Path, base_dir: Path) -> str:
+    """Build COCO-style relative path using forward slashes."""
+    try:
+        return image_path.relative_to(base_dir).as_posix()
+    except Exception:
+        return image_path.name
+
+
+def load_images_from_folder(folder: Path, segmentation: bool = False, images_by_file_name: dict | None = None, anns_by_image_id: dict | None = None) -> list[Image.Image]:
+    """Load images from folder, optionally with annotation overlays."""
     images = []
-    coco = load_json(ANNOTATIONS_PATH)
-    anns = coco.get("annotations", [])
+    images_by_file_name = images_by_file_name or {}
+    anns_by_image_id = anns_by_image_id or {}
 
-    for root, x, files in os.walk(folder):
-        path = Path(folder)
-
-        # Get the last folder
-        last_folder = path.name
-
-        for filename in files:
-
-
+    for root, _, files in os.walk(folder):
+        for filename in sorted(files):
             img_path = Path(root) / filename
-            if img_path.suffix.lower() in [".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"]:
 
-                if not segmentation:
-                    try:
-                        img = Image.open(img_path)
-                        img = img.resize(IMAGE_SIZE)  # Resize for display
+            if img_path.suffix.lower() not in VALID_IMAGE_SUFFIXES:
+                continue
 
-                    except Exception as e:
-                        print(f"Error loading image {img_path}: {e}")
+            if not segmentation:
+                img = load_plain_image(img_path)
+                if img is not None:
+                    images.append(img)
+                continue
 
-                else:
-                    FILENAMEFULL = last_folder + "/" + filename
-                    # Find the image in the dataset that matches the filename
-                    image = None
-                    for img in coco["images"]:
-                        if img["file_name"] == FILENAMEFULL:
-                            image = img
+            relative_name = build_relative_filename(img_path, BASE_DIR)
+            image_info = images_by_file_name.get(relative_name)
 
-                    if not image:
-                        print(f"Image with filename {FILENAMEFULL} not found in dataset.")
+            if image_info is None:
+                img = load_plain_image(img_path)
+                if img is not None:
+                    images.append(img)
+                continue
 
-                    image_path = BASE_DIR / image["file_name"]
+            image_id = image_info.get("id")
+            anns = anns_by_image_id.get(image_id, [])
+            img = get_image_with_annotations(img_path, anns)
+            images.append(img)
 
-                    # Check if the image file exists
-                    if not image_path.is_file():
-                        print(f"Image file not found: {image_path}")
-
-                    # Gather all annotations for the selected image (matching by filename)
-                    annotations_for_image = []
-                    for ann in anns:
-                        if ann.get("image_id") == image["id"]:  # Matching by image_id (which is unique per image)
-                            annotations_for_image.append(ann)
-
-                    img = get_image_with_annotations(image_path, annotations_for_image)
-
-                images.append(img)
-
-            else:
-                print(f"Skipping unsupported image format: {img_path}")
-    print(f"Loaded {len(images)} images.")
+    print(f"Loaded {len(images)} images from {folder}.")
     return images
 
 
 # =========================
-# Displaying in 10x20 grid
+# Displaying in grid
 # =========================
-def display_images_in_grid(images: list, plot_index: int, segmentation: bool, savename: str) -> None:
-    """Display images in a grid using Matplotlib and save the plot to a file."""
+def display_images_in_grid(images: list[Image.Image], plot_index: int, segmentation: bool, savename: str) -> None:
+    """Display images in grid and save figure."""
+    fig_width = GRID_COLS * IMAGE_SIZE[0] / 100
+    fig_height = GRID_ROWS * IMAGE_SIZE[1] / 100
 
-    # Calculate the figure size dynamically based on grid size and image size
-    fig_width = GRID_COLS * IMAGE_SIZE[0] / 100  # Adjust the figure width
-    fig_height = GRID_ROWS * IMAGE_SIZE[1] / 100  # Adjust the figure height
+    fig, axes = plt.subplots(
+        GRID_ROWS,
+        GRID_COLS,
+        figsize=(fig_width, fig_height),
+        gridspec_kw={"hspace": 0, "wspace": 0},
+    )
 
-    fig, axes = plt.subplots(GRID_ROWS, GRID_COLS, figsize=(fig_width, fig_height), gridspec_kw={'hspace': 0, 'wspace': 0})
     axes = axes.flatten()
 
     for i, ax in enumerate(axes):
         if i < len(images):
             ax.imshow(images[i])
-            ax.axis('off')  # Hide axes
-        else:
-            ax.axis('off')  # Hide axes if there are fewer than 200 images
+        ax.axis("off")
 
-    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)  # Remove extra whitespace around the image grid
+    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-    # Save the figure to the output directory with the segmentation tag
     segmentation_tag = "_segmentation" if segmentation else "_no_segmentation"
     plot_filename = OUTPUT_DIR / f"plot_{savename}_{plot_index}{segmentation_tag}.png"
-    plt.savefig(plot_filename, bbox_inches='tight')  # Save with tight bounding box
+    plt.savefig(plot_filename, bbox_inches="tight", pad_inches=0)
     print(f"Saved plot {plot_index} to {plot_filename}")
-    plt.close(fig)  # Close the figure to free up memory
+    plt.close(fig)
 
 
-# =========================
-# Helpers for Annotations
-# =========================
-def get_image_with_annotations(image_path: Path, anns: list) -> None:
-    """show_image_with_annotations(image_path, anns) -> None: Display image with annotations using matplotlib."""
-    try:
-        base = Image.open(image_path).convert("RGB")
-    except Exception as e:
-        print(f"[Error reading {image_path}]: {e}")
-        base = Image.new("RGB", (640, 360), color=(20, 20, 20))
-        ImageDraw.Draw(base).text((10, 10), f"Read error: {image_path}", fill=(255, 80, 80))
+def collect_plot_folders(base_dir: Path) -> list[Path]:
+    """Return subfolders, or base_dir itself if it directly contains images."""
+    subdirs = sorted([d for d in base_dir.iterdir() if d.is_dir()])
 
-    # Draw annotations (segmentations and bounding boxes)
-    base = draw_overlay(base, anns)
+    if subdirs:
+        return subdirs
 
-    # Convert image for matplotlib
-    img = base.convert("RGB")
-    # img = img.transpose(Image.FLIP_TOP_BOTTOM)  # Correct image orientation for matplotlib
+    has_images = any(p.is_file() and p.suffix.lower() in VALID_IMAGE_SUFFIXES for p in base_dir.iterdir())
+    if has_images:
+        return [base_dir]
 
-    return img
-
-
-def draw_overlay(img: Image.Image, anns: list, scale: float = 1.0) -> Image.Image:
-    """draw_overlay(img, anns, scale) -> Image: draw polygons and bboxes."""
-    draw = ImageDraw.Draw(img)
-    for a in anns:
-        for seg in a.get("segmentation", []):
-            if not seg: continue
-            pts = [(seg[i] * scale, seg[i + 1] * scale) for i in range(0, len(seg), 2)]
-            if len(pts) >= 3: draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
-        if "bbox" in a and len(a["bbox"]) == 4:
-            x, y, w, h = a["bbox"]
-            x, y, w, h = x * scale, y * scale, w * scale, h * scale
-            draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 0), width=2)
-    return img
+    return []
 
 
 # =========================
 # Main
 # =========================
-def show_data(n: int = 1, segmentation: bool = False, save_name: str = None) -> None:
-    """show_data() -> None: Load images and save them as grid images."""
-    # Check if annotations file exists
-    if not ANNOTATIONS_PATH.is_file():
-        raise FileNotFoundError(f"Missing COCO json: {ANNOTATIONS_PATH}")
+def show_data(n: int = 1, segmentation: bool = False, save_name: str | None = None) -> None:
+    """Load images and save them as grid figures."""
+    save_name = save_name or "plot"
 
-    # Load COCO annotations (just to confirm structure, not used for grid)
-    coco = load_json(ANNOTATIONS_PATH)
-    images = coco.get("images", [])
+    coco, images_by_file_name, anns_by_image_id = prepare_annotation_data(ANNOTATIONS_PATH)
+    effective_segmentation = segmentation and coco is not None
 
-    # Get subdirectories of BASE_DIR (folders containing image data)
-    subdirs = [d for d in BASE_DIR.iterdir() if d.is_dir()]
+    folders = collect_plot_folders(BASE_DIR)
+    if not folders:
+        raise FileNotFoundError(f"No image folders or images found in BASE_DIR: {BASE_DIR}")
 
-    # Loop through the subdirectories and generate n plots
     for i in range(n):
-        if i < len(subdirs):  # Make sure we don't exceed the available subdirectories
-            subdir = subdirs[i]
-            print(f"Loading images from folder: {subdir}")
-
-            # Load images from the subdirectory
-            loaded_images = load_images_from_folder(subdir, segmentation)
-
-            # Display the images in a grid format and save them
-            print(f"Saving plot {i + 1}")
-            display_images_in_grid(loaded_images, i + 1, segmentation, savename=save_name)
-        else:
-            print(f"Not enough subdirectories to generate {n} plots. Only {len(subdirs)} available.")
+        if i >= len(folders):
+            print(f"Not enough folders to generate {n} plots. Only {len(folders)} available.")
             break
+
+        folder = folders[i]
+        print(f"Loading images from folder: {folder}")
+
+        loaded_images = load_images_from_folder(
+            folder=folder,
+            segmentation=effective_segmentation,
+            images_by_file_name=images_by_file_name,
+            anns_by_image_id=anns_by_image_id,
+        )
+
+        if not loaded_images:
+            print(f"No images found in {folder}, skipping plot {i + 1}.")
+            continue
+
+        print(f"Saving plot {i + 1}")
+        display_images_in_grid(
+            images=loaded_images,
+            plot_index=i + 1,
+            segmentation=effective_segmentation,
+            savename=save_name,
+        )
 
 
 if __name__ == "__main__":
-    # Set the number of plots to generate (e.g., 3 plots)
-    show_data(n=9, segmentation=True, save_name="offnadir_no_glint")  # Set segmentation=True or False depending on the requirement
+    show_data(n=9, segmentation=True, save_name="offnadir_no_glint")
