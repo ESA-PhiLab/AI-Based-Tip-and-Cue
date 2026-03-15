@@ -105,3 +105,4 @@ dataset/phisat-2_data/Auckland_SRW_QB2_PS_20060812_B32_002794_O_nadir.PNG
 onboard_ai/masterscripts/generated_configs.txt
 /dataset/create_dataset/generated_dataset/_meta
 /dataset/create_dataset/generated_dataset
+/dataset/create_dataset/0_results/FINAL_RESULTS

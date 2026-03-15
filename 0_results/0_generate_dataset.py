@@ -8,7 +8,6 @@ import re
 import shutil
 import subprocess
 import sys
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,7 +29,7 @@ for path in (PROJECT_ROOT, CREATE_DATASET_DIR):
 
 from settings import *
 from read_and_write_data import get_generated_root
-from save_patch import rollback_patch_outputs
+
 
 
 SIMULATION_SEED = int(globals().get("whale_seed", 17))
@@ -88,7 +87,7 @@ PATCH_HALF_FRACTION_RANGE = (0.20, 0.80)
 PATCH_MASK_ALPHA = 80
 
 SHOW_PLOT = False
-SATELLITE_DIRNAME = "satellite_dta"
+SATELLITE_DIRNAME = "satellite_images"
 SUPPORTING_DIRNAME = "supporting_dataset"
 SATELLITE_JSON_NAME = "annotations.json"
 TARGET_IMAGE_SPLIT = "reflection_offnadir_glint_255"
@@ -115,6 +114,15 @@ SUPPORTING_SPLITS = [
 POSTPROCESS_CATEGORY_IDS_0_BASED = True
 POSTPROCESS_REPAIR_BBOX = True
 POSTPROCESSED_NAME = "annotations_postprocessed.json"
+
+def result_generated_root(result_folder: Path) -> Path:
+    """Return per-run temporary worker output root inside the result folder."""
+    return result_folder / SUPPORTING_DIRNAME / "_generated_worker"
+
+
+def result_generated_root_rel(result_folder: Path) -> str:
+    """Return worker output root as absolute path string."""
+    return str(result_generated_root(result_folder).resolve())
 
 
 def normalize_header(value: object) -> str:
@@ -371,10 +379,10 @@ def build_worker_common_cmd(img_file: str, patch_seed: int, dem_seed: int, sat_l
     ]
 
 
-def run_worker(stage: str, cmd_common: list[str], patch_name: str = "") -> None:
-    """Run one worker stage with repo-root import path."""
+def run_worker(stage: str, cmd_common: list[str], result_folder: Path, patch_name: str = "") -> None:
+    """Run one worker stage with per-run output root inside the result folder."""
     env = os.environ.copy()
-    env["GENERATED_ROOT_REL"] = GENERATED_ROOT_REL
+    env["GENERATED_ROOT_REL"] = result_generated_root_rel(result_folder)
 
     pythonpath_parts = [str(PROJECT_ROOT), str(CREATE_DATASET_DIR)]
     old_pythonpath = env.get("PYTHONPATH", "").strip()
@@ -390,7 +398,7 @@ def run_worker(stage: str, cmd_common: list[str], patch_name: str = "") -> None:
     subprocess.run(cmd, check=True, env=env, cwd=str(PROJECT_ROOT))
 
 
-def run_one_pipeline(img_file: str, patch_seed: int, dem_seed: int, sat_lat: float, sat_lon: float, sat_alt: float, tgt_lat: float, tgt_lon: float, tgt_alt: float, datetime_utc: datetime, sensor_chars: dict, wave_props: dict, meta_out: Path, run_idx: int, mode_single: str, rotation_angle_deg: int, mirror_bool: bool) -> dict:
+def run_one_pipeline(result_folder: Path, img_file: str, patch_seed: int, dem_seed: int, sat_lat: float, sat_lon: float, sat_alt: float, tgt_lat: float, tgt_lon: float, tgt_alt: float, datetime_utc: datetime, sensor_chars: dict, wave_props: dict, meta_out: Path, run_idx: int, mode_single: str, rotation_angle_deg: int, mirror_bool: bool) -> dict:
     """Run nadir then offnadir worker pipeline and return meta json."""
     if meta_out.exists():
         meta_out.unlink()
@@ -415,7 +423,7 @@ def run_one_pipeline(img_file: str, patch_seed: int, dem_seed: int, sat_lat: flo
         mirror_bool=mirror_bool,
     )
 
-    run_worker(stage="nadir", cmd_common=cmd_common)
+    run_worker(stage="nadir", cmd_common=cmd_common, result_folder=result_folder)
 
     if not meta_out.exists():
         raise FileNotFoundError(f"Nadir worker did not write meta file: {meta_out}")
@@ -425,7 +433,7 @@ def run_one_pipeline(img_file: str, patch_seed: int, dem_seed: int, sat_lat: flo
     if not patch_name:
         raise RuntimeError("patch_name missing after nadir stage")
 
-    run_worker(stage="offnadir", cmd_common=cmd_common, patch_name=patch_name)
+    run_worker(stage="offnadir", cmd_common=cmd_common, result_folder=result_folder, patch_name=patch_name)
 
     if not meta_out.exists():
         raise FileNotFoundError(f"Offnadir worker did not write meta file: {meta_out}")
@@ -433,9 +441,38 @@ def run_one_pipeline(img_file: str, patch_seed: int, dem_seed: int, sat_lat: flo
     return json.loads(meta_out.read_text(encoding="utf-8"))
 
 
-def get_generated_root_safe() -> Path:
-    """Resolve generated dataset root exactly like your existing scripts."""
-    return get_generated_root(PROJECT_ROOT)
+def get_generated_root_safe(result_folder: Path) -> Path:
+    """Return the first existing worker output root candidate."""
+    expected = result_generated_root(result_folder).resolve()
+    env_value = os.environ.get("GENERATED_ROOT_REL", "").strip()
+
+    candidates: list[Path] = [expected]
+
+    if env_value:
+        env_path = Path(env_value)
+        if env_path.is_absolute():
+            candidates.append(env_path.resolve())
+        else:
+            candidates.append((PROJECT_ROOT / env_path).resolve())
+            candidates.append((CREATE_DATASET_DIR / env_path).resolve())
+            candidates.append((CREATE_DATASET_DIR.parent / env_path).resolve())
+
+    seen = set()
+    unique_candidates: list[Path] = []
+    for path in candidates:
+        key = str(path).lower()
+        if key not in seen:
+            seen.add(key)
+            unique_candidates.append(path)
+
+    for path in unique_candidates:
+        if path.exists():
+            return path
+
+    raise FileNotFoundError(
+        "Worker output root not found. Checked: "
+        + " | ".join(str(p) for p in unique_candidates)
+    )
 
 
 def matches_patch_output(path: Path, patch_name: str) -> bool:
@@ -452,24 +489,24 @@ def move_generated_file(src: Path, dst: Path) -> Path:
     shutil.move(str(src), str(dst))
     return dst
 
-
 def move_supporting_outputs(result_folder: Path, detection_id: str, img_file: str, patch_name: str) -> dict[str, list[Path]]:
-    """Move all generated outputs for one patch into result_folder/supporting_dataset, renamed to detection_id."""
-    generated_root = get_generated_root_safe()
-    subdir = Path(img_file).parent
+    """Move all generated outputs for one patch from the worker root, searching recursively."""
+    generated_root = get_generated_root_safe(result_folder)
     supporting_root = result_folder / SUPPORTING_DIRNAME
     safe_id = sanitize_filename(detection_id)
 
     moved: dict[str, list[Path]] = {}
+    found_any = False
+
     for split_name in SUPPORTING_SPLITS:
         moved[split_name] = []
-        src_dir = generated_root / split_name / subdir
+        split_root = generated_root / split_name
         dst_dir = supporting_root / split_name
 
-        if not src_dir.exists():
+        if not split_root.exists():
             continue
 
-        for src in sorted(src_dir.iterdir()):
+        for src in sorted(split_root.rglob("*")):
             if not src.is_file():
                 continue
             if not matches_patch_output(src, patch_name):
@@ -477,15 +514,33 @@ def move_supporting_outputs(result_folder: Path, detection_id: str, img_file: st
 
             dst = dst_dir / f"{safe_id}{src.suffix.lower()}"
             moved[split_name].append(move_generated_file(src, dst))
+            found_any = True
+
+    if not found_any:
+        available = []
+        for split_name in SUPPORTING_SPLITS:
+            split_root = generated_root / split_name
+            if split_root.exists():
+                sample_files = [p.name for p in sorted(split_root.rglob("*")) if p.is_file()][:10]
+                available.append(f"{split_name}: {sample_files}")
+
+        raise FileNotFoundError(
+            f"No generated files found for patch_name='{patch_name}' under worker root '{generated_root}'. "
+            f"Available files by split: {available}"
+        )
 
     return moved
 
-
 def save_satellite_image(result_folder: Path, detection_id: str, moved_outputs: dict[str, list[Path]]) -> Path:
-    """Copy reflection_offnadir_glint_255 image into satellite_dta/<detection_id>.png."""
-    candidates = moved_outputs.get(TARGET_IMAGE_SPLIT, [])
+    """Copy the target split PNG into satellite_dta/<detection_id>.png."""
+    candidates = [p for p in moved_outputs.get(TARGET_IMAGE_SPLIT, []) if p.suffix.lower() == ".png"]
+
     if not candidates:
-        raise FileNotFoundError(f"No {TARGET_IMAGE_SPLIT} output found to save")
+        available = {k: [p.name for p in v] for k, v in moved_outputs.items() if v}
+        raise FileNotFoundError(
+            f"No PNG output found for split '{TARGET_IMAGE_SPLIT}'. "
+            f"Available moved outputs: {available}"
+        )
 
     src = candidates[0]
     satellite_dir = result_folder / SATELLITE_DIRNAME
@@ -496,7 +551,6 @@ def save_satellite_image(result_folder: Path, detection_id: str, moved_outputs: 
         dst.unlink()
     shutil.copy2(src, dst)
     return dst
-
 
 def ann_rows_to_coco(ann_rows: list[dict]) -> list[dict]:
     """Convert worker meta annotation rows to COCO annotations."""
@@ -518,7 +572,6 @@ def ann_rows_to_coco(ann_rows: list[dict]) -> list[dict]:
             ann.update(other)
 
         out.append(ann)
-
     return out
 
 
@@ -542,7 +595,6 @@ def ann_rows_to_coco_nadir(ann_rows: list[dict]) -> list[dict]:
             ann.update(other)
 
         out.append(ann)
-
     return out
 
 
@@ -736,19 +788,37 @@ def append_supporting_annotations(result_folder: Path, moved_outputs: dict[str, 
                 mirror_bool=mirror_bool,
             )
 
-
-def cleanup_empty_generated_dirs(img_file: str) -> None:
-    """Best-effort cleanup of now-empty generated split subdirs."""
-    generated_root = get_generated_root_safe()
-    subdir = Path(img_file).parent
+def rollback_worker_patch_outputs(result_folder: Path, img_file: str, patch_name: str) -> None:
+    """Delete failed patch outputs from the worker root by recursive search."""
+    try:
+        generated_root = get_generated_root_safe(result_folder)
+    except Exception:
+        return
 
     for split_name in SUPPORTING_SPLITS:
-        split_subdir = generated_root / split_name / subdir
-        try:
-            if split_subdir.exists() and not any(split_subdir.iterdir()):
-                split_subdir.rmdir()
-        except Exception:
-            pass
+        split_root = generated_root / split_name
+        if not split_root.exists():
+            continue
+
+        for src in list(split_root.rglob("*")):
+            if not src.is_file():
+                continue
+            if not matches_patch_output(src, patch_name):
+                continue
+            try:
+                src.unlink()
+            except Exception:
+                pass
+
+def cleanup_empty_generated_dirs(result_folder: Path, img_file: str) -> None:
+    """No-op; full worker root is cleaned up later."""
+    return
+
+def cleanup_worker_root(result_folder: Path) -> None:
+    """Remove temporary per-run worker output root completely."""
+    tmp_root = result_generated_root(result_folder)
+    if tmp_root.exists():
+        shutil.rmtree(tmp_root, ignore_errors=True)
 
 
 def load_json(path: Path) -> dict:
@@ -904,7 +974,7 @@ def postprocess_result_folder(result_folder: Path) -> None:
             postprocess_one_annotation_file(split_json)
 
 
-def run_pipeline_with_retries(dataset_choices: list[Path], dem_seed: int, cue_lat: float, cue_lon: float, cue_alt: float, tgt_lat: float, tgt_lon: float, tgt_alt: float, t_datetime: datetime, sensor_chars: dict, wave_props: dict, meta_out: Path, run_idx: int, whale_present: bool, rotation_angle_deg: int, mirror_bool: bool) -> tuple[dict, str, int, str]:
+def run_pipeline_with_retries(result_folder: Path, dataset_choices: list[Path], dem_seed: int, cue_lat: float, cue_lon: float, cue_alt: float, tgt_lat: float, tgt_lon: float, tgt_alt: float, t_datetime: datetime, sensor_chars: dict, wave_props: dict, meta_out: Path, run_idx: int, whale_present: bool, rotation_angle_deg: int, mirror_bool: bool) -> tuple[dict, str, int, str]:
     """Retry with new source images until one valid patch succeeds."""
     mode_single = "full" if whale_present else "ocean"
     last_error: Exception | None = None
@@ -917,6 +987,7 @@ def run_pipeline_with_retries(dataset_choices: list[Path], dem_seed: int, cue_la
 
         try:
             meta = run_one_pipeline(
+                result_folder=result_folder,
                 img_file=image_file,
                 patch_seed=patch_seed,
                 dem_seed=dem_seed,
@@ -944,7 +1015,7 @@ def run_pipeline_with_retries(dataset_choices: list[Path], dem_seed: int, cue_la
                     meta_tmp = json.loads(meta_out.read_text(encoding="utf-8"))
                     patch_name = str(meta_tmp.get("patch_name", "")).strip()
                     if patch_name:
-                        rollback_patch_outputs(img_file=image_file, patch_name=patch_name)
+                        rollback_worker_patch_outputs(result_folder=result_folder, img_file=image_file, patch_name=patch_name)
             except Exception:
                 pass
 
@@ -961,9 +1032,6 @@ def main() -> None:
 
     dataset_choices = resolve_dataset_choices(dataset_root=DATASET_ROOT, requested_names=DATASET_CHOICES)
     coco_meta = load_global_coco_meta(json_path=GLOBAL_ANNS_PATH)
-
-    meta_dir = get_generated_root_safe() / "_meta"
-    meta_dir.mkdir(parents=True, exist_ok=True)
 
     run_idx = 0
     current_folder: Path | None = None
@@ -987,6 +1055,7 @@ def main() -> None:
             current_folder = result_folder
         elif result_folder != current_folder:
             postprocess_result_folder(current_folder)
+            cleanup_worker_root(current_folder)
             current_folder = result_folder
 
         whale_present, _mode_single = choose_patch_mode()
@@ -997,9 +1066,12 @@ def main() -> None:
         wave_props = dict(wave_properties)
         wave_props["wind_speed"] = float(wind_speed)
 
+        meta_dir = result_folder / SUPPORTING_DIRNAME / "_meta"
+        meta_dir.mkdir(parents=True, exist_ok=True)
         meta_out = meta_dir / f"run_{run_idx:06d}.json"
 
         meta, image_file, patch_seed, location = run_pipeline_with_retries(
+            result_folder=result_folder,
             dataset_choices=dataset_choices,
             dem_seed=dem_seed,
             cue_lat=cue_lat,
@@ -1028,7 +1100,7 @@ def main() -> None:
             img_file=image_file,
             patch_name=patch_name,
         )
-        cleanup_empty_generated_dirs(image_file)
+        cleanup_empty_generated_dirs(result_folder, image_file)
 
         saved_image_path = save_satellite_image(
             result_folder=result_folder,
@@ -1099,6 +1171,7 @@ def main() -> None:
 
     if current_folder is not None:
         postprocess_result_folder(current_folder)
+        cleanup_worker_root(current_folder)
 
 
 if __name__ == "__main__":
