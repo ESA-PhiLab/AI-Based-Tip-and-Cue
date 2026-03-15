@@ -54,21 +54,24 @@ BASE_DIR = DATASET_PATH / "create_dataset" / "0_merged" / mode
 ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
 
 # Example 2: custom folder with image subfolders
-# DATASET_PATH = Path(r"C:/Users/nadine/Documents/Phi-Lab_MasterThesis/2_Full_Thesis/Report/V5_Report/figures/results/off-nadir-angle")
-# BASE_DIR = DATASET_PATH
-# ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
-
-
-DATASET_PATH = Path(r"C:/Users/nadine/Documents/Phi-Lab_MasterThesis/2_Full_Thesis/Report/V5_Report/figures/dataset/whales_from_space_samples")
+DATASET_PATH = Path(r"C:/Users/nadine/Documents/Phi-Lab_MasterThesis/2_Full_Thesis/Report/V5_Report/figures/results/off-nadir-angle_high")
 BASE_DIR = DATASET_PATH
 ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
+GRID_ROWS = 11
+GRID_COLS = 12
 
+
+# Example 3: whales from space visualization
+# DATASET_PATH = Path(r"C:/Users/nadine/Documents/Phi-Lab_MasterThesis/2_Full_Thesis/Report/V5_Report/figures/dataset/whales_from_space_samples")
+# BASE_DIR = DATASET_PATH
+# ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
+# GRID_ROWS = 9
+# GRID_COLS = 6
 
 OUTPUT_DIR = Path("figures/output_images")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-GRID_ROWS = 9
-GRID_COLS = 6
+
 IMAGE_SIZE = (64, 64)
 VALID_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 

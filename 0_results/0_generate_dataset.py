@@ -58,7 +58,10 @@ INPUT_LOCATIONS = [
 # "distinct" -> one sample per Excel row for every location in INPUT_LOCATIONS,
 #               saved inside the same run folder in:
 #               satellite_images_<location> and supporting_dataset_<location>
-LOCATION_MODE = "distinct"
+# "all"      -> for every row, do both:
+#               1) one combined random sample in satellite_images/supporting_dataset
+#               2) one per-location sample in satellite_images_<location>/supporting_dataset_<location>
+LOCATION_MODE = "all"
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
@@ -130,7 +133,7 @@ POSTPROCESSED_NAME = "annotations_postprocessed.json"
 
 
 def result_generated_root(result_folder: Path) -> Path:
-    """Return per-run temporary worker output root inside the result folder."""
+    """Return temporary worker output root inside the result folder."""
     return result_folder / SUPPORTING_DIRNAME / "_generated_worker"
 
 
@@ -153,28 +156,37 @@ def sanitize_filename(value: str) -> str:
 def validate_location_mode(mode: str) -> str:
     """Validate and normalize the location selection mode."""
     mode_norm = str(mode).strip().lower()
-    if mode_norm not in {"random", "distinct"}:
-        raise ValueError(f"LOCATION_MODE must be 'random' or 'distinct', got: {mode}")
+    if mode_norm not in {"random", "distinct", "all"}:
+        raise ValueError(f"LOCATION_MODE must be 'random', 'distinct', or 'all', got: {mode}")
     return mode_norm
 
 
-def location_suffix(location_mode: str, location_name: str | None) -> str:
+def get_output_mode(job_mode: str) -> str:
+    """Map job mode to output mode used by folders and sheets."""
+    if job_mode == "combined":
+        return "random"
+    if job_mode == "distinct":
+        return "distinct"
+    raise ValueError(f"Unknown job_mode: {job_mode}")
+
+
+def location_suffix(output_mode: str, location_name: str | None) -> str:
     """Return directory suffix for the current output mode."""
-    if location_mode == "distinct":
+    if output_mode == "distinct":
         if not location_name:
             raise ValueError("location_name is required in distinct mode")
         return f"_{location_name}"
     return ""
 
 
-def get_satellite_dir(result_folder: Path, location_mode: str, location_name: str | None) -> Path:
+def get_satellite_dir(result_folder: Path, output_mode: str, location_name: str | None) -> Path:
     """Return the output satellite directory for this mode/location."""
-    return result_folder / f"{SATELLITE_DIRNAME}{location_suffix(location_mode, location_name)}"
+    return result_folder / f"{SATELLITE_DIRNAME}{location_suffix(output_mode, location_name)}"
 
 
-def get_supporting_dir(result_folder: Path, location_mode: str, location_name: str | None) -> Path:
+def get_supporting_dir(result_folder: Path, output_mode: str, location_name: str | None) -> Path:
     """Return the output supporting directory for this mode/location."""
-    return result_folder / f"{SUPPORTING_DIRNAME}{location_suffix(location_mode, location_name)}"
+    return result_folder / f"{SUPPORTING_DIRNAME}{location_suffix(output_mode, location_name)}"
 
 
 def parse_datetime_utc(value: object) -> datetime:
@@ -206,6 +218,7 @@ def find_excel_file(folder: Path) -> Path | None:
             return file_path
     return None
 
+
 def make_excel_safe_sheet_name(sheet_name: str) -> str:
     """Return Excel-safe sheet name with invalid chars removed and max length 31."""
     cleaned = re.sub(r'[:\\/?*\[\]]+', "_", str(sheet_name).strip())
@@ -215,18 +228,18 @@ def make_excel_safe_sheet_name(sheet_name: str) -> str:
     return cleaned[:31]
 
 
-def get_generation_sheet_name(location_mode: str, location_name: str | None = None) -> str:
+def get_generation_sheet_name(output_mode: str, location_name: str | None = None) -> str:
     """Return output sheet name for combined or distinct mode."""
-    if location_mode == "distinct":
+    if output_mode == "distinct":
         if not location_name:
             raise ValueError("location_name is required in distinct mode")
         return make_excel_safe_sheet_name(f"{GEN_SHEET}_{location_name}")
     return make_excel_safe_sheet_name(GEN_SHEET)
 
 
-def ensure_generation_sheet(excel_path: Path, location_mode: str, location_name: str | None = None) -> str:
+def ensure_generation_sheet(excel_path: Path, output_mode: str, location_name: str | None = None) -> str:
     """Ensure the required generation sheet exists and has the expected headers."""
-    sheet_name = get_generation_sheet_name(location_mode=location_mode, location_name=location_name)
+    sheet_name = get_generation_sheet_name(output_mode=output_mode, location_name=location_name)
 
     wb = load_workbook(excel_path)
     try:
@@ -245,11 +258,11 @@ def ensure_generation_sheet(excel_path: Path, location_mode: str, location_name:
     return sheet_name
 
 
-def upsert_generation_row(excel_path: Path, row_number: int, detection_id: str, wind_speed: float, location: str, image_file: str, patch_seed: int, whale_present: bool, rotation_angle_deg: int, mirror_bool: bool, patch_name: str, offnadir_deg: float | None, saved_image: str, location_mode: str) -> None:
+def upsert_generation_row(excel_path: Path, row_number: int, detection_id: str, wind_speed: float, location: str, image_file: str, patch_seed: int, whale_present: bool, rotation_angle_deg: int, mirror_bool: bool, patch_name: str, offnadir_deg: float | None, saved_image: str, output_mode: str) -> None:
     """Upsert one row in the correct generation sheet."""
     sheet_name = get_generation_sheet_name(
-        location_mode=location_mode,
-        location_name=location if location_mode == "distinct" else None,
+        output_mode=output_mode,
+        location_name=location if output_mode == "distinct" else None,
     )
 
     wb = load_workbook(excel_path)
@@ -359,8 +372,9 @@ def read_img_rows(excel_path: Path) -> list[tuple[int, str, float, float, float,
     finally:
         wb.close()
 
+
 def iter_generation_jobs(base_dir: Path, dataset_paths: list[Path], location_mode: str):
-    """Yield one generation job per Img row according to random or distinct mode."""
+    """Yield generation jobs per row for random, distinct, or all mode."""
     final_results = base_dir / FINAL_RESULTS_DIR
     if not final_results.is_dir():
         raise FileNotFoundError(f"Missing folder: {final_results}")
@@ -373,25 +387,27 @@ def iter_generation_jobs(base_dir: Path, dataset_paths: list[Path], location_mod
         if excel_file is None:
             continue
 
-        if location_mode == "random":
-            ensure_generation_sheet(excel_file, location_mode="random")
-        else:
+        if location_mode in {"random", "all"}:
+            ensure_generation_sheet(excel_file, output_mode="random")
+
+        if location_mode in {"distinct", "all"}:
             for dataset_folder in dataset_paths:
                 ensure_generation_sheet(
                     excel_file,
-                    location_mode="distinct",
+                    output_mode="distinct",
                     location_name=dataset_folder.name,
                 )
 
         rows = read_img_rows(excel_file)
 
-        if location_mode == "random":
-            for row in rows:
-                yield folder, excel_file, None, *row
-        else:
-            for row in rows:
+        for row in rows:
+            if location_mode in {"random", "all"}:
+                yield folder, excel_file, "combined", None, *row
+
+            if location_mode in {"distinct", "all"}:
                 for dataset_folder in dataset_paths:
-                    yield folder, excel_file, dataset_folder, *row
+                    yield folder, excel_file, "distinct", dataset_folder, *row
+
 
 def list_images_recursive(folder: Path) -> list[Path]:
     """Return all image files recursively."""
@@ -598,10 +614,10 @@ def move_generated_file(src: Path, dst: Path) -> Path:
     return dst
 
 
-def move_supporting_outputs(result_folder: Path, detection_id: str, img_file: str, patch_name: str, location_mode: str, location_name: str | None) -> dict[str, list[Path]]:
-    """Move all generated outputs for one patch from the worker root into the correct supporting folder."""
+def move_supporting_outputs(result_folder: Path, detection_id: str, img_file: str, patch_name: str, output_mode: str, location_name: str | None) -> dict[str, list[Path]]:
+    """Move generated outputs for one patch into the correct supporting folder."""
     generated_root = get_generated_root_safe(result_folder)
-    supporting_root = get_supporting_dir(result_folder=result_folder, location_mode=location_mode, location_name=location_name)
+    supporting_root = get_supporting_dir(result_folder=result_folder, output_mode=output_mode, location_name=location_name)
     safe_id = sanitize_filename(detection_id)
 
     moved: dict[str, list[Path]] = {}
@@ -641,7 +657,7 @@ def move_supporting_outputs(result_folder: Path, detection_id: str, img_file: st
     return moved
 
 
-def save_satellite_image(result_folder: Path, detection_id: str, moved_outputs: dict[str, list[Path]], location_mode: str, location_name: str | None) -> Path:
+def save_satellite_image(result_folder: Path, detection_id: str, moved_outputs: dict[str, list[Path]], output_mode: str, location_name: str | None) -> Path:
     """Copy the target split PNG into the correct satellite_images folder."""
     candidates = [p for p in moved_outputs.get(TARGET_IMAGE_SPLIT, []) if p.suffix.lower() == ".png"]
 
@@ -653,7 +669,7 @@ def save_satellite_image(result_folder: Path, detection_id: str, moved_outputs: 
         )
 
     src = candidates[0]
-    satellite_dir = get_satellite_dir(result_folder=result_folder, location_mode=location_mode, location_name=location_name)
+    satellite_dir = get_satellite_dir(result_folder=result_folder, output_mode=output_mode, location_name=location_name)
     satellite_dir.mkdir(parents=True, exist_ok=True)
 
     dst = satellite_dir / f"{sanitize_filename(detection_id)}.png"
@@ -814,9 +830,9 @@ def append_split_annotations(split_dir: Path, image_path: Path, anns: list[dict]
         json.dump(coco, f, indent=2)
 
 
-def append_satellite_annotations(result_folder: Path, saved_image_path: Path, meta: dict, detection_id: str, image_file: str, row_number: int, patch_seed: int, wind_speed: float, location: str, whale_present: bool, coco_meta: dict, location_mode: str, location_name: str | None) -> None:
-    """Append one satellite image and its offnadir annotations to the correct satellite_images folder."""
-    satellite_dir = get_satellite_dir(result_folder=result_folder, location_mode=location_mode, location_name=location_name)
+def append_satellite_annotations(result_folder: Path, saved_image_path: Path, meta: dict, detection_id: str, image_file: str, row_number: int, patch_seed: int, wind_speed: float, location: str, whale_present: bool, coco_meta: dict, output_mode: str, location_name: str | None) -> None:
+    """Append one satellite image and its offnadir annotations to the correct satellite folder."""
+    satellite_dir = get_satellite_dir(result_folder=result_folder, output_mode=output_mode, location_name=location_name)
     satellite_dir.mkdir(parents=True, exist_ok=True)
 
     json_path = satellite_dir / SATELLITE_JSON_NAME
@@ -862,9 +878,9 @@ def append_satellite_annotations(result_folder: Path, saved_image_path: Path, me
         json.dump(coco, f, indent=2)
 
 
-def append_supporting_annotations(result_folder: Path, moved_outputs: dict[str, list[Path]], meta: dict, detection_id: str, image_file: str, row_number: int, patch_seed: int, wind_speed: float, location: str, whale_present: bool, coco_meta: dict, location_mode: str, location_name: str | None) -> None:
-    """Write per-split annotations.json inside the correct supporting_dataset folder."""
-    supporting_dir = get_supporting_dir(result_folder=result_folder, location_mode=location_mode, location_name=location_name)
+def append_supporting_annotations(result_folder: Path, moved_outputs: dict[str, list[Path]], meta: dict, detection_id: str, image_file: str, row_number: int, patch_seed: int, wind_speed: float, location: str, whale_present: bool, coco_meta: dict, output_mode: str, location_name: str | None) -> None:
+    """Write per-split annotations.json inside the correct supporting folder."""
+    supporting_dir = get_supporting_dir(result_folder=result_folder, output_mode=output_mode, location_name=location_name)
     supporting_dir.mkdir(parents=True, exist_ok=True)
 
     patch_name = str(meta.get("patch_name", ""))
@@ -1158,6 +1174,7 @@ def main() -> None:
     for (
         result_folder,
         excel_path,
+        job_mode,
         forced_dataset_folder,
         row_number,
         detection_id,
@@ -1177,6 +1194,8 @@ def main() -> None:
             postprocess_result_folder(current_folder)
             cleanup_worker_root(current_folder)
             current_folder = result_folder
+
+        output_mode = get_output_mode(job_mode)
 
         whale_present, _mode_single = choose_patch_mode()
         rotation_angle_deg, mirror_bool = choose_rotation_and_mirror()
@@ -1220,8 +1239,8 @@ def main() -> None:
             detection_id=detection_id,
             img_file=image_file,
             patch_name=patch_name,
-            location_mode=location_mode,
-            location_name=location,
+            output_mode=output_mode,
+            location_name=location if output_mode == "distinct" else None,
         )
         cleanup_empty_generated_dirs(result_folder, image_file)
 
@@ -1229,8 +1248,8 @@ def main() -> None:
             result_folder=result_folder,
             detection_id=detection_id,
             moved_outputs=moved_outputs,
-            location_mode=location_mode,
-            location_name=location,
+            output_mode=output_mode,
+            location_name=location if output_mode == "distinct" else None,
         )
 
         append_satellite_annotations(
@@ -1245,8 +1264,8 @@ def main() -> None:
             location=location,
             whale_present=whale_present,
             coco_meta=coco_meta,
-            location_mode=location_mode,
-            location_name=location,
+            output_mode=output_mode,
+            location_name=location if output_mode == "distinct" else None,
         )
 
         append_supporting_annotations(
@@ -1261,8 +1280,8 @@ def main() -> None:
             location=location,
             whale_present=whale_present,
             coco_meta=coco_meta,
-            location_mode=location_mode,
-            location_name=location,
+            output_mode=output_mode,
+            location_name=location if output_mode == "distinct" else None,
         )
 
         upsert_generation_row(
@@ -1279,7 +1298,7 @@ def main() -> None:
             patch_name=patch_name,
             offnadir_deg=meta.get("offnadir_deg", None),
             saved_image=saved_image_path.name,
-            location_mode=location_mode,
+            output_mode=output_mode,
         )
 
         print(
@@ -1287,6 +1306,7 @@ def main() -> None:
             f"row={row_number}",
             detection_id,
             image_file,
+            f"job_mode={job_mode}",
             f"location={location}",
             f"patch_seed={patch_seed}",
             f"wind={wind_speed}",
