@@ -28,11 +28,11 @@ except Exception:
 # DEFAULTS (override via CLI)
 # =======================
 
-DEFAULT_RESULTS_FOLDER = "default_model_S"
+DEFAULT_RESULTS_FOLDER = "03_e32_flat14_noaug12_stop20_match18"
 DEFAULT_MODEL = "final"          # "final" or "fold1" etc
 DEFAULT_SPLIT = "test"     # "validation" or "test"
 
-SCORE_THRESHOLD = 0.4
+SCORE_THRESHOLD = 0.3
 MAX_PREDS = 50
 IOU_THRESHOLD = 0.5
 

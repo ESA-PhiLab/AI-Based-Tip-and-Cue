@@ -58,7 +58,7 @@ DATASET_PATH = Path(r"C:/Users/nadine/Documents/Phi-Lab_MasterThesis/2_Full_Thes
 BASE_DIR = DATASET_PATH
 ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
 GRID_ROWS = 11
-GRID_COLS = 12
+GRID_COLS = 10
 
 
 # Example 3: whales from space visualization

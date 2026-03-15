@@ -12,11 +12,11 @@ from PIL import Image, ImageDraw
 # DEFAULTS (override via CLI)
 # =======================
 
-DEFAULT_RESULTS_FOLDER = "test_model_S"
+DEFAULT_RESULTS_FOLDER = "03_e32_flat14_noaug12_stop20_match18"
 DEFAULT_MODEL = "final"          # "final" or "fold1"
-DEFAULT_SPLIT = "validation"           # "validation" or "test"
+DEFAULT_SPLIT = "test"           # "validation" or "test"
 
-SCORE_THRESHOLD = 0.4
+SCORE_THRESHOLD = 0.3
 MAX_PREDS = 50
 IOU_THRESHOLD = 0.5
 
@@ -24,7 +24,6 @@ USE_OVERVIEW_PREDICTIONS = False
 OVERVIEW_TAG = "FINAL"
 
 # =======================
-
 
 def read_json(path: Path) -> Any:
     """read_json(path) -> Any: Read JSON file."""

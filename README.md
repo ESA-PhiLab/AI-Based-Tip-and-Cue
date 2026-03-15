@@ -123,6 +123,20 @@ System variables:\
 Name: SMARTSPATH\
 Value: C:\Program Files\SMARTS_295_PC
 
+
+### Install Onboard Detection Module
+Install the DEIMv2 onboard detection module, incl. pytorch. 
+```bash
+cd AI-based-Tip-and-Cue
+cd onboard_ai
+git clone Intellindust-AI-Lab/DEIMv2.git
+cd DEIMv2-main
+pip install -r requirements.txt
+```
+
+After that, go back to this Github page: AI-Based-Tip-and-Cue/DEIMv2-main. 
+Replace the 'tools' and 'engine' folders inside DEIMv2-main with the versions from this AI-Based-Tip-and-Cue repository.
+
 ### Installation Troubleshooting
 
 #### Mitsuba
