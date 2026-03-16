@@ -80,15 +80,7 @@ def _safe_std(values: list[float]) -> float:
     return float(np.std(values)) if values else 0.0
 
 
-def _compute_overall_detection_stats(
-    image_summary_rows: list[dict[str, Any]],
-    individual_prediction_rows: list[dict[str, Any]],
-    gt_rows: list[dict[str, Any]],
-    positive_sample_best_ious: list[float],
-    positive_sample_best_confidences: list[float],
-    all_sample_best_ious: list[float],
-    all_sample_best_confidences: list[float],
-) -> list[dict[str, Any]]:
+def _compute_overall_detection_stats(image_summary_rows: list[dict[str, Any]], individual_prediction_rows: list[dict[str, Any]], gt_rows: list[dict[str, Any]], positive_sample_best_ious: list[float], positive_sample_best_confidences: list[float], all_sample_best_ious: list[float], all_sample_best_confidences: list[float]) -> list[dict[str, Any]]:
     """Build aggregate detection statistics rows."""
     total_tp = int(sum(int(row["tp"]) for row in image_summary_rows))
     total_fp = int(sum(int(row["fp"]) for row in image_summary_rows))
@@ -152,7 +144,7 @@ def main() -> None:
     device = "cpu"
 
     render_scale = 10
-    line_width = 5
+    line_width = 15
 
     results_folder_path = deimv2_repo_root / "results"
     image_folder_path = master_dir / "0_results" / "0_FINAL_RESULTS_data" / "TC_1x1sat_40deg_5min_17sd" / "satellite_images"
@@ -166,7 +158,9 @@ def main() -> None:
     individual_iou_threshold = 0.5
     ap_score_threshold = 0.0
 
-    MODEL_LABEL_TO_CATEGORY_ID: dict[int, int] | None = None
+    # For single-class datasets this is usually correct if the model outputs label 0.
+    # If your model outputs label 1 instead, change this to {1: gt_category_id}.
+    model_label_to_category_id: dict[int, int] | None = None
 
     show_detections = False
     save_prediction_images = True
@@ -229,7 +223,8 @@ def main() -> None:
                 }
             ]
 
-    MODEL_LABEL_TO_CATEGORY_ID = {0: gt_category_id}
+    if model_label_to_category_id is None:
+        model_label_to_category_id = {0: gt_category_id}
 
     run_output_root.mkdir(parents=True, exist_ok=True)
     prediction_images_dir.mkdir(parents=True, exist_ok=True)
@@ -258,7 +253,7 @@ def main() -> None:
 
     print(f"GT category ids in annotations: {annotation_category_ids}")
     print(f"Categories ids after normalization: {[int(cat['id']) for cat in annotations_data.get('categories', []) if isinstance(cat, dict) and 'id' in cat]}")
-    print(f"MODEL_LABEL_TO_CATEGORY_ID: {MODEL_LABEL_TO_CATEGORY_ID}")
+    print(f"MODEL_LABEL_TO_CATEGORY_ID: {model_label_to_category_id}")
 
     for image_path in image_paths:
         image_record = get_image_record(annotations_data, image_path)
@@ -410,7 +405,7 @@ def main() -> None:
         annotations_data=annotations_data,
         image_paths=image_paths,
         predictions_by_image=ap_predictions_by_image,
-        label_to_category_id=MODEL_LABEL_TO_CATEGORY_ID,
+        label_to_category_id=model_label_to_category_id,
     )
 
     ap_metrics_rows = coco_metrics["per_iou_rows"]
@@ -443,7 +438,7 @@ def main() -> None:
             "annotation_category_ids": annotation_category_ids,
             "ap_gt_category_ids": gt_category_ids_for_ap,
             "ap_prediction_category_ids": prediction_category_ids_for_ap,
-            "model_label_to_category_id": MODEL_LABEL_TO_CATEGORY_ID,
+            "model_label_to_category_id": model_label_to_category_id,
             "coco_ap50": ap50,
             "coco_ap50_95": ap50_95,
             "total_gt": total_gt_for_ap,

@@ -58,7 +58,7 @@ def _ensure_repo_on_sys_path(repo_root: Path) -> None:
 
 
 def _prepare_runtime_config(config_path: Path, repo_root: Path | None) -> Path:
-    """Rewrite absolute __include__ paths to local repo paths."""
+    """Rewrite absolute __include__ paths to the local DEIMv2 repo."""
     if repo_root is None:
         return config_path
 
@@ -99,7 +99,7 @@ def _prepare_runtime_config(config_path: Path, repo_root: Path | None) -> Path:
 
 
 def _get_device(device: str | None) -> torch.device:
-    """Return torch device with CUDA fallback."""
+    """Return requested torch device with CUDA fallback to CPU."""
     if device is not None:
         requested = str(device).lower()
         if requested.startswith("cuda") and not torch.cuda.is_available():
@@ -120,7 +120,7 @@ def _get_eval_size(yaml_cfg: dict[str, Any]) -> tuple[int, int]:
 
 
 def _uses_dino_normalization(yaml_cfg: dict[str, Any]) -> bool:
-    """Return whether DINO normalization should be applied."""
+    """Return whether DINO/ImageNet normalization should be applied."""
     return bool(yaml_cfg.get("DINOv3STAs", False))
 
 
@@ -170,13 +170,15 @@ def _load_deimv2_predictor(config_path: Path, weights_path: Path, device: torch.
         )
 
     class Predictor(nn.Module):
+        """Wrap deployed model and postprocessor."""
+
         def __init__(self, cfg_obj: Any) -> None:
             super().__init__()
             self.model = cfg_obj.model.deploy()
             self.postprocessor = cfg_obj.postprocessor.deploy()
 
-        def forward(self, images: torch.Tensor, orig_target_sizes: torch.Tensor) -> tuple[Any, Any, Any]:
-            """Run deployed model and postprocessor."""
+        def forward(self, images: torch.Tensor, orig_target_sizes: torch.Tensor) -> Any:
+            """Run model and postprocessor."""
             outputs = self.model(images)
             outputs = self.postprocessor(outputs, orig_target_sizes)
             return outputs
@@ -201,7 +203,7 @@ def _load_deimv2_predictor(config_path: Path, weights_path: Path, device: torch.
 
 
 def _prepare_image_tensor(image_path: Path, detector: LoadedDetector) -> tuple[Image.Image, torch.Tensor, torch.Tensor]:
-    """Load image and prepare model input tensor."""
+    """Load one image and prepare model input tensor."""
     image_pil = Image.open(image_path).convert("RGB")
     orig_w, orig_h = image_pil.size
     image_tensor = detector.transforms(image_pil).unsqueeze(0).to(detector.device)
@@ -210,7 +212,7 @@ def _prepare_image_tensor(image_path: Path, detector: LoadedDetector) -> tuple[I
 
 
 def _strip_batch_dim(array_like: Any) -> np.ndarray:
-    """Convert tensor-like output to numpy and drop batch dim."""
+    """Convert tensor-like output to numpy and drop batch dim when batch size is 1."""
     if isinstance(array_like, torch.Tensor):
         array = array_like.detach().cpu().numpy()
     else:
@@ -219,6 +221,37 @@ def _strip_batch_dim(array_like: Any) -> np.ndarray:
     if array.ndim >= 2 and array.shape[0] == 1:
         array = array[0]
     return array
+
+
+def _extract_predictor_outputs(outputs: Any) -> tuple[Any, Any, Any]:
+    """Return labels, boxes, scores from common deployed detector output formats."""
+    if isinstance(outputs, (tuple, list)) and len(outputs) == 3:
+        return outputs[0], outputs[1], outputs[2]
+
+    if isinstance(outputs, dict):
+        label_keys = ["labels", "label", "pred_labels"]
+        box_keys = ["boxes", "bbox", "bboxes", "pred_boxes"]
+        score_keys = ["scores", "score", "pred_scores"]
+
+        labels = next((outputs[key] for key in label_keys if key in outputs), None)
+        boxes = next((outputs[key] for key in box_keys if key in outputs), None)
+        scores = next((outputs[key] for key in score_keys if key in outputs), None)
+
+        if labels is not None and boxes is not None and scores is not None:
+            return labels, boxes, scores
+
+    if isinstance(outputs, (list, tuple)) and len(outputs) == 1 and isinstance(outputs[0], dict):
+        return _extract_predictor_outputs(outputs[0])
+
+    structure = f"type={type(outputs)}"
+    if isinstance(outputs, (list, tuple)):
+        structure += f", len={len(outputs)}, item_types={[type(item) for item in outputs[:5]]}"
+    elif isinstance(outputs, dict):
+        structure += f", keys={list(outputs.keys())}"
+    raise RuntimeError(
+        "Unexpected predictor output structure. Expected either (labels, boxes, scores) "
+        f"or a dict containing them. Got {structure}"
+    )
 
 
 def _xywh_to_xyxy(box: list[float] | tuple[float, float, float, float]) -> list[float]:
@@ -239,13 +272,13 @@ def _sort_predictions(predictions: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def filter_predictions(predictions: list[dict[str, Any]], score_threshold: float) -> list[dict[str, Any]]:
-    """Filter predictions by threshold and sort descending."""
+    """Filter predictions by score threshold and sort descending."""
     filtered = [dict(item) for item in predictions if float(item["score"]) >= float(score_threshold)]
     return _sort_predictions(filtered)
 
 
 def load_annotations(annotations: str | Path | dict[str, Any] | list[Any] | None, use_cache: bool = True) -> Any:
-    """Load annotations once and optionally cache file JSON."""
+    """Load annotations once and optionally cache file-based JSON."""
     if annotations is None:
         return None
 
@@ -268,7 +301,7 @@ def load_annotations(annotations: str | Path | dict[str, Any] | list[Any] | None
 
 
 def get_image_record(annotations: str | Path | dict[str, Any] | list[Any] | None, image_path: Path) -> dict[str, Any]:
-    """Return COCO image record for one image path."""
+    """Return the COCO image record for one image path."""
     data = load_annotations(annotations, use_cache=True)
     if not isinstance(data, dict) or "images" not in data:
         raise ValueError("COCO annotations with an 'images' list are required.")
@@ -296,7 +329,7 @@ def get_image_record(annotations: str | Path | dict[str, Any] | list[Any] | None
 
 
 def _extract_gt_boxes_from_coco(coco: dict[str, Any], image_path: Path) -> list[list[float]]:
-    """Extract GT boxes for one image from COCO dict."""
+    """Extract GT boxes for one image from a COCO annotations dict."""
     image_record = get_image_record(coco, image_path)
     image_id = image_record["id"]
     gt_boxes = []
@@ -484,57 +517,16 @@ def evaluate_predictions(predictions: list[dict[str, Any]], gt_boxes: list[list[
 def _get_sorted_category_ids(annotations_data: dict[str, Any]) -> list[int]:
     """Return sorted category ids from annotations."""
     categories = annotations_data.get("categories", [])
-    category_ids = sorted(int(cat["id"]) for cat in categories if isinstance(cat, dict) and "id" in cat)
+    category_ids = sorted(int(cat["id"]) for cat in categories if "id" in cat)
     if category_ids:
         return category_ids
 
-    inferred_ids = sorted({int(ann["category_id"]) for ann in annotations_data.get("annotations", []) if isinstance(ann, dict) and "category_id" in ann})
+    inferred_ids = sorted({int(ann["category_id"]) for ann in annotations_data.get("annotations", []) if "category_id" in ann})
     return inferred_ids or [1]
 
 
-def _get_coco_categories(annotations_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return valid COCO categories, inferring them when missing."""
-    raw_categories = annotations_data.get("categories", [])
-
-    if isinstance(raw_categories, list) and raw_categories:
-        categories = []
-        seen_ids: set[int] = set()
-
-        for cat in raw_categories:
-            if not isinstance(cat, dict) or "id" not in cat:
-                continue
-
-            category_id = int(cat["id"])
-            if category_id in seen_ids:
-                continue
-
-            categories.append(
-                {
-                    "id": category_id,
-                    "name": str(cat.get("name", f"class_{category_id}")),
-                }
-            )
-            seen_ids.add(category_id)
-
-        if categories:
-            return sorted(categories, key=lambda item: int(item["id"]))
-
-    inferred_ids = sorted(
-        {
-            int(ann["category_id"])
-            for ann in annotations_data.get("annotations", [])
-            if isinstance(ann, dict) and "category_id" in ann
-        }
-    )
-
-    if inferred_ids:
-        return [{"id": category_id, "name": f"class_{category_id}"} for category_id in inferred_ids]
-
-    return [{"id": 1, "name": "class_1"}]
-
-
 def _map_prediction_label_to_category_id(pred_label: int, category_ids: list[int], label_to_category_id: dict[int, int] | None) -> int:
-    """Map model label ids to COCO category ids."""
+    """Map model labels to COCO category ids."""
     if label_to_category_id is not None and pred_label in label_to_category_id:
         return int(label_to_category_id[pred_label])
 
@@ -543,13 +535,10 @@ def _map_prediction_label_to_category_id(pred_label: int, category_ids: list[int
 
     if pred_label in category_ids:
         return int(pred_label)
-
     if (pred_label + 1) in category_ids:
         return int(pred_label + 1)
-
     if 0 <= pred_label < len(category_ids):
         return int(category_ids[pred_label])
-
     if 1 <= pred_label <= len(category_ids):
         return int(category_ids[pred_label - 1])
 
@@ -557,15 +546,14 @@ def _map_prediction_label_to_category_id(pred_label: int, category_ids: list[int
 
 
 def compute_coco_ap_metrics(annotations_data: dict[str, Any], image_paths: list[Path], predictions_by_image: dict[str, list[dict[str, Any]]], label_to_category_id: dict[int, int] | None = None) -> dict[str, Any]:
-    """Compute official COCO AP metrics on processed image subset."""
+    """Compute official COCO AP metrics with pycocotools."""
     try:
         from pycocotools.coco import COCO
         from pycocotools.cocoeval import COCOeval
     except ImportError as exc:
-        raise ImportError("pycocotools is required for official COCO AP50/AP50:95 evaluation. Install it with pip install pycocotools.") from exc
+        raise ImportError("pycocotools is required. Install it with: pip install pycocotools") from exc
 
-    if not isinstance(annotations_data, dict):
-        raise ValueError("annotations_data must be a loaded COCO dict for COCO AP evaluation.")
+    category_ids = _get_sorted_category_ids(annotations_data)
 
     if not image_paths:
         return {
@@ -574,7 +562,7 @@ def compute_coco_ap_metrics(annotations_data: dict[str, Any], image_paths: list[
             "per_iou_rows": [],
             "total_gt": 0,
             "total_predictions": 0,
-            "gt_category_ids": [],
+            "gt_category_ids": category_ids,
             "prediction_category_ids": [],
         }
 
@@ -582,17 +570,10 @@ def compute_coco_ap_metrics(annotations_data: dict[str, Any], image_paths: list[
     image_ids = [int(record["id"]) for record in image_records]
     image_id_set = set(image_ids)
 
-    categories = _get_coco_categories(annotations_data)
-    category_ids = sorted(int(cat["id"]) for cat in categories)
-
     gt_dataset = {
         "images": [dict(record) for record in image_records],
-        "annotations": [
-            dict(ann)
-            for ann in annotations_data.get("annotations", [])
-            if int(ann.get("image_id", -1)) in image_id_set
-        ],
-        "categories": categories,
+        "annotations": [dict(ann) for ann in annotations_data.get("annotations", []) if int(ann.get("image_id", -1)) in image_id_set],
+        "categories": [dict(cat) for cat in annotations_data.get("categories", [])],
     }
     if "info" in annotations_data:
         gt_dataset["info"] = annotations_data["info"]
@@ -600,6 +581,7 @@ def compute_coco_ap_metrics(annotations_data: dict[str, Any], image_paths: list[
         gt_dataset["licenses"] = annotations_data["licenses"]
 
     detections = []
+    prediction_category_ids: set[int] = set()
 
     for image_path, image_record in zip(image_paths, image_records):
         image_name = image_path.name
@@ -610,6 +592,7 @@ def compute_coco_ap_metrics(annotations_data: dict[str, Any], image_paths: list[
                 category_ids=category_ids,
                 label_to_category_id=label_to_category_id,
             )
+            prediction_category_ids.add(int(category_id))
             bbox_xywh = pred.get("bbox_xywh") or _xyxy_to_xywh(pred["bbox_xyxy"])
             detections.append(
                 {
@@ -622,16 +605,6 @@ def compute_coco_ap_metrics(annotations_data: dict[str, Any], image_paths: list[
 
     total_gt = len(gt_dataset["annotations"])
     total_predictions = len(detections)
-    prediction_category_ids = sorted({int(det["category_id"]) for det in detections}) if detections else []
-    unknown_category_ids = sorted(set(prediction_category_ids) - set(category_ids))
-
-    if unknown_category_ids:
-        raise ValueError(
-            "Predictions contain category ids not present in GT annotations. "
-            f"GT category ids: {category_ids}. "
-            f"Prediction category ids: {prediction_category_ids}. "
-            f"Unknown prediction ids: {unknown_category_ids}."
-        )
 
     if total_gt == 0 or total_predictions == 0:
         per_iou_rows = []
@@ -651,7 +624,7 @@ def compute_coco_ap_metrics(annotations_data: dict[str, Any], image_paths: list[
             "total_gt": int(total_gt),
             "total_predictions": int(total_predictions),
             "gt_category_ids": category_ids,
-            "prediction_category_ids": prediction_category_ids,
+            "prediction_category_ids": sorted(prediction_category_ids),
         }
 
     coco_gt = COCO()
@@ -661,20 +634,12 @@ def compute_coco_ap_metrics(annotations_data: dict[str, Any], image_paths: list[
 
     coco_eval = COCOeval(coco_gt, coco_dt, iouType="bbox")
     coco_eval.params.imgIds = image_ids
-    coco_eval.params.catIds = category_ids
     coco_eval.evaluate()
     coco_eval.accumulate()
     with contextlib.redirect_stdout(io.StringIO()):
         coco_eval.summarize()
 
     precision = coco_eval.eval["precision"]
-    if precision.ndim != 5 or precision.shape[2] == 0:
-        raise RuntimeError(
-            "COCOeval returned an empty category dimension. "
-            f"GT category ids: {category_ids}. "
-            f"Prediction category ids: {prediction_category_ids}."
-        )
-
     per_iou_rows = []
     for iou_index, iou_threshold in enumerate(coco_eval.params.iouThrs):
         iou_precision = precision[iou_index, :, :, 0, 2]
@@ -689,30 +654,19 @@ def compute_coco_ap_metrics(annotations_data: dict[str, Any], image_paths: list[
             }
         )
 
-    ap50 = float(coco_eval.stats[1])
-    ap50_95 = float(coco_eval.stats[0])
-
-    if ap50 < 0.0 or ap50_95 < 0.0:
-        raise RuntimeError(
-            "COCOeval returned negative AP values. "
-            f"GT category ids: {category_ids}. "
-            f"Prediction category ids: {prediction_category_ids}. "
-            "This usually means the COCO category setup is malformed."
-        )
-
     return {
-        "ap50": ap50,
-        "ap50_95": ap50_95,
+        "ap50": float(coco_eval.stats[1]),
+        "ap50_95": float(coco_eval.stats[0]),
         "per_iou_rows": per_iou_rows,
         "total_gt": int(total_gt),
         "total_predictions": int(total_predictions),
         "gt_category_ids": category_ids,
-        "prediction_category_ids": prediction_category_ids,
+        "prediction_category_ids": sorted(prediction_category_ids),
     }
 
 
 def _render_detection_image(image_path: Path, gt_boxes: list[list[float]], prediction_details: list[dict[str, Any]], render_scale: int = 10, line_width: int = 5) -> Image.Image:
-    """Render enlarged image with GT and prediction boxes."""
+    """Render enlarged image with blue GT, green TP, red FP boxes."""
     if render_scale < 1:
         raise ValueError(f"render_scale must be >= 1, got {render_scale}")
     if line_width < 1:
@@ -737,7 +691,7 @@ def _render_detection_image(image_path: Path, gt_boxes: list[list[float]], predi
 
 
 def save_detection_image(image: str | Path, gt_boxes: list[list[float]], prediction_details: list[dict[str, Any]], output_path: str | Path, render_scale: int = 10, line_width: int = 5) -> None:
-    """Save one rendered detection image to disk."""
+    """Save rendered detection image."""
     image_path = Path(image).resolve()
     output_path = Path(output_path).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -753,7 +707,7 @@ def save_detection_image(image: str | Path, gt_boxes: list[list[float]], predict
 
 
 def show_detections_for_image(image: str | Path, gt_boxes: list[list[float]], prediction_details: list[dict[str, Any]], title: str | None = None, render_scale: int = 10, line_width: int = 5) -> None:
-    """Show one rendered detection image."""
+    """Display rendered detection image."""
     image_path = Path(image).resolve()
     rendered = _render_detection_image(
         image_path=image_path,
@@ -772,7 +726,7 @@ def show_detections_for_image(image: str | Path, gt_boxes: list[list[float]], pr
 
 
 def prediction_details_to_rows(image_name: str, image_id: int, evaluation_scores: dict[str, Any]) -> list[dict[str, Any]]:
-    """Convert per-prediction details to flat rows."""
+    """Convert per-prediction details to flat spreadsheet rows."""
     rows = []
     for item in evaluation_scores.get("prediction_details", []):
         rows.append(
@@ -798,7 +752,7 @@ def prediction_details_to_rows(image_name: str, image_id: int, evaluation_scores
 
 
 def gt_details_to_rows(image_name: str, image_id: int, evaluation_scores: dict[str, Any]) -> list[dict[str, Any]]:
-    """Convert per-GT details to flat rows."""
+    """Convert per-GT details to flat spreadsheet rows."""
     rows = []
     for item in evaluation_scores.get("gt_details", []):
         rows.append(
@@ -854,7 +808,7 @@ def image_summary_row(image_name: str, image_id: int, evaluation_scores: dict[st
 
 
 def gt_sample_summary_rows(image_name: str, image_id: int, evaluation_scores: dict[str, Any], score_threshold: float, iou_threshold: float) -> list[dict[str, Any]]:
-    """Create one row per GT box with image-level context."""
+    """Create one row per GT box with best predicted IoU and image-level context."""
     rows = []
     for item in evaluation_scores.get("gt_details", []):
         sample_status = "false_negative" if bool(item["is_fn"]) else "matched_tp"
@@ -915,7 +869,7 @@ def load_detector(pth: str | Path, config: str | Path, device: str | None = None
 
 
 def run_loaded_detection_raw(detector: LoadedDetector, image: str | Path) -> list[dict[str, Any]]:
-    """Run one image and return all raw predictions."""
+    """Run one image and return all raw predictions before thresholding."""
     image_path = Path(image).resolve()
 
     if not image_path.exists():
@@ -926,14 +880,17 @@ def run_loaded_detection_raw(detector: LoadedDetector, image: str | Path) -> lis
     with torch.no_grad():
         outputs = detector.predictor(image_tensor, orig_size)
 
-    if not isinstance(outputs, (tuple, list)) or len(outputs) != 3:
-        raise RuntimeError(f"Unexpected predictor output type: {type(outputs)}")
-
-    labels, boxes, scores = outputs
+    labels, boxes, scores = _extract_predictor_outputs(outputs)
 
     labels_np = _strip_batch_dim(labels).reshape(-1)
     boxes_np = _strip_batch_dim(boxes).reshape(-1, 4)
     scores_np = _strip_batch_dim(scores).reshape(-1)
+
+    if not (len(labels_np) == len(boxes_np) == len(scores_np)):
+        raise RuntimeError(
+            "Predictor outputs have inconsistent lengths after conversion. "
+            f"labels={len(labels_np)}, boxes={len(boxes_np)}, scores={len(scores_np)}"
+        )
 
     predictions: list[dict[str, Any]] = []
     for label, box, score in zip(labels_np, boxes_np, scores_np):
