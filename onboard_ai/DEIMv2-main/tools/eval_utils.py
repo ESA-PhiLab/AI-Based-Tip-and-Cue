@@ -883,9 +883,9 @@ def parse_loss_curves_from_jsonl_logtxt(log_path: Path) -> list[dict[str, Any]]:
         cand = log_path / "log.txt"
         if cand.exists():
             log_path = cand
-
-    if log_path.name != "log.txt":
-        cand = log_path.parent / "log.txt"
+    else:
+        fold_dir = log_path.parent.parent if log_path.parent.name == "logs" else log_path.parent
+        cand = fold_dir / "log.txt"
         if cand.exists():
             log_path = cand
 
@@ -981,8 +981,15 @@ def parse_loss_curves_from_log(log_path: Path) -> list[dict[str, Any]]:
     log_path = Path(log_path)
 
     rows = parse_loss_curves_from_jsonl_logtxt(log_path)
-    if not rows:
+
+    has_real_loss_data = any(
+        any(k != "epoch" for k in row.keys())
+        for row in rows
+    )
+
+    if not rows or not has_real_loss_data:
         rows = parse_loss_curves_from_stdout_log(log_path)
+
     if not rows:
         return []
 

@@ -673,24 +673,48 @@ def main() -> int:
 
     folds = find_folds(results_dir)
 
-    if not folds:
-        print(f"[evaluate_models.py] ERROR: no folds found under {results_dir / 'cross_validation'}")
+    final_dir = results_dir / "final_location_holdout"
+    has_final_dir = final_dir.exists() and final_dir.is_dir()
+
+    if not folds and not has_final_dir:
+        print(
+            f"[evaluate_models.py] ERROR: no folds found under {results_dir / 'cross_validation'} "
+            f"and no final_location_holdout found under {final_dir}"
+        )
         return 2
+
+    if not folds and has_final_dir:
+        print(
+            "[evaluate_models.py] INFO: no cross-validation folds found; "
+            "continuing with final_location_holdout only.",
+            flush=True,
+        )
 
     fold_train_reports: list[dict[str, Any]] = []
     for f in folds:
         rep = _write_fold_train_outputs(f, run_name)
         fold_train_reports.append({"fold": f.name, **rep})
 
-    # Also generate the same per-epoch AP/AR plots for the final model folder (if present).
-    final_dir = results_dir / "final_location_holdout"
     final_train_report: dict[str, Any] | None = None
-    if final_dir.exists() and final_dir.is_dir():
+    if has_final_dir:
+        rep = _write_fold_train_outputs(final_dir, run_name)
+        final_train_report = {"folder": final_dir.name, **rep}
+    fold_train_reports: list[dict[str, Any]] = []
+    for f in folds:
+        rep = _write_fold_train_outputs(f, run_name)
+        fold_train_reports.append({"fold": f.name, **rep})
+
+    # Also generate the same per-epoch AP/AR plots for the final model folder (if present).
+    final_train_report: dict[str, Any] | None = None
+    if has_final_dir:
         rep = _write_fold_train_outputs(final_dir, run_name)
         final_train_report = {"folder": final_dir.name, **rep}
 
     overview_dir = results_dir / "overview"
     overview_dir.mkdir(parents=True, exist_ok=True)
+
+    final_val = _collect_eval_metrics_for_final(results_dir, "validation", args.eval_name)
+    final_test = _collect_eval_metrics_for_final(results_dir, "test", args.eval_name)
 
     # Collect VAL rows/keys
     val_rows: list[dict[str, Any]] = []
@@ -703,6 +727,9 @@ def main() -> int:
             if eval_utils._safe_float(m.get(k)) is not None:
                 val_keys.add(k)
         val_rows.append(row)
+    for k in final_val.keys():
+        if eval_utils._safe_float(final_val.get(k)) is not None:
+            val_keys.add(k)
     val_keys_sorted = sorted(val_keys)
 
     # Collect TEST rows/keys
@@ -716,26 +743,44 @@ def main() -> int:
             if eval_utils._safe_float(m.get(k)) is not None:
                 test_keys.add(k)
         test_rows.append(row)
+    for k in final_test.keys():
+        if eval_utils._safe_float(final_test.get(k)) is not None:
+            test_keys.add(k)
     test_keys_sorted = sorted(test_keys)
 
-    # Subfolder overviews: add FINAL row to both validation and test overview.xlsx (excluded from mean/std)
+    final_val_row = {"fold": "FINAL", **final_val} if final_val else None
+    final_test_row = {"fold": "FINAL", **final_test} if final_test else None
+
+    val_mean_rows = list(val_rows)
+    if not val_mean_rows and final_val_row is not None:
+        val_mean_rows = [final_val_row]
+
+    test_mean_rows = list(test_rows)
+    if not test_mean_rows and final_test_row is not None:
+        test_mean_rows = [final_test_row]
+
+    val_plot_rows = list(val_rows)
+    if not val_plot_rows and final_val_row is not None:
+        val_plot_rows = [final_val_row]
+
+    test_plot_rows = list(test_rows)
+    if not test_plot_rows and final_test_row is not None:
+        test_plot_rows = [final_test_row]
+
+    # Subfolder overviews
     val_dir = overview_dir / "validation"
     val_dir.mkdir(parents=True, exist_ok=True)
-    final_val = _collect_eval_metrics_for_final(results_dir, "validation", args.eval_name)
-    final_val_row = ({"fold": "FINAL", **final_val} if final_val else None)
     _write_overview_xlsx_with_final(val_dir / f"overview_{run_name}.xlsx", val_rows, val_keys_sorted, final_val_row)
-    _write_overview_mean_std_xlsx(val_dir / f"overview_mean_std_{run_name}.xlsx", val_rows, val_keys_sorted)
-    if val_keys_sorted:
-        _plot_overview_bar_and_box(val_dir / "plots", val_rows, val_keys_sorted, run_name)
+    _write_overview_mean_std_xlsx(val_dir / f"overview_mean_std_{run_name}.xlsx", val_mean_rows, val_keys_sorted)
+    if val_keys_sorted and val_plot_rows:
+        _plot_overview_bar_and_box(val_dir / "plots", val_plot_rows, val_keys_sorted, run_name)
 
     test_dir = overview_dir / "test"
     test_dir.mkdir(parents=True, exist_ok=True)
-    final_test = _collect_eval_metrics_for_final(results_dir, "test", args.eval_name)
-    final_test_row = ({"fold": "FINAL", **final_test} if final_test else None)
     _write_overview_xlsx_with_final(test_dir / f"overview_{run_name}.xlsx", test_rows, test_keys_sorted, final_test_row)
-    _write_overview_mean_std_xlsx(test_dir / f"overview_mean_std_{run_name}.xlsx", test_rows, test_keys_sorted)
-    if test_keys_sorted:
-        _plot_overview_bar_and_box(test_dir / "plots", test_rows, test_keys_sorted, run_name)
+    _write_overview_mean_std_xlsx(test_dir / f"overview_mean_std_{run_name}.xlsx", test_mean_rows, test_keys_sorted)
+    if test_keys_sorted and test_plot_rows:
+        _plot_overview_bar_and_box(test_dir / "plots", test_plot_rows, test_keys_sorted, run_name)
 
     _copy_predictions_to_overview(val_dir, folds, results_dir, "validation")
     _copy_metrics_extra_to_overview(val_dir, folds, results_dir, "validation")
@@ -797,12 +842,25 @@ def main() -> int:
             out.append(rr)
         return out
 
+    val_keys_root = [k for k in val_keys_sorted if _keep_root_key(k)]
+    test_keys_root = [k for k in test_keys_sorted if _keep_root_key(k)]
+
+    def _filter_rows(rows: list[dict[str, Any]], keys: list[str]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            rr: dict[str, Any] = {"fold": r.get("fold", "")}
+            for k in keys:
+                rr[k] = r.get(k, "")
+            out.append(rr)
+        return out
+
     val_rows_root = _filter_rows(val_rows, val_keys_root)
     test_rows_root = _filter_rows(test_rows, test_keys_root)
 
     final_val_root = None
     if final_val_row is not None:
         final_val_root = {"fold": "FINAL", **{k: final_val_row.get(k, "") for k in val_keys_root}}
+
     final_test_root = None
     if final_test_row is not None:
         final_test_root = {"fold": "FINAL", **{k: final_test_row.get(k, "") for k in test_keys_root}}
@@ -815,8 +873,15 @@ def main() -> int:
         ],
     )
 
-    # Keep top-level mean/std as validation folds-only (so it stays well-defined)
-    _write_overview_mean_std_xlsx(overview_dir / f"overview_ALL_mean_std_{run_name}.xlsx", val_rows_root, val_keys_root)
+    val_stats_root_rows = list(val_rows_root)
+    if not val_stats_root_rows and final_val_root is not None:
+        val_stats_root_rows = [final_val_root]
+
+    _write_overview_mean_std_xlsx(
+        overview_dir / f"overview_ALL_mean_std_{run_name}.xlsx",
+        val_stats_root_rows,
+        val_keys_root,
+    )
     _write_fold_split_overview_xlsx(overview_dir / f"overview_ALL_fold_split_{run_name}.xlsx", folds)
 
     write_json(

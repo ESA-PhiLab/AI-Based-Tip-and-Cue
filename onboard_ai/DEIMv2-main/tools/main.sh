@@ -5,10 +5,10 @@ LAUNCH_DIR="$(pwd)"
 
 # ===================== USER SETTINGS =====================
 
-FOLDER_ID=X
-DEFAULT_GPU_CHOICE="X"
+FOLDER_ID=12
+DEFAULT_GPU_CHOICE="5"
 
-RUN_NAME="X"
+RUN_NAME="26_texture_offnadir"
 
 BASE_CONFIG="configs/7_schedule/${RUN_NAME}.yml"
 PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
@@ -19,18 +19,18 @@ PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 # BASE_CONFIG="configs/deimv2/deimv2_hgnetv2_femto_coco_whale.yml"
 # PRETRAINED="ckpts/deimv2_hgnetv2_femto_coco.pth"
 
-TRAIN_ID="reflection_offnadir_glint_255"
+TRAIN_ID="texture_offnadir_255"
 TEST_ID="reflection_offnadir_glint_255"
 
 K_FOLDS="4"
 
 TRAIN_CV="0"
-TRAIN_FINAL="1"
-VAL_TEST_CV="0"      # to eval existing folds under cross_validation/
-VAL_TEST_FINAL="1"   # to eval final_location_holdout/ (if it exists)
-DUMP_COCO_JSON="1"   # optional, but you already use it
+TRAIN_FINAL="0"
+VAL_TEST_CV="0"
+VAL_TEST_FINAL="1"
+DUMP_COCO_JSON="1"
 
-EVAL_AFTER_EACH_FOLD="1"     # 1|0
+EVAL_AFTER_EACH_FOLD="0"     # 1|0
 MAKE_OVERVIEW="1"            # 1|0
 
 COMPUTE_DATASET_STATS="1"   # 1|0
@@ -610,7 +610,7 @@ fi
 
 # ------------------ 3) (Re)run validation/test evaluation (and dump predictions) ------------------
 
-if [[ "${DUMP_COCO_JSON}" == "1" || "${VAL_TEST_CV}" == "1" ]]; then
+if [[ "${VAL_TEST_CV}" == "1" ]]; then
   echo "[main.sh] (Re)running fold evaluation for VAL/TEST under cross_validation/ ..."
   python "${REPO_ROOT}/tools/dump_predictions_all.py" \
   --repo_root "${REPO_ROOT}" \
@@ -629,23 +629,23 @@ if [[ "${DUMP_COCO_JSON}" == "1" || "${VAL_TEST_CV}" == "1" ]]; then
   --optimize_score_thr "${OPTIMIZE_SCORE_THR}"
 fi
 
-if [[ "${DUMP_COCO_JSON}" == "1" || "${VAL_TEST_FINAL}" == "1" ]]; then
-  echo "[main.sh] (Re)running final evaluation for VAL/TEST under final_location_holdout/ (if present) ..."
+if [[ "${VAL_TEST_CV}" == "1" ]]; then
+  echo "[main.sh] (Re)running fold evaluation for VAL/TEST under cross_validation/ ..."
   python "${REPO_ROOT}/tools/dump_predictions_all.py" \
-    --repo_root "${REPO_ROOT}" \
-    --results_dir "${OUT_DIR}" \
-    --img_root "${IMG_ROOT_TRAIN}" \
-    --img_root_test "${IMG_ROOT_TEST}" \
-    --eval_name "${EVAL_NAME}" \
-    --split "${EVAL_SPLIT}" \
-    --gpus "${EVAL_GPUS}" \
-    --nproc "${EVAL_NPROC}" \
-    --master_port "$((EVAL_MASTER_PORT + 500))" \
-    --overwrite "1" \
-    --label_offset "0" \
-    --include_final "1" \
-    --score_thr "${SCORE_THR}" \
-    --optimize_score_thr "${OPTIMIZE_SCORE_THR}"
+  --repo_root "${REPO_ROOT}" \
+  --results_dir "${OUT_DIR}" \
+  --img_root "${IMG_ROOT_TRAIN}" \
+  --img_root_test "${IMG_ROOT_TEST}" \
+  --eval_name "${EVAL_NAME}" \
+  --split "${EVAL_SPLIT}" \
+  --gpus "${EVAL_GPUS}" \
+  --nproc "${EVAL_NPROC}" \
+  --master_port "${EVAL_MASTER_PORT}" \
+  --overwrite "1" \
+  --label_offset "0" \
+  --include_final "0" \
+  --score_thr "${SCORE_THR}" \
+  --optimize_score_thr "${OPTIMIZE_SCORE_THR}"
 fi
 
 # ------------------ 4) Overview from logs ------------------

@@ -111,8 +111,23 @@ def main() -> int:
     img_root_test = Path(args.img_root_test).resolve() if str(args.img_root_test).strip() else img_root
 
     folds = find_fold_dirs(results_dir)
-    if not folds:
-        raise SystemExit(f"[dump_predictions_all.py] ERROR: no folds found under {results_dir}/cross_validation")
+
+    want_final = str(args.include_final).strip() == "1"
+    final_dir = results_dir / "final_location_holdout"
+    has_final_dir = final_dir.exists() and final_dir.is_dir()
+
+    if not folds and not (want_final and has_final_dir):
+        raise SystemExit(
+            f"[dump_predictions_all.py] ERROR: no folds found under {results_dir}/cross_validation "
+            f"and no usable final_location_holdout found."
+        )
+
+    if not folds and want_final and has_final_dir:
+        print(
+            "[dump_predictions_all.py] INFO: no cross-validation folds found; "
+            "evaluating final_location_holdout only.",
+            flush=True,
+        )
 
     port0 = int(str(args.master_port))
     rc_any = 0
@@ -231,31 +246,74 @@ def main() -> int:
                 if val_ann is not None and not val_ann.exists() and val_ann_s:
                     try:
                         name = Path(val_ann_s).name
-                        val_ann = eval_utils._first_existing([final_dir / "splits" / name, final_dir / name]) or val_ann
+                        val_ann = eval_utils._first_existing([
+                            final_dir / "splits" / name,
+                            final_dir / name,
+                            results_dir / name,
+                        ]) or val_ann
                     except Exception:
                         pass
 
-                if args.split in ("val", "both") and val_ann is not None and val_ann.exists():
-                    out_val = final_dir / "eval_val" / str(args.eval_name)
-                    rc = run_eval_one(
-                        repo_root=repo_root,
-                        base_config=final_base_cfg,
-                        checkpoint=ckpt,
-                        img_root=img_root,
-                        ann=val_ann,
-                        out_dir=out_val,
-                        gpus=args.gpus,
-                        nproc=args.nproc,
-                        master_port=str(port0 + 500),
-                        overwrite=args.overwrite,
-                        label_offset=args.label_offset,
-                        score_thr=args.score_thr,
-                        optimize_score_thr=args.optimize_score_thr,
-                    )
-                    if rc != 0:
-                        rc_any = rc_any or rc
-                    eval_utils.copy_eval_artifacts_to_metrics_folder(out_val, final_dir, "validation", overwrite=str(args.overwrite))
+                if args.split in ("val", "both"):
+                    if val_ann is None or not val_ann.exists():
+                        print("[dump_predictions_all.py] SKIP final val: ann missing/unresolvable", flush=True)
+                    else:
+                        out_val = final_dir / "eval_val" / str(args.eval_name)
+                        rc = run_eval_one(
+                            repo_root=repo_root,
+                            base_config=final_base_cfg,
+                            checkpoint=ckpt,
+                            img_root=img_root,
+                            ann=val_ann,
+                            out_dir=out_val,
+                            gpus=args.gpus,
+                            nproc=args.nproc,
+                            master_port=str(port0 + 500),
+                            overwrite=args.overwrite,
+                            label_offset=args.label_offset,
+                            score_thr=args.score_thr,
+                            optimize_score_thr=args.optimize_score_thr,
+                        )
+                        if rc != 0:
+                            rc_any = rc_any or rc
+                        eval_utils.copy_eval_artifacts_to_metrics_folder(out_val, final_dir, "validation", overwrite=str(args.overwrite))
 
+                test_ann_s = str(meta.get("coco_test", "")).strip()
+                test_ann = Path(test_ann_s).expanduser() if test_ann_s else None
+                if test_ann is not None and not test_ann.exists() and test_ann_s:
+                    try:
+                        name = Path(test_ann_s).name
+                        test_ann = eval_utils._first_existing([
+                            final_dir / "splits" / name,
+                            final_dir / name,
+                            results_dir / name,
+                        ]) or test_ann
+                    except Exception:
+                        pass
+
+                if args.split in ("test", "both"):
+                    if test_ann is None or not test_ann.exists():
+                        print("[dump_predictions_all.py] SKIP final test: ann missing/unresolvable", flush=True)
+                    else:
+                        out_test = final_dir / "eval_test" / str(args.eval_name)
+                        rc = run_eval_one(
+                            repo_root=repo_root,
+                            base_config=final_base_cfg,
+                            checkpoint=ckpt,
+                            img_root=img_root_test,
+                            ann=test_ann,
+                            out_dir=out_test,
+                            gpus=args.gpus,
+                            nproc=args.nproc,
+                            master_port=str(port0 + 600),
+                            overwrite=args.overwrite,
+                            label_offset=args.label_offset,
+                            score_thr=args.score_thr,
+                            optimize_score_thr=args.optimize_score_thr,
+                        )
+                        if rc != 0:
+                            rc_any = rc_any or rc
+                        eval_utils.copy_eval_artifacts_to_metrics_folder(out_test, final_dir, "test", overwrite=str(args.overwrite))
                 test_ann_s = str(meta.get("coco_test", "")).strip()
                 if args.split in ("test", "both") and test_ann_s:
                     test_ann = Path(test_ann_s).expanduser()

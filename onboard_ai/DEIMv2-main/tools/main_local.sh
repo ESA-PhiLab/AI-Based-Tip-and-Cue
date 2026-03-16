@@ -20,12 +20,12 @@ DEFAULT_GPU_CHOICE="0"
 
 TRAIN_CV="0"                 # 1|0
 VAL_TEST_CV="0"              # 1|0 (rerun validation/test evaluation without training)
-EVAL_AFTER_EACH_FOLD="1"     # 1|0
-DUMP_COCO_JSON="0"           # 1|0
+EVAL_AFTER_EACH_FOLD="0"     # 1|0
+DUMP_COCO_JSON="1"           # 1|0
 MAKE_OVERVIEW="1"            # 1|0
 
 TRAIN_FINAL="0"              # 1|0
-VAL_TEST_FINAL="0"           # 1|0 (rerun final validation/test evaluation without training)
+VAL_TEST_FINAL="1"           # 1|0 (rerun final validation/test evaluation without training)
 FINAL_VAL_FRAC="0.05"
 FINAL_SEED="42"
 FINAL_MIN_VAL_PER_LOCATION="1"
