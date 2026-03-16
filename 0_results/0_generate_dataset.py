@@ -401,12 +401,12 @@ def iter_generation_jobs(base_dir: Path, dataset_paths: list[Path], location_mod
         rows = read_img_rows(excel_file)
 
         for row in rows:
-            if location_mode in {"random", "all"}:
-                yield folder, excel_file, "combined", None, *row
-
             if location_mode in {"distinct", "all"}:
                 for dataset_folder in dataset_paths:
                     yield folder, excel_file, "distinct", dataset_folder, *row
+
+            if location_mode in {"random", "all"}:
+                yield folder, excel_file, "combined", None, *row
 
 
 def list_images_recursive(folder: Path) -> list[Path]:
@@ -612,6 +612,52 @@ def move_generated_file(src: Path, dst: Path) -> Path:
         dst.unlink()
     shutil.move(str(src), str(dst))
     return dst
+
+
+def copy_generated_file(src: Path, dst: Path) -> Path:
+    """Copy one generated file to destination, overwriting existing file."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        dst.unlink()
+    shutil.copy2(src, dst)
+    return dst
+
+
+def build_row_cache_key(result_folder: Path, row_number: int, detection_id: str) -> tuple[Path, int, str]:
+    """Build cache key for one row inside one result folder."""
+    return result_folder.resolve(), int(row_number), str(detection_id).strip()
+
+
+def copy_cached_outputs_to_mode(result_folder: Path, detection_id: str, saved_image_path: Path, moved_outputs: dict[str, list[Path]], output_mode: str, location_name: str | None) -> tuple[Path, dict[str, list[Path]]]:
+    """Copy already generated outputs into another output mode folder."""
+    safe_id = sanitize_filename(detection_id)
+
+    copied_outputs: dict[str, list[Path]] = {}
+    supporting_dir = get_supporting_dir(
+        result_folder=result_folder,
+        output_mode=output_mode,
+        location_name=location_name,
+    )
+
+    for split_name, files in moved_outputs.items():
+        copied_outputs[split_name] = []
+        split_dst_dir = supporting_dir / split_name
+
+        for src in files:
+            dst = split_dst_dir / f"{safe_id}{src.suffix.lower()}"
+            copied_outputs[split_name].append(copy_generated_file(src, dst))
+
+    satellite_dir = get_satellite_dir(
+        result_folder=result_folder,
+        output_mode=output_mode,
+        location_name=location_name,
+    )
+    copied_saved_image = copy_generated_file(
+        saved_image_path,
+        satellite_dir / f"{safe_id}.png",
+    )
+
+    return copied_saved_image, copied_outputs
 
 
 def move_supporting_outputs(result_folder: Path, detection_id: str, img_file: str, patch_name: str, output_mode: str, location_name: str | None) -> dict[str, list[Path]]:
@@ -1170,6 +1216,7 @@ def main() -> None:
 
     run_idx = 0
     current_folder: Path | None = None
+    pending_all_mode_rows: dict[tuple[Path, int, str], dict[str, dict]] = {}
 
     for (
         result_folder,
@@ -1191,11 +1238,121 @@ def main() -> None:
         if current_folder is None:
             current_folder = result_folder
         elif result_folder != current_folder:
+            unresolved = [
+                key for key in pending_all_mode_rows
+                if key[0] == current_folder.resolve()
+            ]
+            if unresolved:
+                raise RuntimeError(
+                    f"Unresolved cached distinct rows before leaving folder {current_folder}: {unresolved}"
+                )
+
             postprocess_result_folder(current_folder)
             cleanup_worker_root(current_folder)
             current_folder = result_folder
 
         output_mode = get_output_mode(job_mode)
+        row_cache_key = build_row_cache_key(
+            result_folder=result_folder,
+            row_number=row_number,
+            detection_id=detection_id,
+        )
+
+        if location_mode == "all" and job_mode == "combined":
+            cached_by_location = pending_all_mode_rows.get(row_cache_key, {})
+            selected_dataset_folder = choose_dataset_folder(
+                dataset_paths=dataset_choices,
+                forced_dataset_folder=None,
+            )
+            selected_location = selected_dataset_folder.name
+
+            if selected_location not in cached_by_location:
+                available = sorted(cached_by_location.keys())
+                raise RuntimeError(
+                    f"Combined sample requested location '{selected_location}', "
+                    f"but only these distinct samples are cached: {available}"
+                )
+
+            cached = cached_by_location[selected_location]
+
+            saved_image_path, moved_outputs = copy_cached_outputs_to_mode(
+                result_folder=result_folder,
+                detection_id=detection_id,
+                saved_image_path=cached["saved_image_path"],
+                moved_outputs=cached["moved_outputs"],
+                output_mode="random",
+                location_name=None,
+            )
+
+            append_satellite_annotations(
+                result_folder=result_folder,
+                saved_image_path=saved_image_path,
+                meta=cached["meta"],
+                detection_id=detection_id,
+                image_file=cached["image_file"],
+                row_number=row_number,
+                patch_seed=cached["patch_seed"],
+                wind_speed=cached["wind_speed"],
+                location=cached["location"],
+                whale_present=cached["whale_present"],
+                coco_meta=coco_meta,
+                output_mode="random",
+                location_name=None,
+            )
+
+            append_supporting_annotations(
+                result_folder=result_folder,
+                moved_outputs=moved_outputs,
+                meta=cached["meta"],
+                detection_id=detection_id,
+                image_file=cached["image_file"],
+                row_number=row_number,
+                patch_seed=cached["patch_seed"],
+                wind_speed=cached["wind_speed"],
+                location=cached["location"],
+                whale_present=cached["whale_present"],
+                coco_meta=coco_meta,
+                output_mode="random",
+                location_name=None,
+            )
+
+            upsert_generation_row(
+                excel_path=excel_path,
+                row_number=row_number,
+                detection_id=detection_id,
+                wind_speed=cached["wind_speed"],
+                location=cached["location"],
+                image_file=cached["image_file"],
+                patch_seed=cached["patch_seed"],
+                whale_present=cached["whale_present"],
+                rotation_angle_deg=cached["rotation_angle_deg"],
+                mirror_bool=cached["mirror_bool"],
+                patch_name=cached["patch_name"],
+                offnadir_deg=cached["meta"].get("offnadir_deg", None),
+                saved_image=saved_image_path.name,
+                output_mode="random",
+            )
+
+            print(
+                result_folder.name,
+                f"row={row_number}",
+                detection_id,
+                cached["image_file"],
+                f"job_mode={job_mode}",
+                f"location={cached['location']}",
+                f"copied_from_distinct={selected_location}",
+                f"patch_seed={cached['patch_seed']}",
+                f"wind={cached['wind_speed']}",
+                f"whale_present={cached['whale_present']}",
+                f"rotation={cached['rotation_angle_deg']}",
+                f"mirror={cached['mirror_bool']}",
+                f"patch_name={cached['patch_name']}",
+                f"offnadir_deg={cached['meta'].get('offnadir_deg', None)}",
+                saved_image_path.name,
+            )
+
+            pending_all_mode_rows.pop(row_cache_key, None)
+            continue
 
         whale_present, _mode_single = choose_patch_mode()
         rotation_angle_deg, mirror_bool = choose_rotation_and_mirror()
@@ -1318,12 +1475,35 @@ def main() -> None:
             saved_image_path.name,
         )
 
+        if location_mode == "all" and job_mode == "distinct":
+            pending_all_mode_rows.setdefault(row_cache_key, {})[location] = {
+                "saved_image_path": saved_image_path,
+                "moved_outputs": moved_outputs,
+                "meta": meta,
+                "image_file": image_file,
+                "patch_seed": patch_seed,
+                "wind_speed": wind_speed,
+                "location": location,
+                "whale_present": whale_present,
+                "rotation_angle_deg": rotation_angle_deg,
+                "mirror_bool": mirror_bool,
+                "patch_name": patch_name,
+            }
+
         run_idx += 1
 
     if current_folder is not None:
+        unresolved = [
+            key for key in pending_all_mode_rows
+            if key[0] == current_folder.resolve()
+        ]
+        if unresolved:
+            raise RuntimeError(
+                f"Unresolved cached distinct rows before finishing folder {current_folder}: {unresolved}"
+            )
+
         postprocess_result_folder(current_folder)
         cleanup_worker_root(current_folder)
-
 
 if __name__ == "__main__":
     main()
