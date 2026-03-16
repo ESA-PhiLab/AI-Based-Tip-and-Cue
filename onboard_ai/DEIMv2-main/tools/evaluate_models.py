@@ -699,16 +699,6 @@ def main() -> int:
     if has_final_dir:
         rep = _write_fold_train_outputs(final_dir, run_name)
         final_train_report = {"folder": final_dir.name, **rep}
-    fold_train_reports: list[dict[str, Any]] = []
-    for f in folds:
-        rep = _write_fold_train_outputs(f, run_name)
-        fold_train_reports.append({"fold": f.name, **rep})
-
-    # Also generate the same per-epoch AP/AR plots for the final model folder (if present).
-    final_train_report: dict[str, Any] | None = None
-    if has_final_dir:
-        rep = _write_fold_train_outputs(final_dir, run_name)
-        final_train_report = {"folder": final_dir.name, **rep}
 
     overview_dir = results_dir / "overview"
     overview_dir.mkdir(parents=True, exist_ok=True)

@@ -629,23 +629,23 @@ if [[ "${VAL_TEST_CV}" == "1" ]]; then
   --optimize_score_thr "${OPTIMIZE_SCORE_THR}"
 fi
 
-if [[ "${VAL_TEST_CV}" == "1" ]]; then
-  echo "[main.sh] (Re)running fold evaluation for VAL/TEST under cross_validation/ ..."
+if [[ "${VAL_TEST_FINAL}" == "1" ]]; then
+  echo "[main.sh] (Re)running final evaluation for VAL/TEST under final_location_holdout/ ..."
   python "${REPO_ROOT}/tools/dump_predictions_all.py" \
-  --repo_root "${REPO_ROOT}" \
-  --results_dir "${OUT_DIR}" \
-  --img_root "${IMG_ROOT_TRAIN}" \
-  --img_root_test "${IMG_ROOT_TEST}" \
-  --eval_name "${EVAL_NAME}" \
-  --split "${EVAL_SPLIT}" \
-  --gpus "${EVAL_GPUS}" \
-  --nproc "${EVAL_NPROC}" \
-  --master_port "${EVAL_MASTER_PORT}" \
-  --overwrite "1" \
-  --label_offset "0" \
-  --include_final "0" \
-  --score_thr "${SCORE_THR}" \
-  --optimize_score_thr "${OPTIMIZE_SCORE_THR}"
+    --repo_root "${REPO_ROOT}" \
+    --results_dir "${OUT_DIR}" \
+    --img_root "${IMG_ROOT_TRAIN}" \
+    --img_root_test "${IMG_ROOT_TEST}" \
+    --eval_name "${EVAL_NAME}" \
+    --split "${EVAL_SPLIT}" \
+    --gpus "${EVAL_GPUS}" \
+    --nproc "${EVAL_NPROC}" \
+    --master_port "$((EVAL_MASTER_PORT + 500))" \
+    --overwrite "1" \
+    --label_offset "0" \
+    --include_final "1" \
+    --score_thr "${SCORE_THR}" \
+    --optimize_score_thr "${OPTIMIZE_SCORE_THR}"
 fi
 
 # ------------------ 4) Overview from logs ------------------
