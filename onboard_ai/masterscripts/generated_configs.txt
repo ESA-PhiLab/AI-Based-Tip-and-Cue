@@ -1,8 +1,8 @@
-02_lr40_bs256_m00_riou80_mu50_cb50_aug4
-03_lr40_bs256_m00_riou40_mu25_cb25_aug4
-04_lr40_bs256_m00_riou80_mu25_cb25_aug4
-05_lr40_bs256_m00_riou40_mu50_cb50_aug4
-06_lr40_bs256_m00_riou80_mu50_cb25_aug4
-07_lr40_bs256_m00_riou40_mu25_cb50_aug4
-08_lr40_bs256_m00_riou40_mu50_cb25_aug4
-09_lr40_bs256_m00_riou80_mu25_cb50_aug4
+optim_Atto
+optim_Femto
+optim_L
+optim_M
+optim_N
+optim_Pico
+optim_S
+optim_X

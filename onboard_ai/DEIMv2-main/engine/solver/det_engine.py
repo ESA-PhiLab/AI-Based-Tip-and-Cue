@@ -111,17 +111,12 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
         if writer and dist_utils.is_main_process() and (global_step % writer_log_every == 0):
             try:
                 writer.add_scalar("train/loss_total", float(loss_value), global_step)
-            except Exception:
-                pass
-            try:
                 writer.add_scalar("train/lr", float(optimizer.param_groups[0]["lr"]), global_step)
-            except Exception:
-                pass
-            for k, v in loss_dict_reduced.items():
-                try:
+                for k, v in loss_dict_reduced.items():
                     writer.add_scalar(f"train/{k}", float(v), global_step)
-                except Exception:
-                    pass
+            except Exception as e:
+                print(f"[TensorBoard] WARNING: disabling writer after train-step failure: {e}", flush=True)
+                writer = None
         # ----------------------------------------------------
 
         if not math.isfinite(loss_value):
@@ -133,19 +128,26 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
         if writer and dist_utils.is_main_process() and global_step % 10 == 0:
-            writer.add_scalar('Loss/total', loss_value.item(), global_step)
-            for j, pg in enumerate(optimizer.param_groups):
-                writer.add_scalar(f'Lr/pg_{j}', pg['lr'], global_step)
-            for k, v in loss_dict_reduced.items():
-                writer.add_scalar(f'Loss/{k}', v.item(), global_step)
+            try:
+                writer.add_scalar("Loss/total", float(loss_value), global_step)
+                for j, pg in enumerate(optimizer.param_groups):
+                    writer.add_scalar(f"Lr/pg_{j}", float(pg["lr"]), global_step)
+                for k, v in loss_dict_reduced.items():
+                    writer.add_scalar(f"Loss/{k}", float(v), global_step)
+            except Exception as e:
+                print(f"[TensorBoard] WARNING: disabling writer after failure: {e}", flush=True)
+                writer = None
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
 
     if writer and dist_utils.is_main_process() and "loss" in metric_logger.meters:
-        writer.add_scalars("Loss/total_epoch", {"train": float(metric_logger.meters["loss"].global_avg)}, epoch)
-
+        try:
+            writer.add_scalars("Loss/total_epoch", {"train": float(metric_logger.meters["loss"].global_avg)}, epoch)
+        except Exception as e:
+            print(f"[TensorBoard] WARNING: disabling writer after epoch-train failure: {e}", flush=True)
+            writer = None
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
@@ -244,8 +246,11 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
         print(f"Eval loss (global_avg): {metric_logger.meters['loss'].global_avg}")
 
     if writer and dist_utils.is_main_process() and "loss" in metric_logger.meters:
-        writer.add_scalars("Loss/total_epoch", {"val": float(metric_logger.meters["loss"].global_avg)}, epoch)
-
+        try:
+            writer.add_scalars("Loss/total_epoch", {"val": float(metric_logger.meters["loss"].global_avg)}, epoch)
+        except Exception as e:
+            print(f"[TensorBoard] WARNING: disabling writer after epoch-val failure: {e}", flush=True)
+            writer = None
 
     if coco_evaluator is not None:
         coco_evaluator.synchronize_between_processes()

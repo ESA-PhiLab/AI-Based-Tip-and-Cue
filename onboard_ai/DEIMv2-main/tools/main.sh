@@ -5,12 +5,12 @@ LAUNCH_DIR="$(pwd)"
 
 # ===================== USER SETTINGS =====================
 
-FOLDER_ID=12
-DEFAULT_GPU_CHOICE="5"
+FOLDER_ID=X
+DEFAULT_GPU_CHOICE="X"
 
-RUN_NAME="26_texture_offnadir"
+RUN_NAME="X"
 
-BASE_CONFIG="configs/7_schedule/${RUN_NAME}.yml"
+BASE_CONFIG="configs/9_sizes/${RUN_NAME}.yml"
 PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 
 # BASE_CONFIG="configs/deimv2/deimv2_dinov3_m_coco_whale.yml"
@@ -19,13 +19,13 @@ PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 # BASE_CONFIG="configs/deimv2/deimv2_hgnetv2_femto_coco_whale.yml"
 # PRETRAINED="ckpts/deimv2_hgnetv2_femto_coco.pth"
 
-TRAIN_ID="texture_offnadir_255"
+TRAIN_ID="reflection_offnadir_glint_255"
 TEST_ID="reflection_offnadir_glint_255"
 
 K_FOLDS="4"
 
 TRAIN_CV="0"
-TRAIN_FINAL="0"
+TRAIN_FINAL="1"
 VAL_TEST_CV="0"
 VAL_TEST_FINAL="1"
 DUMP_COCO_JSON="1"
@@ -72,8 +72,6 @@ USE_ENV_GPUS="${USE_ENV_GPUS:-1}"
 FORCE_NPROC=""
 
 OVERWRITE_OUTDIR="0"         # 1|0
-
-
 
 # =================== DO NOT EDIT BELOW ===================
 

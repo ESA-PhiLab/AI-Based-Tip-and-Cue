@@ -46,16 +46,16 @@ else:
     flat_dem = False
     exclude_dark = True
 
-nSats_tip = 1
-nSats_cue = 1
+nSats_tip = 2
+nSats_cue = 2
 
-nPlanes_tip = 1
-nPlanes_cue = 1
+nPlanes_tip = 4
+nPlanes_cue = 4
 
-offnadir_limit = 60  # Maximum off-nadir observation angle (deg), max 62.5 deg
+offnadir_limit = 40  # Maximum off-nadir observation angle (deg), max 62.5 deg
 delta_t_tipcue = 5 * 60  # Time delay between Tip and Cue satellite (s)
 
-whale_seed = 17
+whale_seed = 42
 
 if not real_run:
     sim_duration_hours = 10/60 #5826.4/3600
@@ -205,7 +205,7 @@ if real_run:
 
 if not real_run:
     n_targets = 500
-    whale_seed = 17
+    whale_seed = 42
 
 pos_fraction = 1.0
 

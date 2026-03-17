@@ -63,6 +63,10 @@ INPUT_LOCATIONS = [
 #               2) one per-location sample in satellite_images_<location>/supporting_dataset_<location>
 LOCATION_MODE = "all"
 
+
+CHECK_EXIST = True
+
+
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 GLOBAL_ANNS_PATH = PROJECT_ROOT / "dataset" / "create_dataset" / "final_annotations.json"
@@ -187,6 +191,41 @@ def get_satellite_dir(result_folder: Path, output_mode: str, location_name: str 
 def get_supporting_dir(result_folder: Path, output_mode: str, location_name: str | None) -> Path:
     """Return the output supporting directory for this mode/location."""
     return result_folder / f"{SUPPORTING_DIRNAME}{location_suffix(output_mode, location_name)}"
+
+
+def folder_has_any_files(folder: Path) -> bool:
+    """Return True if folder exists and contains at least one file recursively."""
+    return folder.exists() and any(path.is_file() for path in folder.rglob("*"))
+
+
+def should_skip_result_folder(result_folder: Path, dataset_paths: list[Path], location_mode: str) -> bool:
+    """Return True if this run folder already has generated outputs and should be skipped."""
+    mode = validate_location_mode(location_mode)
+
+    paths_to_check: list[Path] = []
+
+    if mode in {"random", "all"}:
+        paths_to_check.append(get_satellite_dir(result_folder, output_mode="random", location_name=None))
+        paths_to_check.append(get_supporting_dir(result_folder, output_mode="random", location_name=None))
+
+    if mode in {"distinct", "all"}:
+        for dataset_folder in dataset_paths:
+            paths_to_check.append(
+                get_satellite_dir(
+                    result_folder,
+                    output_mode="distinct",
+                    location_name=dataset_folder.name,
+                )
+            )
+            paths_to_check.append(
+                get_supporting_dir(
+                    result_folder,
+                    output_mode="distinct",
+                    location_name=dataset_folder.name,
+                )
+            )
+
+    return any(folder_has_any_files(path) for path in paths_to_check)
 
 
 def parse_datetime_utc(value: object) -> datetime:
@@ -381,6 +420,14 @@ def iter_generation_jobs(base_dir: Path, dataset_paths: list[Path], location_mod
 
     for folder in sorted(final_results.iterdir()):
         if not folder.is_dir():
+            continue
+
+        if CHECK_EXIST and should_skip_result_folder(
+            result_folder=folder,
+            dataset_paths=dataset_paths,
+            location_mode=location_mode,
+        ):
+            print(f"[skip] Existing image outputs found in run folder: {folder}")
             continue
 
         excel_file = find_excel_file(folder)
