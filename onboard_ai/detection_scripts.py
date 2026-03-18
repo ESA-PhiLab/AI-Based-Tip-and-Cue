@@ -119,17 +119,55 @@ def _get_eval_size(yaml_cfg: dict[str, Any]) -> tuple[int, int]:
     raise ValueError(f"Unsupported eval_spatial_size in config: {eval_size}")
 
 
-def _uses_dino_normalization(yaml_cfg: dict[str, Any]) -> bool:
-    """Return whether DINO/ImageNet normalization should be applied."""
-    return bool(yaml_cfg.get("DINOv3STAs", False))
-
-
 def _build_image_transforms(yaml_cfg: dict[str, Any]) -> T.Compose:
-    """Build reusable image transforms from config."""
-    size = _get_eval_size(yaml_cfg)
-    ops: list[Any] = [T.Resize(size), T.ToTensor()]
-    if _uses_dino_normalization(yaml_cfg):
-        ops.append(T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+    """Build eval transforms from val_dataloader config, matching solver.val() as closely as possible."""
+    val_cfg = yaml_cfg.get("val_dataloader", {})
+    dataset_cfg = val_cfg.get("dataset", {})
+    transforms_cfg = dataset_cfg.get("transforms", {})
+    ops_cfg = transforms_cfg.get("ops", [])
+
+    ops: list[Any] = []
+
+    if not isinstance(ops_cfg, list):
+        size = _get_eval_size(yaml_cfg)
+        return T.Compose([T.Resize(size), T.ToTensor()])
+
+    for op_cfg in ops_cfg:
+        if not isinstance(op_cfg, dict):
+            continue
+
+        op_type = str(op_cfg.get("type", "")).strip()
+
+        if op_type == "Resize":
+            size = op_cfg.get("size", _get_eval_size(yaml_cfg))
+            if isinstance(size, int):
+                size = (int(size), int(size))
+            elif isinstance(size, (list, tuple)) and len(size) == 2:
+                size = (int(size[0]), int(size[1]))
+            else:
+                raise ValueError(f"Unsupported Resize size in config: {size}")
+            ops.append(T.Resize(size))
+
+        elif op_type == "ConvertPILImage":
+            ops.append(T.ToTensor())
+
+        elif op_type == "Normalize":
+            mean = op_cfg.get("mean")
+            std = op_cfg.get("std")
+            if mean is None or std is None:
+                raise ValueError(f"Normalize op requires mean/std, got: {op_cfg}")
+            ops.append(T.Normalize(mean=[float(v) for v in mean], std=[float(v) for v in std]))
+
+        elif op_type in {"SanitizeBoundingBoxes", "ConvertBoxes"}:
+            continue
+
+    if not any(isinstance(op, T.ToTensor) for op in ops):
+        ops.insert(1 if ops and isinstance(ops[0], T.Resize) else 0, T.ToTensor())
+
+    if not ops:
+        size = _get_eval_size(yaml_cfg)
+        ops = [T.Resize(size), T.ToTensor()]
+
     return T.Compose(ops)
 
 
@@ -271,10 +309,11 @@ def _sort_predictions(predictions: list[dict[str, Any]]) -> list[dict[str, Any]]
     return sorted(predictions, key=lambda item: float(item["score"]), reverse=True)
 
 
-def filter_predictions(predictions: list[dict[str, Any]], score_threshold: float) -> list[dict[str, Any]]:
-    """Filter predictions by score threshold and sort descending."""
+def filter_predictions(predictions: list[dict[str, Any]], score_threshold: float, max_detections: int | None = None) -> list[dict[str, Any]]:
+    """Filter by score, sort descending, and optionally keep top-k detections."""
     filtered = [dict(item) for item in predictions if float(item["score"]) >= float(score_threshold)]
-    return _sort_predictions(filtered)
+    filtered = _sort_predictions(filtered)
+    return filtered[:max_detections] if max_detections is not None else filtered
 
 
 def load_annotations(annotations: str | Path | dict[str, Any] | list[Any] | None, use_cache: bool = True) -> Any:

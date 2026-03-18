@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import json
+import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
-
-from detection_scripts import (
+from run_detection_one import (
+    _compute_overall_detection_stats,
+    _safe_mean,
+    _safe_std,
+    _save_workbook,
     compute_coco_ap_metrics,
     evaluate_predictions,
     extract_gt_boxes,
@@ -26,151 +27,129 @@ from detection_scripts import (
 )
 
 
-def _normalize_excel_value(value: Any) -> Any:
-    """Convert complex values to Excel-safe values."""
-    if isinstance(value, (list, dict)):
-        return json.dumps(value)
-    return value
-
-
-def _write_sheet(workbook: Workbook, sheet_name: str, rows: list[dict[str, Any]]) -> None:
-    """Write one list of dict rows to one worksheet."""
-    worksheet = workbook.create_sheet(title=sheet_name[:31])
-
-    if not rows:
-        worksheet.append(["no_data"])
+def _clear_prediction_images_dir(prediction_images_dir: Path) -> None:
+    """Delete existing rendered prediction images in one folder."""
+    if not prediction_images_dir.exists():
         return
 
-    headers = list(rows[0].keys())
-    worksheet.append(headers)
-
-    for row in rows:
-        worksheet.append([_normalize_excel_value(row.get(header)) for header in headers])
-
-    for column_index, header in enumerate(headers, start=1):
-        max_length = len(str(header))
-        for row_index in range(2, worksheet.max_row + 1):
-            cell_value = worksheet.cell(row=row_index, column=column_index).value
-            cell_length = len(str(cell_value)) if cell_value is not None else 0
-            if cell_length > max_length:
-                max_length = cell_length
-        worksheet.column_dimensions[get_column_letter(column_index)].width = min(max_length + 2, 40)
+    for image_file in prediction_images_dir.iterdir():
+        if image_file.is_file() and image_file.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            image_file.unlink()
 
 
-def _save_workbook(xlsx_path: Path, sheets: dict[str, list[dict[str, Any]]]) -> None:
-    """Write multiple sheet datasets into one XLSX workbook."""
-    workbook = Workbook()
-    default_sheet = workbook.active
-    workbook.remove(default_sheet)
+def _prepare_output_dir(output_dir: Path, overwrite_results: bool) -> Path:
+    """Create fixed or timestamped output directory."""
+    if overwrite_results:
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
 
-    for sheet_name, rows in sheets.items():
-        _write_sheet(workbook, sheet_name, rows)
-
-    xlsx_path.parent.mkdir(parents=True, exist_ok=True)
-    workbook.save(xlsx_path)
-
-
-def _safe_mean(values: list[float]) -> float:
-    """Return mean or 0.0 when empty."""
-    return float(np.mean(values)) if values else 0.0
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamped_output_dir = output_dir.parent / f"{output_dir.name}_{timestamp}"
+    timestamped_output_dir.mkdir(parents=True, exist_ok=True)
+    return timestamped_output_dir
 
 
-def _safe_std(values: list[float]) -> float:
-    """Return std or 0.0 when empty."""
-    return float(np.std(values)) if values else 0.0
+def _find_master_case_directories(master_results_root: Path) -> list[Path]:
+    """Return all scenario/case directories inside the master results folder."""
+    case_dirs = [path for path in master_results_root.iterdir() if path.is_dir()]
+    return sorted(case_dirs)
 
 
-def _compute_overall_detection_stats(image_summary_rows: list[dict[str, Any]], individual_prediction_rows: list[dict[str, Any]], gt_rows: list[dict[str, Any]], positive_sample_best_ious: list[float], positive_sample_best_confidences: list[float], all_sample_best_ious: list[float], all_sample_best_confidences: list[float]) -> list[dict[str, Any]]:
-    """Build aggregate detection statistics rows."""
-    total_tp = int(sum(int(row["tp"]) for row in image_summary_rows))
-    total_fp = int(sum(int(row["fp"]) for row in image_summary_rows))
-    total_fn = int(sum(int(row["fn"]) for row in image_summary_rows))
-    total_gt = int(sum(int(row["num_gt"]) for row in image_summary_rows))
-    total_predictions = int(sum(int(row["num_predictions"]) for row in image_summary_rows))
+def _resolve_image_jobs(case_root: Path, mode: str, distinct_locations: list[str]) -> list[dict[str, Path | str]]:
+    """Resolve which image folders to process inside one case folder."""
+    jobs: list[dict[str, Path | str]] = []
 
-    overall_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
-    overall_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
-    overall_f1 = 2.0 * overall_precision * overall_recall / (overall_precision + overall_recall) if (overall_precision + overall_recall) > 0 else 0.0
+    if mode not in {"random", "distinct", "all"}:
+        raise ValueError("mode must be one of: 'random', 'distinct', 'all'")
 
-    tp_confidences = [float(row["score"]) for row in individual_prediction_rows if bool(row["is_tp"])]
-    fp_confidences = [float(row["score"]) for row in individual_prediction_rows if bool(row["is_fp"])]
-    all_confidences = [float(row["score"]) for row in individual_prediction_rows]
-    tp_ious = [float(row["matched_iou"]) for row in individual_prediction_rows if bool(row["is_tp"]) and row["matched_iou"] is not None]
-    gt_best_ious = [float(row["best_prediction_iou"]) for row in gt_rows]
-    gt_best_confidences = [float(row["best_prediction_score"]) if row["best_prediction_score"] is not None else 0.0 for row in gt_rows]
+    default_images_dir = case_root / "satellite_images"
 
-    return [
-        {"metric": "num_images_processed", "value": len(image_summary_rows)},
-        {"metric": "num_positive_samples", "value": len(positive_sample_best_ious)},
-        {"metric": "num_all_samples", "value": len(all_sample_best_ious)},
-        {"metric": "total_gt_boxes", "value": total_gt},
-        {"metric": "total_reported_predictions_thresholded", "value": total_predictions},
-        {"metric": "total_tp", "value": total_tp},
-        {"metric": "total_fp", "value": total_fp},
-        {"metric": "total_fn", "value": total_fn},
-        {"metric": "overall_precision", "value": overall_precision},
-        {"metric": "overall_recall", "value": overall_recall},
-        {"metric": "overall_f1", "value": overall_f1},
-        {"metric": "avg_prediction_confidence_thresholded", "value": _safe_mean(all_confidences)},
-        {"metric": "std_prediction_confidence_thresholded", "value": _safe_std(all_confidences)},
-        {"metric": "avg_tp_confidence", "value": _safe_mean(tp_confidences)},
-        {"metric": "std_tp_confidence", "value": _safe_std(tp_confidences)},
-        {"metric": "avg_fp_confidence", "value": _safe_mean(fp_confidences)},
-        {"metric": "std_fp_confidence", "value": _safe_std(fp_confidences)},
-        {"metric": "avg_tp_iou", "value": _safe_mean(tp_ious)},
-        {"metric": "std_tp_iou", "value": _safe_std(tp_ious)},
-        {"metric": "avg_best_iou_per_gt_sample", "value": _safe_mean(gt_best_ious)},
-        {"metric": "std_best_iou_per_gt_sample", "value": _safe_std(gt_best_ious)},
-        {"metric": "avg_best_confidence_per_gt_sample", "value": _safe_mean(gt_best_confidences)},
-        {"metric": "std_best_confidence_per_gt_sample", "value": _safe_std(gt_best_confidences)},
-        {"metric": "avg_best_iou_positive_samples", "value": _safe_mean(positive_sample_best_ious)},
-        {"metric": "std_best_iou_positive_samples", "value": _safe_std(positive_sample_best_ious)},
-        {"metric": "avg_best_confidence_positive_samples", "value": _safe_mean(positive_sample_best_confidences)},
-        {"metric": "std_best_confidence_positive_samples", "value": _safe_std(positive_sample_best_confidences)},
-        {"metric": "avg_best_iou_all_samples_negative_zero", "value": _safe_mean(all_sample_best_ious)},
-        {"metric": "std_best_iou_all_samples_negative_zero", "value": _safe_std(all_sample_best_ious)},
-        {"metric": "avg_best_confidence_all_samples_negative_zero", "value": _safe_mean(all_sample_best_confidences)},
-        {"metric": "std_best_confidence_all_samples_negative_zero", "value": _safe_std(all_sample_best_confidences)},
-    ]
+    if mode in {"random", "all"}:
+        if default_images_dir.exists():
+            jobs.append(
+                {
+                    "label": "default",
+                    "image_folder_path": default_images_dir,
+                    "output_dir_name": "onboard_detection",
+                }
+            )
+        else:
+            print(f"[WARN] Missing default image folder: {default_images_dir}")
+
+    if mode in {"distinct", "all"}:
+        for location in distinct_locations:
+            image_dir = case_root / f"satellite_images_{location}"
+            if image_dir.exists():
+                jobs.append(
+                    {
+                        "label": location,
+                        "image_folder_path": image_dir,
+                        "output_dir_name": f"onboard_detection_{location}",
+                    }
+                )
+            else:
+                print(f"[WARN] Missing distinct image folder: {image_dir}")
+
+    return jobs
 
 
-def main() -> None:
-    """Run detections, save overlays, and write workbooks."""
-    script_dir = Path(__file__).resolve().parent
-    master_dir = script_dir.parent
-    deimv2_repo_root = script_dir / "DEIMV2-main"
 
-    model_name = "04_reflection_offnadir_glint_255"
-    device = "cpu"
+def process_model_for_image_folder(
+    model_name: str,
+    best_stg_path: Path,
+    config_path: Path,
+    deimv2_repo_root: Path,
+    image_folder_path: Path,
+    output_root_dir: Path,
+    anns_path: Path,
+    device: str,
+    render_scale: int,
+    line_width: int,
+    max_images: int | None,
+    individual_score_threshold: float,
+    individual_iou_threshold: float,
+    ap_score_threshold: float,
+    max_detections_individual: int | None,
+    max_detections_ap: int | None,
+    model_label_to_category_id: dict[int, int] | None,
+    show_detections: bool,
+    save_prediction_images: bool,
+    reset_prediction_images: bool,
+    overwrite_results: bool,
+) -> None:
+    """Run detection for one fixed model on one image folder."""
+    if not best_stg_path.exists():
+        raise FileNotFoundError(f"Missing checkpoint: {best_stg_path}")
 
-    render_scale = 10
-    line_width = 15
+    if not config_path.exists():
+        raise FileNotFoundError(f"Missing config YAML: {config_path}")
 
-    results_folder_path = deimv2_repo_root / "results"
-    image_folder_path = master_dir / "0_results" / "0_FINAL_RESULTS_data_old" / "TC_1x1sat_40deg_5min_17sd" / "satellite_images"
-    model_path = master_dir / "onboard_ai" / "final_models"
+    if not anns_path.exists():
+        raise FileNotFoundError(f"Missing annotations file: {anns_path}")
 
-    best_stg_path = model_path / model_name / "final_location_holdout" / "best_stg2.pth"
-    config_path = model_path / model_name / "final_location_holdout" / "config" / "base_config_with_train_norm.yml"
-    anns_path = image_folder_path / "annotations_postprocessed.json"
+    if not anns_path.is_file():
+        raise FileNotFoundError(f"Annotations path is not a file: {anns_path}")
 
-    max_images: int | None = None
-    individual_score_threshold = 0.3
-    individual_iou_threshold = 0.5
-    ap_score_threshold = 0.0
-
-    # For single-class datasets this is usually correct if the model outputs label 0.
-    # If your model outputs label 1 instead, change this to {1: gt_category_id}.
-    model_label_to_category_id: dict[int, int] | None = None
-
-    show_detections = False
-    save_prediction_images = True
-    reset_prediction_images = True
-
-    run_output_root = image_folder_path.parent / "onboard_detection"
+    run_output_root = _prepare_output_dir(output_root_dir, overwrite_results=overwrite_results)
     prediction_images_dir = run_output_root / "prediction_images"
     results_xlsx_path = run_output_root / "onboard_detection_results.xlsx"
     per_sample_xlsx_path = run_output_root / "onboard_detection_per_sample.xlsx"
+
+    prediction_images_dir.mkdir(parents=True, exist_ok=True)
+
+    if reset_prediction_images:
+        _clear_prediction_images_dir(prediction_images_dir)
+
+    print(f"\n{'=' * 100}")
+    print(f"Processing model: {model_name}")
+    print(f"Image folder: {image_folder_path}")
+    print(f"Checkpoint: {best_stg_path}")
+    print(f"Config: {config_path}")
+    print(f"Annotations: {anns_path}")
+    print(f"Output dir: {run_output_root}")
+    print(f"{'=' * 100}")
 
     detector = load_detector(
         pth=best_stg_path,
@@ -227,14 +206,6 @@ def main() -> None:
     if model_label_to_category_id is None:
         model_label_to_category_id = {0: gt_category_id}
 
-    run_output_root.mkdir(parents=True, exist_ok=True)
-    prediction_images_dir.mkdir(parents=True, exist_ok=True)
-
-    if reset_prediction_images and prediction_images_dir.exists():
-        for image_file in prediction_images_dir.iterdir():
-            if image_file.is_file() and image_file.suffix.lower() in {".png", ".jpg", ".jpeg"}:
-                image_file.unlink()
-
     image_paths = sorted(image_folder_path.glob("*.png"))
     if max_images is not None:
         image_paths = image_paths[:max_images]
@@ -253,7 +224,10 @@ def main() -> None:
     all_sample_best_confidences: list[float] = []
 
     print(f"GT category ids in annotations: {annotation_category_ids}")
-    print(f"Categories ids after normalization: {[int(cat['id']) for cat in annotations_data.get('categories', []) if isinstance(cat, dict) and 'id' in cat]}")
+    print(
+        "Categories ids after normalization: "
+        f"{[int(cat['id']) for cat in annotations_data.get('categories', []) if isinstance(cat, dict) and 'id' in cat]}"
+    )
     print(f"MODEL_LABEL_TO_CATEGORY_ID: {model_label_to_category_id}")
 
     for image_path in image_paths:
@@ -280,6 +254,7 @@ def main() -> None:
         individual_predictions = filter_predictions(
             predictions=raw_predictions,
             score_threshold=individual_score_threshold,
+            max_detections=max_detections_individual,
         )
 
         individual_scores = evaluate_predictions(
@@ -345,7 +320,10 @@ def main() -> None:
 
         if gt_boxes:
             gt_best_ious = [float(item["best_prediction_iou"]) for item in individual_scores["gt_details"]]
-            gt_best_confidences = [float(item["best_prediction_score"]) if item["best_prediction_score"] is not None else 0.0 for item in individual_scores["gt_details"]]
+            gt_best_confidences = [
+                float(item["best_prediction_score"]) if item["best_prediction_score"] is not None else 0.0
+                for item in individual_scores["gt_details"]
+            ]
             best_iou_for_sample = max(gt_best_ious) if gt_best_ious else 0.0
             best_conf_for_sample = max(gt_best_confidences) if gt_best_confidences else 0.0
             positive_sample_best_ious.append(best_iou_for_sample)
@@ -426,7 +404,10 @@ def main() -> None:
 
     run_summary_rows = [
         {
-            "run_name": run_name,
+            "model_name": model_name,
+            "checkpoint": str(best_stg_path),
+            "config": str(config_path),
+            "image_folder": str(image_folder_path),
             "num_images_processed": len(image_paths),
             "positive_sample_count": len(positive_sample_best_ious),
             "all_sample_count": len(all_sample_best_ious),
@@ -493,6 +474,155 @@ def main() -> None:
     print(results_xlsx_path)
     print(per_sample_xlsx_path)
     print(prediction_images_dir)
+
+
+def main() -> None:
+    """Loop over all case folders and selected image folders for one fixed model."""
+    script_dir = Path(__file__).resolve().parent
+    master_dir = script_dir.parent
+    deimv2_repo_root = script_dir / "DEIMV2-main"
+
+
+    model_name = "04_reflection_offnadir_glint_255"
+    master_results = "FINAL_RESULTS"
+
+
+    mode = "all"
+    distinct_locations = ["Auckland2006", "Pelagos2016"]
+    overwrite_results = True
+
+    device = "cpu"
+    render_scale = 10
+    line_width = 15
+
+    max_images: int | None = None
+    individual_score_threshold = 0.3
+    individual_iou_threshold = 0.5
+    ap_score_threshold = 0.0
+
+    max_detections_individual = 100
+    max_detections_ap = None
+
+    model_path = master_dir / "onboard_ai" / "final_models"
+    best_stg_path = model_path / model_name / "final_location_holdout" / "best_stg2.pth"
+    config_path = model_path / model_name / "final_location_holdout" / "config" / "base_config_with_train_norm.yml"
+    master_results_root = master_dir / "0_results" / master_results
+
+    model_label_to_category_id: dict[int, int] | None = None
+
+    show_detections = False
+    save_prediction_images = True
+    reset_prediction_images = True
+
+    if not deimv2_repo_root.exists():
+        raise FileNotFoundError(f"DEIMV2 repo root does not exist: {deimv2_repo_root}")
+
+    if not master_results_root.exists():
+        raise FileNotFoundError(f"Master results root does not exist: {master_results_root}")
+
+    if not best_stg_path.exists():
+        raise FileNotFoundError(f"Model checkpoint does not exist: {best_stg_path}")
+
+    if not config_path.exists():
+        raise FileNotFoundError(f"Model config does not exist: {config_path}")
+
+
+
+    case_dirs = _find_master_case_directories(master_results_root)
+    if not case_dirs:
+        raise FileNotFoundError(f"No case folders found under {master_results_root}")
+
+    all_jobs: list[dict[str, Path | str]] = []
+    for case_dir in case_dirs:
+        case_jobs = _resolve_image_jobs(
+            case_root=case_dir,
+            mode=mode,
+            distinct_locations=distinct_locations,
+        )
+        for job in case_jobs:
+            all_jobs.append(
+                {
+                    "case_dir": case_dir,
+                    "case_name": case_dir.name,
+                    "label": job["label"],
+                    "image_folder_path": job["image_folder_path"],
+                    "output_dir_name": job["output_dir_name"],
+                }
+            )
+
+    if not all_jobs:
+        raise ValueError("No image jobs were resolved across all case folders.")
+
+    print(f"Using fixed model: {model_name}")
+    print(f"Checkpoint: {best_stg_path}")
+    print(f"Config: {config_path}")
+    print(f"Found {len(case_dirs)} case folders inside {master_results_root}.")
+    print(f"Resolved {len(all_jobs)} image folder jobs.")
+    print()
+
+    for job in all_jobs:
+        print(f"Case: {job['case_name']} | Image job: {job['image_folder_path']} -> {job['output_dir_name']}")
+    print()
+
+    processed = 0
+    skipped = 0
+    failed = 0
+
+    total_jobs = len(all_jobs)
+    current_job = 0
+
+    for job in all_jobs:
+        current_job += 1
+        case_dir = Path(job["case_dir"])
+        image_folder_path = Path(job["image_folder_path"])
+        output_root_dir = case_dir / str(job["output_dir_name"])
+        anns_path = image_folder_path / "annotations_postprocessed.json"
+
+        if not anns_path.exists():
+            raise FileNotFoundError(f"Annotations file does not exist: {anns_path}")
+
+        print(f"\n\n[{current_job}/{total_jobs}] Starting model: {model_name}")
+        print(f"Case: {case_dir.name}")
+        print(f"Dataset: {image_folder_path.name}")
+
+        try:
+            process_model_for_image_folder(
+                model_name=model_name,
+                best_stg_path=best_stg_path,
+                config_path=config_path,
+                deimv2_repo_root=deimv2_repo_root,
+                image_folder_path=image_folder_path,
+                output_root_dir=output_root_dir,
+                anns_path=anns_path,
+                device=device,
+                render_scale=render_scale,
+                line_width=line_width,
+                max_images=max_images,
+                individual_score_threshold=individual_score_threshold,
+                individual_iou_threshold=individual_iou_threshold,
+                ap_score_threshold=ap_score_threshold,
+                max_detections_individual=max_detections_individual,
+                max_detections_ap=max_detections_ap,
+                model_label_to_category_id=model_label_to_category_id,
+                show_detections=show_detections,
+                save_prediction_images=save_prediction_images,
+                reset_prediction_images=reset_prediction_images,
+                overwrite_results=overwrite_results,
+            )
+            processed += 1
+        except FileNotFoundError as exc:
+            skipped += 1
+            print(f"[SKIP] {case_dir.name} | {image_folder_path.name}: {exc}")
+        except Exception as exc:
+            failed += 1
+            print(f"[FAIL] {case_dir.name} | {image_folder_path.name}: {exc}")
+
+    print("\n" + "=" * 100)
+    print("Finished processing fixed model across all case folders and selected image folders.")
+    print(f"Processed successfully: {processed}")
+    print(f"Skipped: {skipped}")
+    print(f"Failed: {failed}")
+    print("=" * 100)
 
 
 if __name__ == "__main__":

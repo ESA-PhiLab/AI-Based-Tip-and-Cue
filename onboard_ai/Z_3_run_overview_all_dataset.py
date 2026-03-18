@@ -105,7 +105,7 @@ def _resolve_overview_jobs(mode: str, distinct_locations: list[str]) -> list[dic
     return jobs
 
 
-def _find_matching_benchmark_workbooks(case_dir: Path, label: str) -> list[Path]:
+def _find_matching_benchmark_workbooks(case_dir: Path, label: str, distinct_locations: list[str]) -> list[Path]:
     """Find benchmark workbooks matching one overview mode label."""
     all_benchmarks = sorted(
         path for path in case_dir.glob("benchmark*.xlsx")
@@ -113,11 +113,8 @@ def _find_matching_benchmark_workbooks(case_dir: Path, label: str) -> list[Path]
     )
 
     if label == "default":
-        return [
-            path for path in all_benchmarks
-            if not path.name.startswith("benchmark_Auckland2006_")
-            and not path.name.startswith("benchmark_Pelagos2016_")
-        ]
+        distinct_prefixes = tuple(f"benchmark_{location}_" for location in distinct_locations)
+        return [path for path in all_benchmarks if not path.name.startswith(distinct_prefixes)]
 
     return [path for path in all_benchmarks if path.name.startswith(f"benchmark_{label}_")]
 
@@ -180,7 +177,7 @@ def _extract_case_parameters(case_name: str) -> dict[str, object]:
 
 def _count_images_in_dir(image_dir: Path) -> int | None:
     """Count images in one image folder."""
-    if not image_dir.exists():
+    if not image_dir.exists() or not image_dir.is_dir():
         return None
 
     return sum(
@@ -411,7 +408,11 @@ def main() -> None:
         image_count_map = _build_case_group_to_image_count(case_dirs=case_dirs, label=label)
 
         for case_dir in case_dirs:
-            benchmark_files = _find_matching_benchmark_workbooks(case_dir=case_dir, label=label)
+            benchmark_files = _find_matching_benchmark_workbooks(
+                case_dir=case_dir,
+                label=label,
+                distinct_locations=distinct_locations,
+            )
 
             if not benchmark_files:
                 print(f"[SKIP] No matching benchmark files for {label} in {case_dir.name}")
@@ -424,7 +425,10 @@ def main() -> None:
                 except Exception as exc:
                     print(f"[FAIL] Could not read {benchmark_file}: {exc}")
 
-        all_cases_df, grouped_mean_df = _build_overview_tables(row_dfs=row_dfs, image_count_map=image_count_map)
+        all_cases_df, grouped_mean_df = _build_overview_tables(
+            row_dfs=row_dfs,
+            image_count_map=image_count_map,
+        )
 
         output_path = final_results_root / output_filename
         _write_overview_workbook(

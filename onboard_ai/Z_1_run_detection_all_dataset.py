@@ -57,14 +57,14 @@ def _find_master_case_directories(master_results_root: Path) -> list[Path]:
     return sorted(case_dirs)
 
 
-def _resolve_image_jobs(case_root: Path, mode: str, distinct_locations: list[str]) -> list[dict[str, Path | str]]:
+def _resolve_image_jobs(master_results_root: Path, mode: str, distinct_locations: list[str]) -> list[dict[str, Path | str]]:
     """Resolve which image folders to process inside one case folder."""
     jobs: list[dict[str, Path | str]] = []
 
     if mode not in {"random", "distinct", "all"}:
         raise ValueError("mode must be one of: 'random', 'distinct', 'all'")
 
-    default_images_dir = case_root / "satellite_images"
+    default_images_dir = master_results_root
 
     if mode in {"random", "all"}:
         if default_images_dir.exists():
@@ -80,7 +80,7 @@ def _resolve_image_jobs(case_root: Path, mode: str, distinct_locations: list[str
 
     if mode in {"distinct", "all"}:
         for location in distinct_locations:
-            image_dir = case_root / f"satellite_images_{location}"
+            image_dir = master_results_root / location
             if image_dir.exists():
                 jobs.append(
                     {
@@ -93,6 +93,16 @@ def _resolve_image_jobs(case_root: Path, mode: str, distinct_locations: list[str
                 print(f"[WARN] Missing distinct image folder: {image_dir}")
 
     return jobs
+
+
+def _get_shared_annotations_file(master_results_root: Path) -> Path:
+    """Return the fixed shared annotation JSON file."""
+    anns_path = master_results_root / "final_annotations_repaired.json"
+    if not anns_path.exists():
+        raise FileNotFoundError(f"Shared annotations file does not exist: {anns_path}")
+    if not anns_path.is_file():
+        raise FileNotFoundError(f"Shared annotations path is not a file: {anns_path}")
+    return anns_path
 
 
 def process_model_for_image_folder(
@@ -110,6 +120,8 @@ def process_model_for_image_folder(
     individual_score_threshold: float,
     individual_iou_threshold: float,
     ap_score_threshold: float,
+    max_detections_individual: int | None,
+    max_detections_ap: int | None,
     model_label_to_category_id: dict[int, int] | None,
     show_detections: bool,
     save_prediction_images: bool,
@@ -122,6 +134,12 @@ def process_model_for_image_folder(
 
     if not config_path.exists():
         raise FileNotFoundError(f"Missing config YAML: {config_path}")
+
+    if not anns_path.exists():
+        raise FileNotFoundError(f"Missing annotations file: {anns_path}")
+
+    if not anns_path.is_file():
+        raise FileNotFoundError(f"Annotations path is not a file: {anns_path}")
 
     run_output_root = _prepare_output_dir(output_root_dir, overwrite_results=overwrite_results)
     prediction_images_dir = run_output_root / "prediction_images"
@@ -138,6 +156,7 @@ def process_model_for_image_folder(
     print(f"Image folder: {image_folder_path}")
     print(f"Checkpoint: {best_stg_path}")
     print(f"Config: {config_path}")
+    print(f"Annotations: {anns_path}")
     print(f"Output dir: {run_output_root}")
     print(f"{'=' * 100}")
 
@@ -244,6 +263,7 @@ def process_model_for_image_folder(
         individual_predictions = filter_predictions(
             predictions=raw_predictions,
             score_threshold=individual_score_threshold,
+            max_detections=max_detections_individual,
         )
 
         individual_scores = evaluate_predictions(
@@ -258,10 +278,7 @@ def process_model_for_image_folder(
         individual_scores["score_threshold"] = float(individual_score_threshold)
         individual_scores["iou_threshold"] = float(individual_iou_threshold)
 
-        ap_predictions = filter_predictions(
-            predictions=raw_predictions,
-            score_threshold=ap_score_threshold,
-        )
+        ap_predictions = raw_predictions
         ap_predictions_by_image[image_path.name] = ap_predictions
 
         ap_iou50_scores = evaluate_predictions(
@@ -475,9 +492,8 @@ def main() -> None:
     deimv2_repo_root = script_dir / "DEIMV2-main"
 
     model_name = "04_reflection_offnadir_glint_255"
-    master_results = "FINAL_RESULTS"
 
-    mode = "all"
+    mode = "random"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
     overwrite_results = True
 
@@ -490,11 +506,14 @@ def main() -> None:
     individual_iou_threshold = 0.5
     ap_score_threshold = 0.0
 
-    model_path = master_dir / "onboard_ai" / "final_models"
-    best_stg_path = model_path / model_name / "overview" / "best_stg2.pth"
-    config_path = model_path / model_name / f"{model_name}.yml"
+    max_detections_individual = 100
+    max_detections_ap = None
 
-    master_results_root = master_dir / "0_results" / master_results
+    model_path = master_dir / "onboard_ai" / "final_models"
+    best_stg_path = model_path / model_name / "final_location_holdout" / "best_stg2.pth"
+    config_path = model_path / model_name / "final_location_holdout" / "config" / "base_config_with_train_norm.yml"
+
+    master_results_root = master_dir / "onboard_ai" / "DEIMv2-main" / "data" / "0_merged" / "reflection_offnadir_glint_255"
 
     model_label_to_category_id: dict[int, int] | None = None
 
@@ -514,6 +533,8 @@ def main() -> None:
     if not config_path.exists():
         raise FileNotFoundError(f"Model config does not exist: {config_path}")
 
+    shared_anns_path = _get_shared_annotations_file(master_results_root)
+
     case_dirs = _find_master_case_directories(master_results_root)
     if not case_dirs:
         raise FileNotFoundError(f"No case folders found under {master_results_root}")
@@ -521,7 +542,7 @@ def main() -> None:
     all_jobs: list[dict[str, Path | str]] = []
     for case_dir in case_dirs:
         case_jobs = _resolve_image_jobs(
-            case_root=case_dir,
+            master_results_root=case_dir,
             mode=mode,
             distinct_locations=distinct_locations,
         )
@@ -542,6 +563,7 @@ def main() -> None:
     print(f"Using fixed model: {model_name}")
     print(f"Checkpoint: {best_stg_path}")
     print(f"Config: {config_path}")
+    print(f"Shared annotations: {shared_anns_path}")
     print(f"Found {len(case_dirs)} case folders inside {master_results_root}.")
     print(f"Resolved {len(all_jobs)} image folder jobs.")
     print()
@@ -562,16 +584,13 @@ def main() -> None:
         case_dir = Path(job["case_dir"])
         image_folder_path = Path(job["image_folder_path"])
         output_root_dir = case_dir / str(job["output_dir_name"])
-        anns_path = image_folder_path / "annotations_postprocessed.json"
+        anns_path = shared_anns_path
 
         print(f"\n\n[{current_job}/{total_jobs}] Starting model: {model_name}")
         print(f"Case: {case_dir.name}")
         print(f"Dataset: {image_folder_path.name}")
 
         try:
-            if not anns_path.exists():
-                raise FileNotFoundError(f"Annotations file does not exist: {anns_path}")
-
             process_model_for_image_folder(
                 model_name=model_name,
                 best_stg_path=best_stg_path,
@@ -587,6 +606,8 @@ def main() -> None:
                 individual_score_threshold=individual_score_threshold,
                 individual_iou_threshold=individual_iou_threshold,
                 ap_score_threshold=ap_score_threshold,
+                max_detections_individual=max_detections_individual,
+                max_detections_ap=max_detections_ap,
                 model_label_to_category_id=model_label_to_category_id,
                 show_detections=show_detections,
                 save_prediction_images=save_prediction_images,

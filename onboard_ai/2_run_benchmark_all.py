@@ -608,7 +608,7 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     master_dir = script_dir.parent
 
-    master_results = "FINAL_RESULTS"
+    master_results = "EXPERIMENTS/texture_nadir_255"
     mode = "all"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
     overwrite_results = True
