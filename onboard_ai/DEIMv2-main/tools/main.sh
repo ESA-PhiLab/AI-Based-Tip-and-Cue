@@ -10,7 +10,7 @@ DEFAULT_GPU_CHOICE="X"
 
 RUN_NAME="X"
 
-BASE_CONFIG="configs/9_sizes/${RUN_NAME}.yml"
+BASE_CONFIG="configs/10_sizes_scaled/optim_${RUN_NAME}_bucketed.yml"
 PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 
 # BASE_CONFIG="configs/deimv2/deimv2_dinov3_m_coco_whale.yml"
