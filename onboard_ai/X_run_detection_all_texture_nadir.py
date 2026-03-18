@@ -4,7 +4,6 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-import os
 
 from run_detection_one import (
     _compute_overall_detection_stats,
@@ -96,6 +95,7 @@ def _resolve_image_jobs(case_root: Path, mode: str, distinct_locations: list[str
     return jobs
 
 
+
 def process_model_for_image_folder(
     model_name: str,
     best_stg_path: Path,
@@ -111,6 +111,8 @@ def process_model_for_image_folder(
     individual_score_threshold: float,
     individual_iou_threshold: float,
     ap_score_threshold: float,
+    max_detections_individual: int | None,
+    max_detections_ap: int | None,
     model_label_to_category_id: dict[int, int] | None,
     show_detections: bool,
     save_prediction_images: bool,
@@ -123,6 +125,12 @@ def process_model_for_image_folder(
 
     if not config_path.exists():
         raise FileNotFoundError(f"Missing config YAML: {config_path}")
+
+    if not anns_path.exists():
+        raise FileNotFoundError(f"Missing annotations file: {anns_path}")
+
+    if not anns_path.is_file():
+        raise FileNotFoundError(f"Annotations path is not a file: {anns_path}")
 
     run_output_root = _prepare_output_dir(output_root_dir, overwrite_results=overwrite_results)
     prediction_images_dir = run_output_root / "prediction_images"
@@ -139,6 +147,7 @@ def process_model_for_image_folder(
     print(f"Image folder: {image_folder_path}")
     print(f"Checkpoint: {best_stg_path}")
     print(f"Config: {config_path}")
+    print(f"Annotations: {anns_path}")
     print(f"Output dir: {run_output_root}")
     print(f"{'=' * 100}")
 
@@ -245,6 +254,7 @@ def process_model_for_image_folder(
         individual_predictions = filter_predictions(
             predictions=raw_predictions,
             score_threshold=individual_score_threshold,
+            max_detections=max_detections_individual,
         )
 
         individual_scores = evaluate_predictions(
@@ -259,10 +269,7 @@ def process_model_for_image_folder(
         individual_scores["score_threshold"] = float(individual_score_threshold)
         individual_scores["iou_threshold"] = float(individual_iou_threshold)
 
-        ap_predictions = filter_predictions(
-            predictions=raw_predictions,
-            score_threshold=ap_score_threshold,
-        )
+        ap_predictions = raw_predictions
         ap_predictions_by_image[image_path.name] = ap_predictions
 
         ap_iou50_scores = evaluate_predictions(
@@ -475,8 +482,10 @@ def main() -> None:
     master_dir = script_dir.parent
     deimv2_repo_root = script_dir / "DEIMV2-main"
 
+
     model_name = "05_texture_nadir_255"
-    master_results = os.path.join("EXPERIMENTS", "texture_nadir_255")
+    master_results = "EXPERIMENTS/texture_nadir_255"
+
 
     mode = "all"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
@@ -491,10 +500,12 @@ def main() -> None:
     individual_iou_threshold = 0.5
     ap_score_threshold = 0.0
 
-    model_path = master_dir / "onboard_ai" / "final_models"
-    best_stg_path = model_path / model_name / "overview" / "best_stg2.pth"
-    config_path = model_path / model_name / f"{model_name}.yml"
+    max_detections_individual = 100
+    max_detections_ap = None
 
+    model_path = master_dir / "onboard_ai" / "final_models"
+    best_stg_path = model_path / model_name / "final_location_holdout" / "best_stg2.pth"
+    config_path = model_path / model_name / "final_location_holdout" / "config" / "base_config_with_train_norm.yml"
     master_results_root = master_dir / "0_results" / master_results
 
     model_label_to_category_id: dict[int, int] | None = None
@@ -514,6 +525,8 @@ def main() -> None:
 
     if not config_path.exists():
         raise FileNotFoundError(f"Model config does not exist: {config_path}")
+
+
 
     case_dirs = _find_master_case_directories(master_results_root)
     if not case_dirs:
@@ -565,14 +578,14 @@ def main() -> None:
         output_root_dir = case_dir / str(job["output_dir_name"])
         anns_path = image_folder_path / "annotations_postprocessed.json"
 
+        if not anns_path.exists():
+            raise FileNotFoundError(f"Annotations file does not exist: {anns_path}")
+
         print(f"\n\n[{current_job}/{total_jobs}] Starting model: {model_name}")
         print(f"Case: {case_dir.name}")
         print(f"Dataset: {image_folder_path.name}")
 
         try:
-            if not anns_path.exists():
-                raise FileNotFoundError(f"Annotations file does not exist: {anns_path}")
-
             process_model_for_image_folder(
                 model_name=model_name,
                 best_stg_path=best_stg_path,
@@ -588,6 +601,8 @@ def main() -> None:
                 individual_score_threshold=individual_score_threshold,
                 individual_iou_threshold=individual_iou_threshold,
                 ap_score_threshold=ap_score_threshold,
+                max_detections_individual=max_detections_individual,
+                max_detections_ap=max_detections_ap,
                 model_label_to_category_id=model_label_to_category_id,
                 show_detections=show_detections,
                 save_prediction_images=save_prediction_images,
