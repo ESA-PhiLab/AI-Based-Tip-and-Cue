@@ -10,7 +10,7 @@ DEFAULT_GPU_CHOICE="X"
 
 RUN_NAME="X"
 
-BASE_CONFIG="configs/10_sizes_scaled/optim_${RUN_NAME}_bucketed.yml"
+BASE_CONFIG="configs/12_experiments/${RUN_NAME}.yml"
 PRETRAINED="ckpts/deimv2_dinov3_s_coco.pth"
 
 # BASE_CONFIG="configs/deimv2/deimv2_dinov3_m_coco_whale.yml"
@@ -30,35 +30,34 @@ VAL_TEST_CV="0"
 VAL_TEST_FINAL="1"
 DUMP_COCO_JSON="1"
 
-EVAL_AFTER_EACH_FOLD="0"     # 1|0
-MAKE_OVERVIEW="1"            # 1|0
+EVAL_AFTER_EACH_FOLD="0"
+MAKE_OVERVIEW="1"
 
-COMPUTE_DATASET_STATS="1"   # 1|0
-STATS_MAX_IMAGES="0"        # 0 => all images, >0 => debug limit
+COMPUTE_DATASET_STATS="1"
+STATS_MAX_IMAGES="0"
 
 FINAL_VAL_FRAC="0.05"
 FINAL_SEED="42"
 FINAL_MIN_VAL_PER_LOCATION="1"
 
-CV_MODE="random"             # random|all
+CV_MODE="random"
 SEED="42"
 VAL_SIZE="2"
 
 # ---- TensorBoard + plot export (optional) ----
-EXPORT_TB_PLOTS="1"          # 1|0  export PNG+CSV from TB event files after training
-START_TENSORBOARD="1"        # 1|0  start TB on remote (bind localhost) and print port-forward command
-TB_PORT=""                  # empty => auto-derived from GPU_SUM (low collision)
-TB_LOAD_FAST="0"            # 0 => pass --load_fast=false (more stable on NFS); 1 => default
-TB_LOGDIR_MODE="all"        # all|cv|fold1|final  (what TB should show)
+EXPORT_TB_PLOTS="1"
+START_TENSORBOARD="1"
+TB_PORT=""
+TB_LOAD_FAST="0"
+TB_LOGDIR_MODE="all"
 # ---------------------------------------------
 
-# Image-level threshold used for "has any box" metrics (precision/recall/F1).
-# If OPTIMIZE_SCORE_THR=1, the best threshold is chosen per run (max image-level F1) and this is ignored.
+# Image-level threshold used for "has any box" metrics.
+# If OPTIMIZE_SCORE_THR=1, the best threshold is chosen per run.
 SCORE_THR="0.05"
-OPTIMIZE_SCORE_THR="1"   # 1 => optimize for image-level F1, 0 => use SCORE_THR
+OPTIMIZE_SCORE_THR="1"
 
-# Exactly 2 locations that are held out from CV and used as TEST set.
-# Allowed: empty (no test) OR exactly 2 locations.
+# Exactly 2 locations held out and used as TEST set.
 TEST_LOCATIONS="Pelagos2016,Auckland2006"
 
 SELECT_METRIC="AP_precision_iou_0.50_area_all_maxdets_100"
@@ -66,16 +65,14 @@ SELECT_METRIC="AP_precision_iou_0.50_area_all_maxdets_100"
 EVAL_NAME="eval_data"
 EVAL_SPLIT="${EVAL_SPLIT:-both}"   # val|test|both
 
-USE_AMP="1"                  # 1|0
+USE_AMP="1"
 
 USE_ENV_GPUS="${USE_ENV_GPUS:-1}"
 FORCE_NPROC=""
 
-OVERWRITE_OUTDIR="0"         # 1|0
+OVERWRITE_OUTDIR="0"
 
 # =================== DO NOT EDIT BELOW ===================
-
-
 
 ALL_LOCATIONS="Auckland2006,Auckland2011,Ignacio2017,Maui2015,Pelagos2016,Valdes2012,Valdes2014,Valdes2016,Witsand2009"
 if [[ -z "${TEST_LOCATIONS// }" ]]; then
@@ -83,8 +80,6 @@ if [[ -z "${TEST_LOCATIONS// }" ]]; then
 else
   TRAIN_LOCATIONS="$(echo "$ALL_LOCATIONS" | tr ',' '\n' | grep -v -E "$(echo "$TEST_LOCATIONS" | tr ',' '|')" | paste -sd "," -)"
 fi
-
-
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -102,14 +97,15 @@ IMG_ROOT_TEST="${TEST_ROOT}"
 
 COCO_MERGED_TRAIN="${TRAIN_ROOT}/final_annotations_repaired.json"
 COCO_TEST_RAW="${TEST_ROOT}/final_annotations_repaired.json"
+COCO_TRAINVAL="${OUT_DIR}/trainval_without_holdout_test.json"
+COCO_TEST="${OUT_DIR}/test_holdout_only.json"
 
 # ---------------- GPUs (set mask early) + safer ports ----------------
 
-# Decide final physical GPU mask early so ports/TB cleanup are correct.
 if [[ "${USE_ENV_GPUS}" == "1" && -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
-  CUDA_PHYS="${CUDA_VISIBLE_DEVICES}"     # honor launch env (physical ids)
+  CUDA_PHYS="${CUDA_VISIBLE_DEVICES}"
 else
-  CUDA_PHYS="${DEFAULT_GPU_CHOICE}"       # use script setting (physical ids)
+  CUDA_PHYS="${DEFAULT_GPU_CHOICE}"
 fi
 export CUDA_VISIBLE_DEVICES="${CUDA_PHYS}"
 
@@ -133,24 +129,21 @@ _find_free_port() {
 PORT_KEY="${FOLDER_ID}|${CUDA_PHYS}|${RUN_NAME}"
 H=$(_port_hash "${PORT_KEY}")
 
-TRAIN_MASTER_PORT=$(_find_free_port $(( 15000 + FOLDER_ID * 1000 + H )))
-EVAL_MASTER_PORT=$(_find_free_port  $(( 25000 + FOLDER_ID * 1000 + H )))
+TRAIN_MASTER_PORT=$(_find_free_port $((15000 + FOLDER_ID * 1000 + H)))
+EVAL_MASTER_PORT=$(_find_free_port  $((25000 + FOLDER_ID * 1000 + H)))
 if [[ -z "${TB_PORT}" ]]; then
-  TB_PORT=$(_find_free_port       $(( 35000 + FOLDER_ID * 1000 + H )))
+  TB_PORT=$(_find_free_port $((35000 + FOLDER_ID * 1000 + H)))
 else
   TB_PORT=$(_find_free_port "${TB_PORT}")
 fi
 
 echo "[ports] train=${TRAIN_MASTER_PORT} eval=${EVAL_MASTER_PORT} tb=${TB_PORT} key=${PORT_KEY} hash=${H}"
-# ---------------------------------------------------------------------
-
-
 
 # --------- TensorBoard safety net (cleanup from previous runs) ---------
+
 cleanup_old_tensorboard() {
   mkdir -p "${OUT_DIR}"
 
-  # 1) Kill previous TB by PID file (if still alive)
   if [[ -f "${OUT_DIR}/tensorboard.pid" ]]; then
     local old_pid
     old_pid="$(cat "${OUT_DIR}/tensorboard.pid" 2>/dev/null || true)"
@@ -163,37 +156,30 @@ cleanup_old_tensorboard() {
     rm -f "${OUT_DIR}/tensorboard.pid" >/dev/null 2>&1 || true
   fi
 
-  # 2) Kill anything currently bound to TB_PORT (PID file might be stale)
   if command -v lsof >/dev/null 2>&1; then
     local pids
     pids="$(lsof -t -iTCP:"${TB_PORT}" -sTCP:LISTEN 2>/dev/null || true)"
     if [[ -n "${pids}" ]]; then
       echo "[main.sh] Port ${TB_PORT} already in use by PID(s): ${pids} -> stopping them"
-      # term first, then hard-kill if needed
       kill ${pids} >/dev/null 2>&1 || true
       sleep 1
       kill -9 ${pids} >/dev/null 2>&1 || true
     fi
   else
     echo "[main.sh] NOTE: lsof not found; cannot auto-kill processes bound to TB_PORT=${TB_PORT}"
-    echo "[main.sh] Install lsof or rely on tensorboard.pid cleanup only."
   fi
 }
 
 cleanup_old_tensorboard
-# ---------------------------------------------------------------------
-
-
 
 # --------- TensorBoard cleanup (auto-stop on exit) ---------
-schedule_tensorboard_shutdown() {
 
+schedule_tensorboard_shutdown() {
   if [[ ! -f "${OUT_DIR}/tensorboard.pid" ]]; then
     return
   fi
 
   tb_pid="$(cat "${OUT_DIR}/tensorboard.pid" 2>/dev/null || true)"
-
   if [[ -z "${tb_pid}" ]]; then
     return
   fi
@@ -202,29 +188,22 @@ schedule_tensorboard_shutdown() {
 
   (
     sleep $((48 * 60 * 60))
-
     if kill -0 "${tb_pid}" >/dev/null 2>&1; then
       echo "[main.sh] Auto-stopping TensorBoard after 48 hours (PID ${tb_pid})"
       kill "${tb_pid}" >/dev/null 2>&1 || true
     fi
-
     rm -f "${OUT_DIR}/tensorboard.pid" >/dev/null 2>&1 || true
-
   ) &
 }
 
 trap 'schedule_tensorboard_shutdown' EXIT INT TERM
-# ----------------------------------------------------------
-# ----------------------------------------------------------
 
-# If no TEST locations are configured, force eval split away from test.
 if [[ -z "${TEST_LOCATIONS// }" ]]; then
   if [[ "${EVAL_SPLIT}" == "test" || "${EVAL_SPLIT}" == "both" ]]; then
     echo "[main.sh] NOTE: TEST_LOCATIONS is empty -> forcing EVAL_SPLIT=val" 1>&2
     EVAL_SPLIT="val"
   fi
 fi
-
 
 # TENSORBOARD
 tb_logdir_for_mode() {
@@ -238,24 +217,19 @@ tb_logdir_for_mode() {
   esac
 }
 
-# GPUs / nproc  (PASS PHYSICAL IDs to python launchers; they set CUDA_VISIBLE_DEVICES themselves)
-
-# Decide final physical GPU mask (honor launch env if requested)
+# GPUs / nproc
 if [[ "${USE_ENV_GPUS}" == "1" && -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
-  CUDA_PHYS="${CUDA_VISIBLE_DEVICES}"     # physical ids from launch
+  CUDA_PHYS="${CUDA_VISIBLE_DEVICES}"
 else
-  CUDA_PHYS="${DEFAULT_GPU_CHOICE}"       # physical ids from script
+  CUDA_PHYS="${DEFAULT_GPU_CHOICE}"
 fi
 
-# IMPORTANT: pass PHYSICAL ids to the python tools, because they set CUDA_VISIBLE_DEVICES = --gpus
 TRAIN_GPUS="${CUDA_PHYS}"
 EVAL_GPUS="${CUDA_PHYS}"
 
-# nproc = number of visible GPUs in the mask (unless forced)
 NUM_VIS=$(echo "${CUDA_PHYS}" | awk -F',' '{print NF}')
 TRAIN_NPROC="${FORCE_NPROC:-${NUM_VIS}}"
 EVAL_NPROC="${FORCE_NPROC:-${NUM_VIS}}"
-
 
 mkdir -p "${OUT_DIR}"
 
@@ -271,7 +245,6 @@ ORIG_BASE_CONFIG="${BASE_CONFIG}"
 RUN_CONFIG="${OUT_DIR}/${RUN_NAME}.yml"
 cp -f "${REPO_ROOT}/${ORIG_BASE_CONFIG}" "${RUN_CONFIG}"
 
-# Rewrite __include__ entries to ABSOLUTE paths so moving the config never breaks includes
 export REPO_ROOT_ABS="${REPO_ROOT}"
 export ORIG_CFG_ABS="${REPO_ROOT}/${ORIG_BASE_CONFIG}"
 export RUN_CFG_ABS="${RUN_CONFIG}"
@@ -286,50 +259,41 @@ run_cfg = Path(os.environ["RUN_CFG_ABS"]).resolve()
 orig_dir = orig_cfg.parent
 
 txt = run_cfg.read_text(encoding="utf-8")
-
-# Find __include__ flow-list block: __include__: [ ... ]
 m = re.search(r"(?s)__include__\s*:\s*\[(.*?)\]", txt)
 if not m:
     raise SystemExit(f"[main.sh] ERROR: could not find __include__: [...] in {run_cfg}")
 
 inner = m.group(1)
 
-# Replace each quoted path inside include list
 def repl(match: re.Match) -> str:
     q = match.group(1)
     p = match.group(2)
     pth = Path(p)
-
-    # keep absolute paths as-is
     if pth.is_absolute():
         return f'{q}{str(pth)}{q}'
-
-    # resolve relative to the ORIGINAL config directory
     abs_p = (orig_dir / pth).resolve()
     if not abs_p.exists():
         raise SystemExit(f"[main.sh] ERROR: include does not exist after resolve: {p} -> {abs_p}")
-
     return f'{q}{str(abs_p)}{q}'
 
 inner2 = re.sub(r"(['\"])([^'\"]+)\1", repl, inner)
-
 txt2 = txt[:m.start(1)] + inner2 + txt[m.end(1):]
 run_cfg.write_text(txt2, encoding="utf-8")
-
 print(f"[main.sh] Frozen config with absolute includes -> {run_cfg}")
 PY
 
 echo "[main.sh] Using run config: ${RUN_CONFIG}"
 BASE_CONFIG="${RUN_CONFIG}"
 
-
-# ---- Optional: Filter COCO_TEST to exactly the TEST_LOCATIONS ----
-COCO_TEST="${OUT_DIR}/test_holdout_only.json"
+# ---- Build strict TRAINVAL/TEST split by location ----
 
 if [[ -z "${TEST_LOCATIONS// /}" ]]; then
+  cp -f "${COCO_MERGED_TRAIN}" "${COCO_TRAINVAL}"
   echo "[main.sh] TEST_LOCATIONS is empty -> no TEST split will be used."
   COCO_TEST=""
 else
+  export COCO_TRAINVAL_IN="${COCO_MERGED_TRAIN}"
+  export COCO_TRAINVAL_OUT="${COCO_TRAINVAL}"
   export COCO_TEST_IN="${COCO_TEST_RAW}"
   export COCO_TEST_OUT="${COCO_TEST}"
   export TEST_LOCS="${TEST_LOCATIONS}"
@@ -349,14 +313,15 @@ def _match(fn: str, loc: str) -> bool:
         return True
     return False
 
-coco_in = Path(os.environ["COCO_TEST_IN"])
-coco_out = Path(os.environ["COCO_TEST_OUT"])
-keep = [x.strip() for x in os.environ["TEST_LOCS"].split(",") if x.strip()]
+drop = [x.strip() for x in os.environ["TEST_LOCS"].split(",") if x.strip()]
+if len(drop) != 2:
+    raise SystemExit(f"TEST_LOCATIONS must contain exactly 2 items, got {len(drop)}: {drop}")
 
-if len(keep) != 2:
-    raise SystemExit(f"TEST_LOCATIONS must contain exactly 2 items, got {len(keep)}: {keep}")
+# TRAINVAL = everything except holdout locations
+coco_train_in = Path(os.environ["COCO_TRAINVAL_IN"])
+coco_train_out = Path(os.environ["COCO_TRAINVAL_OUT"])
 
-data = json.loads(coco_in.read_text(encoding="utf-8"))
+data = json.loads(coco_train_in.read_text(encoding="utf-8"))
 images = data.get("images", []) or []
 anns = data.get("annotations", []) or []
 
@@ -364,7 +329,7 @@ keep_ids = set()
 keep_images = []
 for im in images:
     fn = im.get("file_name", "")
-    if any(_match(fn, loc) for loc in keep):
+    if not any(_match(fn, loc) for loc in drop):
         iid = int(im["id"])
         keep_ids.add(iid)
         keep_images.append(im)
@@ -378,10 +343,39 @@ for k in ["info", "licenses", "categories"]:
 out["images"] = keep_images
 out["annotations"] = keep_anns
 
-coco_out.parent.mkdir(parents=True, exist_ok=True)
-coco_out.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+coco_train_out.parent.mkdir(parents=True, exist_ok=True)
+coco_train_out.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+print(f"[main.sh] Filtered COCO_TRAINVAL -> {coco_train_out} | images={len(keep_images)} anns={len(keep_anns)} | dropped={drop}")
 
-print(f"[main.sh] Filtered COCO_TEST -> {coco_out} | images={len(keep_images)} anns={len(keep_anns)} | keep={keep}")
+# TEST = only holdout locations
+coco_test_in = Path(os.environ["COCO_TEST_IN"])
+coco_test_out = Path(os.environ["COCO_TEST_OUT"])
+
+data = json.loads(coco_test_in.read_text(encoding="utf-8"))
+images = data.get("images", []) or []
+anns = data.get("annotations", []) or []
+
+keep_ids = set()
+keep_images = []
+for im in images:
+    fn = im.get("file_name", "")
+    if any(_match(fn, loc) for loc in drop):
+        iid = int(im["id"])
+        keep_ids.add(iid)
+        keep_images.append(im)
+
+keep_anns = [a for a in anns if int(a.get("image_id")) in keep_ids]
+
+out = {}
+for k in ["info", "licenses", "categories"]:
+    if k in data:
+        out[k] = data[k]
+out["images"] = keep_images
+out["annotations"] = keep_anns
+
+coco_test_out.parent.mkdir(parents=True, exist_ok=True)
+coco_test_out.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+print(f"[main.sh] Filtered COCO_TEST -> {coco_test_out} | images={len(keep_images)} anns={len(keep_anns)} | keep={drop}")
 PY
 fi
 
@@ -414,23 +408,19 @@ fi
   echo "USE_AMP=${USE_AMP}"
   echo "COCO_TEST_RAW=${COCO_TEST_RAW}"
   echo "COCO_TEST_FILTERED=${COCO_TEST}"
+  echo "COCO_TRAINVAL_FILTERED=${COCO_TRAINVAL}"
 } > "${OUT_DIR}/launcher_config.txt"
 
-
 if [[ "${COMPUTE_DATASET_STATS}" == "1" ]]; then
-  echo "[main.sh] Computing dataset RGB mean/std from COCO_MERGED_TRAIN ..."
+  echo "[main.sh] Computing dataset RGB mean/std from COCO_TRAINVAL ..."
   python "${REPO_ROOT}/tools/compute_dataset_mean_std.py" \
-  --img_root "${IMG_ROOT_TRAIN}" \
-  --coco "${COCO_MERGED_TRAIN}" \
-  --locations "${TRAIN_LOCATIONS}" \
-  --out_json "${OUT_DIR}/dataset_rgb_mean_std.json" \
-  | tee "${OUT_DIR}/dataset_rgb_mean_std.log"
+    --img_root "${IMG_ROOT_TRAIN}" \
+    --coco "${COCO_TRAINVAL}" \
+    --out_json "${OUT_DIR}/dataset_rgb_mean_std.json" \
+    | tee "${OUT_DIR}/dataset_rgb_mean_std.log"
 fi
 
-
 # ------------------ TensorBoard (start early) + port_forward.txt ------------------
-
-
 
 write_port_file() {
   local logdir="$1"
@@ -461,7 +451,6 @@ start_tensorboard_early() {
   echo "[main.sh]   logdir: ${logdir}"
   echo "[main.sh]   port:   ${TB_PORT}"
 
-  # Kill previous TB started by this run (best-effort)
   if [[ -f "${OUT_DIR}/tensorboard.pid" ]]; then
     old_pid="$(cat "${OUT_DIR}/tensorboard.pid" 2>/dev/null || true)"
     if [[ -n "${old_pid}" ]]; then
@@ -490,26 +479,21 @@ start_tensorboard_early() {
   echo "[main.sh] Port forwarding instructions written to: ${PORT_FILE}"
 }
 
-# Start TB BEFORE training so you can live-follow
 if [[ "${START_TENSORBOARD}" == "1" ]]; then
   TB_LOGDIR="$(tb_logdir_for_mode "${TB_LOGDIR_MODE}")"
   start_tensorboard_early "${TB_LOGDIR}"
 else
-  # still write instructions file with expected logdir/port (useful even if TB is off)
   TB_LOGDIR="$(tb_logdir_for_mode "${TB_LOGDIR_MODE}")"
   write_port_file "${TB_LOGDIR}"
   echo "[main.sh] START_TENSORBOARD=0 -> wrote ${PORT_FILE} anyway"
 fi
-
-# -------------------------------------------------------------------------------
-
 
 # ------------------ 1) Cross-validation training ------------------
 
 CMD_CV=( python "${REPO_ROOT}/tools/train_crossval_deimv2.py"
   --img_root "${IMG_ROOT_TRAIN}"
   --img_root_test "${IMG_ROOT_TEST}"
-  --coco_val "${COCO_MERGED_TRAIN}"
+  --coco_val "${COCO_TRAINVAL}"
   --coco_test "${COCO_TEST}"
   --base_config "${RUN_CONFIG}"
   --pretrained "${PRETRAINED}"
@@ -533,21 +517,17 @@ CMD_CV=( python "${REPO_ROOT}/tools/train_crossval_deimv2.py"
   --label_offset "0"
 )
 
-
-# If no test locations were provided, remove test args entirely (train+val only)
 if [[ -z "${TEST_LOCATIONS// /}" ]]; then
-  # remove --coco_test <val> and --holdout_test_locations <val>
   for i in "${!CMD_CV[@]}"; do
     v="${CMD_CV[$i]-}"
     if [[ "${v}" == "--coco_test" || "${v}" == "--holdout_test_locations" ]]; then
       unset "CMD_CV[$i]"
-      j=$((i+1))
+      j=$((i + 1))
       if [[ -n "${CMD_CV[$j]-}" ]]; then
         unset "CMD_CV[$j]"
       fi
     fi
   done
-  # compact array
   CMD_CV=("${CMD_CV[@]}")
 fi
 
@@ -570,7 +550,7 @@ fi
 CMD_FINAL=( python "${REPO_ROOT}/tools/train_final.py"
   --img_root "${IMG_ROOT_TRAIN}"
   --repo_root "${REPO_ROOT}"
-  --coco_trainval "${COCO_MERGED_TRAIN}"
+  --coco_trainval "${COCO_TRAINVAL}"
   --base_config "${RUN_CONFIG}"
   --pretrained "${PRETRAINED}"
   --output_dir "${FINAL_OUT_DIR}"
@@ -606,25 +586,25 @@ else
   echo "[main.sh] Final training skipped (TRAIN_FINAL=0)"
 fi
 
-# ------------------ 3) (Re)run validation/test evaluation (and dump predictions) ------------------
+# ------------------ 3) (Re)run validation/test evaluation ------------------
 
 if [[ "${VAL_TEST_CV}" == "1" ]]; then
   echo "[main.sh] (Re)running fold evaluation for VAL/TEST under cross_validation/ ..."
   python "${REPO_ROOT}/tools/dump_predictions_all.py" \
-  --repo_root "${REPO_ROOT}" \
-  --results_dir "${OUT_DIR}" \
-  --img_root "${IMG_ROOT_TRAIN}" \
-  --img_root_test "${IMG_ROOT_TEST}" \
-  --eval_name "${EVAL_NAME}" \
-  --split "${EVAL_SPLIT}" \
-  --gpus "${EVAL_GPUS}" \
-  --nproc "${EVAL_NPROC}" \
-  --master_port "${EVAL_MASTER_PORT}" \
-  --overwrite "1" \
-  --label_offset "0" \
-  --include_final "0" \
-  --score_thr "${SCORE_THR}" \
-  --optimize_score_thr "${OPTIMIZE_SCORE_THR}"
+    --repo_root "${REPO_ROOT}" \
+    --results_dir "${OUT_DIR}" \
+    --img_root "${IMG_ROOT_TRAIN}" \
+    --img_root_test "${IMG_ROOT_TEST}" \
+    --eval_name "${EVAL_NAME}" \
+    --split "${EVAL_SPLIT}" \
+    --gpus "${EVAL_GPUS}" \
+    --nproc "${EVAL_NPROC}" \
+    --master_port "${EVAL_MASTER_PORT}" \
+    --overwrite "1" \
+    --label_offset "0" \
+    --include_final "0" \
+    --score_thr "${SCORE_THR}" \
+    --optimize_score_thr "${OPTIMIZE_SCORE_THR}"
 fi
 
 if [[ "${VAL_TEST_FINAL}" == "1" ]]; then
@@ -661,5 +641,6 @@ if [[ "${MAKE_OVERVIEW}" == "1" ]]; then
 else
   echo "[main.sh] MAKE_OVERVIEW=0 -> skipping overview"
 fi
+
 
 echo "[main.sh] DONE"
