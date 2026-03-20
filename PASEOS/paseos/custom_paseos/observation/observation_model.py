@@ -56,6 +56,7 @@ class EOTools:
 
         self.slew_stab_time = None
         self.move_set = False
+        self.return_to_default_announced = False
 
         # -------------------------------------------------------------------------
     # Link to attitude model

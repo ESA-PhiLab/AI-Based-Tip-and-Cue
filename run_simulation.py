@@ -729,6 +729,7 @@ while elapsed_seconds <= sim_duration_seconds:
 
                         if best_task is not None:
                             task_id = best_task["target_id"]
+                            eo_tools_dict[actor.name].return_to_default_announced = False
 
                             print(
                                 f"!! {actor.name}: Claimed global task for Target {task_id} "
@@ -815,13 +816,14 @@ while elapsed_seconds <= sim_duration_seconds:
                 if actor_not_default or new_target_not_default:
                     att_models_dict[actor.name]._new_target_attitude_deg = np.asarray(eul_ang_cue_default, float)
 
-                    print(
-                        f"!! {actor.name}: Set roll, pitch, yaw target back to default "
-                        f"{eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg"
-                    )
-                            # This printing statement has to be fixed, it prints continuously along the slew.
-
-                    # eo_tools_dict[actor.name].offnadir_unbound_target = None
+                    if not getattr(eo_tools_dict[actor.name], "return_to_default_announced", False):
+                        print(
+                            f"!! {actor.name}: Set roll, pitch, yaw target back to default "
+                            f"{eul_ang_cue_default[0]:.1f}, {eul_ang_cue_default[1]:.1f}, {eul_ang_cue_default[2]:.1f} deg"
+                        )
+                        eo_tools_dict[actor.name].return_to_default_announced = True
+                else:
+                    eo_tools_dict[actor.name].return_to_default_announced = False
 
             # CUE ATTITUDE CONTROL
             if model_attitude_control:
