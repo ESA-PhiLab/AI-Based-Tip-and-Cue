@@ -378,63 +378,71 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     master_dir = script_dir.parent
 
-    final_results_folder_name = "EXPERIMENTS/reflection_nadir_glint_255"
+    final_results_list = ["reflection_offnadir_glint_255", "reflection_nadir_glint_255", "texture_offnadir_255", "texture_nadir_255"]
+
     mode = "all"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
     overwrite_results = True
 
-    final_results_root = master_dir / "0_results" / final_results_folder_name
 
-    if not final_results_root.exists():
-        raise FileNotFoundError(f"Final results root does not exist: {final_results_root}")
 
-    case_dirs = _find_case_directories(final_results_root)
-    if not case_dirs:
-        raise FileNotFoundError(f"No case directories found under {final_results_root}")
+    for final_results in final_results_list:
 
-    overview_jobs = _resolve_overview_jobs(mode=mode, distinct_locations=distinct_locations)
+        print(f"\n=============== Start processing {final_results} ===============")
 
-    if not overview_jobs:
-        raise ValueError("No overview jobs were resolved. Check mode and distinct_locations.")
+        final_results_folder_name =  "EXPERIMENTS/" + final_results
+        final_results_root = master_dir / "0_results" / final_results_folder_name
 
-    print(f"Found {len(case_dirs)} case directories.")
-    print(f"Resolved {len(overview_jobs)} overview output job(s).")
-    print()
+        if not final_results_root.exists():
+            raise FileNotFoundError(f"Final results root does not exist: {final_results_root}")
 
-    for job in overview_jobs:
-        label = job["label"]
-        output_filename = job["output_filename"]
+        case_dirs = _find_case_directories(final_results_root)
+        if not case_dirs:
+            raise FileNotFoundError(f"No case directories found under {final_results_root}")
 
-        print(f"Building overview for label: {label}")
+        overview_jobs = _resolve_overview_jobs(mode=mode, distinct_locations=distinct_locations)
 
-        row_dfs: list[pd.DataFrame] = []
-        image_count_map = _build_case_group_to_image_count(case_dirs=case_dirs, label=label)
+        if not overview_jobs:
+            raise ValueError("No overview jobs were resolved. Check mode and distinct_locations.")
 
-        for case_dir in case_dirs:
-            benchmark_files = _find_matching_benchmark_workbooks(case_dir=case_dir, label=label)
+        print(f"Found {len(case_dirs)} case directories.")
+        print(f"Resolved {len(overview_jobs)} overview output job(s).")
+        print()
 
-            if not benchmark_files:
-                print(f"[SKIP] No matching benchmark files for {label} in {case_dir.name}")
-                continue
+        for job in overview_jobs:
+            label = job["label"]
+            output_filename = job["output_filename"]
 
-            for benchmark_file in benchmark_files:
-                try:
-                    row_df = _read_benchmark_overview_sheet(benchmark_file)
-                    row_dfs.append(row_df)
-                except Exception as exc:
-                    print(f"[FAIL] Could not read {benchmark_file}: {exc}")
+            print(f"Building overview for label: {label}")
 
-        all_cases_df, grouped_mean_df = _build_overview_tables(row_dfs=row_dfs, image_count_map=image_count_map)
+            row_dfs: list[pd.DataFrame] = []
+            image_count_map = _build_case_group_to_image_count(case_dirs=case_dirs, label=label)
 
-        output_path = final_results_root / output_filename
-        _write_overview_workbook(
-            output_path=output_path,
-            all_cases_df=all_cases_df,
-            grouped_mean_df=grouped_mean_df,
-            overwrite_results=overwrite_results,
-        )
+            for case_dir in case_dirs:
+                benchmark_files = _find_matching_benchmark_workbooks(case_dir=case_dir, label=label)
 
-        print(f"[OK] Wrote overview workbook: {output_path}\n")
+                if not benchmark_files:
+                    print(f"[SKIP] No matching benchmark files for {label} in {case_dir.name}")
+                    continue
+
+                for benchmark_file in benchmark_files:
+                    try:
+                        row_df = _read_benchmark_overview_sheet(benchmark_file)
+                        row_dfs.append(row_df)
+                    except Exception as exc:
+                        print(f"[FAIL] Could not read {benchmark_file}: {exc}")
+
+            all_cases_df, grouped_mean_df = _build_overview_tables(row_dfs=row_dfs, image_count_map=image_count_map)
+
+            output_path = final_results_root / output_filename
+            _write_overview_workbook(
+                output_path=output_path,
+                all_cases_df=all_cases_df,
+                grouped_mean_df=grouped_mean_df,
+                overwrite_results=overwrite_results,
+            )
+
+            print(f"[OK] Wrote overview workbook: {output_path}\n")
 
     print("Done.")
 

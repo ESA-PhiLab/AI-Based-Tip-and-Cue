@@ -129,78 +129,86 @@ def main() -> None:
     """Create TC1x1 time-delay and off-nadir sweep plots from overview_random.xlsx."""
     script_dir = Path(__file__).resolve().parent
 
-    location_plot = "random"
-    final_results_folder_name = "EXPERIMENTS/texture_offnadir_255"
-    overview_filename = f"overview_{location_plot}.xlsx"
-    output_folder_name = f"final_plots_{location_plot}"
 
-    final_results_root = _resolve_final_results_root(script_dir, final_results_folder_name)
-    overview_path = final_results_root / overview_filename
+    final_results_list = ["reflection_offnadir_glint_255", "reflection_nadir_glint_255", "texture_offnadir_255", "texture_nadir_255"]
+    location_plot_names = ["random", "Auckland2006", "Pelagos2016"]
 
-    if not final_results_root.exists():
-        raise FileNotFoundError(f"FINAL_RESULTS root does not exist: {final_results_root}")
+    for final_results in final_results_list:
+        print(f"\n=============== Start processing {final_results} ===============")
+        final_results_folder_name = "EXPERIMENTS/" + final_results
 
-    if not overview_path.exists():
-        raise FileNotFoundError(f"Overview file does not exist: {overview_path}")
+        for location_plot in location_plot_names:
 
-    sheet_name = _resolve_sheet_name(overview_path)
-    df = _load_overview_table(overview_path, sheet_name)
-    df_tc1x1 = _filter_tc1x1(df)
+            overview_filename = f"overview_{location_plot}.xlsx"
+            output_folder_name = f"final_plots_{location_plot}"
 
-    if df_tc1x1.empty:
-        raise ValueError("No TC1x1 rows found in the overview table.")
+            final_results_root = _resolve_final_results_root(script_dir, final_results_folder_name)
+            overview_path = final_results_root / overview_filename
 
-    time_delay_df = df_tc1x1[df_tc1x1["offnadir_angle_deg"] == 40].copy()
-    offnadir_df = df_tc1x1[df_tc1x1["time_delay_min"] == 5].copy()
+            if not final_results_root.exists():
+                raise FileNotFoundError(f"FINAL_RESULTS root does not exist: {final_results_root}")
 
-    if time_delay_df.empty:
-        raise ValueError("No TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40.")
-    if offnadir_df.empty:
-        raise ValueError("No TC1x1 rows found for off-nadir sweep with time_delay_min == 5.")
+            if not overview_path.exists():
+                raise FileNotFoundError(f"Overview file does not exist: {overview_path}")
 
-    output_root = final_results_root / output_folder_name
-    time_delay_output_dir = output_root / "time_delay_sweep"
-    offnadir_output_dir = output_root / "offnadir_sweep"
+            sheet_name = _resolve_sheet_name(overview_path)
+            df = _load_overview_table(overview_path, sheet_name)
+            df_tc1x1 = _filter_tc1x1(df)
 
-    time_delay_output_dir.mkdir(parents=True, exist_ok=True)
-    offnadir_output_dir.mkdir(parents=True, exist_ok=True)
+            if df_tc1x1.empty:
+                raise ValueError("No TC1x1 rows found in the overview table.")
 
-    _save_subset_csv(
-        df=time_delay_df,
-        output_path=time_delay_output_dir / "time_delay_sweep_data_TC1x1.csv",
-        sort_column="time_delay_min",
-    )
-    _save_subset_csv(
-        df=offnadir_df,
-        output_path=offnadir_output_dir / "offnadir_sweep_data_TC1x1.csv",
-        sort_column="offnadir_angle_deg",
-    )
+            time_delay_df = df_tc1x1[df_tc1x1["offnadir_angle_deg"] == 40].copy()
+            offnadir_df = df_tc1x1[df_tc1x1["time_delay_min"] == 5].copy()
 
-    for metric in METRICS:
-        _make_metric_plot(
-            df=time_delay_df,
-            x_column="time_delay_min",
-            metric=metric,
-            xlabel="Latency [min]",
-            title=f"{metric} vs latency for TC1x1 at 40° off-nadir",
-            output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg.png",
-        )
+            if time_delay_df.empty:
+                raise ValueError("No TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40.")
+            if offnadir_df.empty:
+                raise ValueError("No TC1x1 rows found for off-nadir sweep with time_delay_min == 5.")
 
-        _make_metric_plot(
-            df=offnadir_df,
-            x_column="offnadir_angle_deg",
-            metric=metric,
-            xlabel="Off-nadir angle [deg]",
-            title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency",
-            output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min.png",
-        )
+            output_root = final_results_root / output_folder_name
+            time_delay_output_dir = output_root / "time_delay_sweep"
+            offnadir_output_dir = output_root / "offnadir_sweep"
 
-    print(f"Overview file: {overview_path}")
-    print(f"Sheet used: {sheet_name}")
-    print(f"Total TC1x1 rows: {len(df_tc1x1)}")
-    print(f"Time-delay sweep rows: {len(time_delay_df)}")
-    print(f"Off-nadir sweep rows: {len(offnadir_df)}")
-    print(f"Plots written to: {output_root}")
+            time_delay_output_dir.mkdir(parents=True, exist_ok=True)
+            offnadir_output_dir.mkdir(parents=True, exist_ok=True)
+
+            _save_subset_csv(
+                df=time_delay_df,
+                output_path=time_delay_output_dir / "time_delay_sweep_data_TC1x1.csv",
+                sort_column="time_delay_min",
+            )
+            _save_subset_csv(
+                df=offnadir_df,
+                output_path=offnadir_output_dir / "offnadir_sweep_data_TC1x1.csv",
+                sort_column="offnadir_angle_deg",
+            )
+
+            for metric in METRICS:
+                _make_metric_plot(
+                    df=time_delay_df,
+                    x_column="time_delay_min",
+                    metric=metric,
+                    xlabel="Latency [min]",
+                    title=f"{metric} vs latency for TC1x1 at 40° off-nadir",
+                    output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg.png",
+                )
+
+                _make_metric_plot(
+                    df=offnadir_df,
+                    x_column="offnadir_angle_deg",
+                    metric=metric,
+                    xlabel="Off-nadir angle [deg]",
+                    title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency",
+                    output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min.png",
+                )
+
+            print(f"Overview file: {overview_path}")
+            print(f"Sheet used: {sheet_name}")
+            print(f"Total TC1x1 rows: {len(df_tc1x1)}")
+            print(f"Time-delay sweep rows: {len(time_delay_df)}")
+            print(f"Off-nadir sweep rows: {len(offnadir_df)}")
+            print(f"Plots written to: {output_root}")
 
 
 if __name__ == "__main__":

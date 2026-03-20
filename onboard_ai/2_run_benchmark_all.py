@@ -608,81 +608,88 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     master_dir = script_dir.parent
 
-    master_results = "EXPERIMENTS/reflection_nadir_glint_255"
+    master_results_list = ["reflection_offnadir_glint_255", "reflection_nadir_glint_255", "texture_offnadir_255", "texture_nadir_255"]
     mode = "all"
+
     distinct_locations = ["Auckland2006", "Pelagos2016"]
     overwrite_results = True
 
     tau_max_seconds: float | None = None
     iou_threshold = 0.5
 
-    master_results_root = master_dir / "0_results" / master_results
+    for master_results in master_results_list:
 
-    if not master_results_root.exists():
-        raise FileNotFoundError(f"Master results root does not exist: {master_results_root}")
+        print(f"\n=============== Start processing {master_results} ===============")
 
-    case_dirs = _find_case_directories(master_results_root)
-    if not case_dirs:
-        raise FileNotFoundError(f"No case directories found under {master_results_root}")
+        master_results =  "EXPERIMENTS/" + master_results
 
-    all_jobs: list[dict[str, str | Path]] = []
-    for case_dir in case_dirs:
-        for job in _resolve_variant_jobs(case_dir=case_dir, mode=mode, distinct_locations=distinct_locations):
-            all_jobs.append(
-                {
-                    "case_dir": case_dir,
-                    "variant_label": str(job["label"]),
-                    "detection_dir": Path(job["detection_dir"]),
-                    "benchmark_filename": str(job["benchmark_filename"]),
-                }
-            )
+        master_results_root = master_dir / "0_results" / master_results
 
-    if not all_jobs:
-        raise ValueError("No jobs were resolved. Check mode and distinct_locations.")
+        if not master_results_root.exists():
+            raise FileNotFoundError(f"Master results root does not exist: {master_results_root}")
 
-    print(f"Found {len(case_dirs)} case folders.")
-    print(f"Resolved {len(all_jobs)} benchmark jobs.")
-    print(f"Mode: {mode}")
-    print(f"tau_max_seconds: {tau_max_seconds}")
-    print(f"iou_threshold: {iou_threshold}")
-    print()
+        case_dirs = _find_case_directories(master_results_root)
+        if not case_dirs:
+            raise FileNotFoundError(f"No case directories found under {master_results_root}")
 
-    processed = 0
-    skipped = 0
-    failed = 0
+        all_jobs: list[dict[str, str | Path]] = []
+        for case_dir in case_dirs:
+            for job in _resolve_variant_jobs(case_dir=case_dir, mode=mode, distinct_locations=distinct_locations):
+                all_jobs.append(
+                    {
+                        "case_dir": case_dir,
+                        "variant_label": str(job["label"]),
+                        "detection_dir": Path(job["detection_dir"]),
+                        "benchmark_filename": str(job["benchmark_filename"]),
+                    }
+                )
 
-    for index, job in enumerate(all_jobs, start=1):
-        case_dir = Path(job["case_dir"])
-        variant_label = str(job["variant_label"])
-        detection_dir = Path(job["detection_dir"])
-        benchmark_filename = str(job["benchmark_filename"])
+        if not all_jobs:
+            raise ValueError("No jobs were resolved. Check mode and distinct_locations.")
 
-        print(f"\n[{index}/{len(all_jobs)}] Case: {case_dir.name} | Variant: {variant_label}")
+        print(f"Found {len(case_dirs)} case folders.")
+        print(f"Resolved {len(all_jobs)} benchmark jobs.")
+        print(f"Mode: {mode}")
+        print(f"tau_max_seconds: {tau_max_seconds}")
+        print(f"iou_threshold: {iou_threshold}")
+        print()
 
-        try:
-            process_case_variant(
-                case_dir=case_dir,
-                variant_label=variant_label,
-                detection_dir=detection_dir,
-                benchmark_filename=benchmark_filename,
-                overwrite_results=overwrite_results,
-                tau_max_seconds=tau_max_seconds,
-                iou_threshold=iou_threshold,
-            )
-            processed += 1
-        except FileNotFoundError as exc:
-            skipped += 1
-            print(f"[SKIP] {case_dir.name} | {variant_label}: {exc}")
-        except Exception as exc:
-            failed += 1
-            print(f"[FAIL] {case_dir.name} | {variant_label}: {exc}")
+        processed = 0
+        skipped = 0
+        failed = 0
 
-    print("\n" + "=" * 100)
-    print("Finished processing benchmark workbooks.")
-    print(f"Processed successfully: {processed}")
-    print(f"Skipped: {skipped}")
-    print(f"Failed: {failed}")
-    print("=" * 100)
+        for index, job in enumerate(all_jobs, start=1):
+            case_dir = Path(job["case_dir"])
+            variant_label = str(job["variant_label"])
+            detection_dir = Path(job["detection_dir"])
+            benchmark_filename = str(job["benchmark_filename"])
+
+            print(f"\n[{index}/{len(all_jobs)}] Case: {case_dir.name} | Variant: {variant_label}")
+
+            try:
+                process_case_variant(
+                    case_dir=case_dir,
+                    variant_label=variant_label,
+                    detection_dir=detection_dir,
+                    benchmark_filename=benchmark_filename,
+                    overwrite_results=overwrite_results,
+                    tau_max_seconds=tau_max_seconds,
+                    iou_threshold=iou_threshold,
+                )
+                processed += 1
+            except FileNotFoundError as exc:
+                skipped += 1
+                print(f"[SKIP] {case_dir.name} | {variant_label}: {exc}")
+            except Exception as exc:
+                failed += 1
+                print(f"[FAIL] {case_dir.name} | {variant_label}: {exc}")
+
+        print("\n" + "=" * 100)
+        print("Finished processing benchmark workbooks.")
+        print(f"Processed successfully: {processed}")
+        print(f"Skipped: {skipped}")
+        print(f"Failed: {failed}")
+        print("=" * 100)
 
 
 if __name__ == "__main__":

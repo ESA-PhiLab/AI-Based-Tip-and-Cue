@@ -4,7 +4,7 @@
 
 
 
-generate_constellation = False       # True  -> Walker constellation mode, False -> Independent per-satellite mode
+generate_constellation = True         # True  -> Walker constellation mode, False -> Independent per-satellite mode
 
 offnadir_limit_deg = 40.0
 
@@ -142,7 +142,6 @@ INDEPENDENT_SATELLITES = {
                 **DEFAULT_TIP_SENSOR,
             },
         },
-
         {
             "name": "Landsat_7",
             "orbit": {
@@ -188,13 +187,69 @@ INDEPENDENT_SATELLITES = {
                 **DEFAULT_TIP_SENSOR,
             },
         },
-
+        {
+            "name": "Resourcesat_2",
+            "orbit": {
+                **DEFAULT_TIP_ORBIT,
+                "hp": 814579.028,
+                "ha": 826519.372,
+                "i_deg": 98.79730113,
+                "RAAN_deg": 326.97941826,
+                "argp_deg": 113.40550442,
+                "M_deg": 280.53202342,
+            },
+            "sensor": {
+                **DEFAULT_TIP_SENSOR,
+            },
+        },
+        {
+            "name": "Resourcesat_2A",
+            "orbit": {
+                **DEFAULT_TIP_ORBIT,
+                "hp": 806672.449,
+                "ha": 819849.559,
+                "i_deg": 98.78804805,
+                "RAAN_deg": 333.41248847,
+                "argp_deg": 39.34909999,
+                "M_deg": 82.95023203,
+            },
+            "sensor": {
+                **DEFAULT_TIP_SENSOR,
+            },
+        },
     ],
 
     "Cue": [
-
-
-
+        {
+            "name": "WorldView_2",
+            "orbit": {
+                **DEFAULT_CUE_ORBIT,
+                "hp": 762348.426,
+                "ha": 779492.244,
+                "i_deg": 98.47560556,
+                "RAAN_deg": 335.36747608,
+                "argp_deg": 81.78668872,
+                "M_deg": 77.66199509,
+            },
+            "sensor": {
+                **DEFAULT_CUE_SENSOR,
+            },
+        },
+        {
+            "name": "WorldView_3",
+            "orbit": {
+                **DEFAULT_CUE_ORBIT,
+                "hp": 607555.648,
+                "ha": 631114.837,
+                "i_deg": 97.86514327,
+                "RAAN_deg": 336.41909538,
+                "argp_deg": 81.38853681,
+                "M_deg": 278.78299862,
+            },
+            "sensor": {
+                **DEFAULT_CUE_SENSOR,
+            },
+        },
         {
             "name": "WorldView_Legion_1",
             "orbit": {

@@ -100,7 +100,7 @@ def _resolve_image_jobs(case_root: Path, mode: str, distinct_locations: list[str
 
 
 def _extract_offnadir_angle_deg(case_name: str) -> int | None:
-    """Extract off-nadir angle from case name like TC_1x1sat_40deg_3min_1sd."""
+    """Extract off-nadir angle from case name."""
     match = re.match(r"^TC_(\d+)x(\d+)sat_(\d+)deg_(\d+)min(?:_\d+sd)?$", str(case_name))
     if match:
         return int(match.group(3))
@@ -117,12 +117,12 @@ def _infer_location_from_image_name(image_name: str) -> str | None:
     return None
 
 
-def _infer_location_from_folder_label(folder_label: str) -> str | None:
-    """Infer source location from folder label."""
-    label_lower = str(folder_label).lower()
-    if "auckland2006" in label_lower:
+def _infer_location_from_folder_label(folder_name: str) -> str | None:
+    """Infer source location from folder name."""
+    folder_name_lower = str(folder_name).lower()
+    if "auckland2006" in folder_name_lower:
         return "Auckland2006"
-    if "pelagos2016" in label_lower:
+    if "pelagos2016" in folder_name_lower:
         return "Pelagos2016"
     return None
 
@@ -197,8 +197,9 @@ def _load_location_detection_factors(overview_path: Path) -> dict[str, dict[int,
 
 
 def _resolve_success_fraction_for_image(image_path: Path, case_name: str, folder_label: str, location_factors: dict[str, dict[int, float]]) -> tuple[float | None, str | None, int | None]:
-    """Resolve success fraction f for one image."""
+    """Resolve success fraction for one image."""
     location = _infer_location_from_image_name(image_path.name)
+
     if location is None:
         location = _infer_location_from_folder_label(folder_label)
 
@@ -216,19 +217,15 @@ def _resolve_success_fraction_for_image(image_path: Path, case_name: str, folder
     return location_factors[location][offnadir_angle_deg], location, offnadir_angle_deg
 
 
-def _apply_stochastic_positive_sample_dropout(raw_predictions: list[dict[str, Any]], gt_boxes: list[Any], image_path: Path, case_name: str, folder_label: str, location_factors: dict[str, dict[int, float]] | None, rng: random.Random, apply_offnadir_success_dropout: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """For positive whale samples, keep predictions with probability f, otherwise drop all."""
+def _apply_stochastic_positive_sample_dropout(raw_predictions: list[dict[str, Any]], gt_boxes: list[Any], image_path: Path, case_name: str, folder_label: str, location_factors: dict[str, dict[int, float]] | None, rng: random.Random) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Drop predictions for positive samples with probability 1-f."""
     debug_info = {
-        "dropout_enabled": apply_offnadir_success_dropout,
         "dropout_applied": False,
         "dropout_keep": None,
         "dropout_fraction": None,
         "dropout_location": None,
         "dropout_offnadir_angle_deg": None,
     }
-
-    if not apply_offnadir_success_dropout:
-        return raw_predictions, debug_info
 
     if not gt_boxes:
         return raw_predictions, debug_info
@@ -262,34 +259,7 @@ def _apply_stochastic_positive_sample_dropout(raw_predictions: list[dict[str, An
     return raw_predictions, debug_info
 
 
-def process_model_for_image_folder(
-    model_name: str,
-    best_stg_path: Path,
-    config_path: Path,
-    deimv2_repo_root: Path,
-    image_folder_path: Path,
-    output_root_dir: Path,
-    anns_path: Path,
-    device: str,
-    render_scale: int,
-    line_width: int,
-    max_images: int | None,
-    individual_score_threshold: float,
-    individual_iou_threshold: float,
-    ap_score_threshold: float,
-    max_detections_individual: int | None,
-    max_detections_ap: int | None,
-    model_label_to_category_id: dict[int, int] | None,
-    show_detections: bool,
-    save_prediction_images: bool,
-    reset_prediction_images: bool,
-    overwrite_results: bool,
-    location_factors: dict[str, dict[int, float]] | None,
-    case_name: str,
-    folder_label: str,
-    rng: random.Random,
-    apply_offnadir_success_dropout: bool,
-) -> None:
+def process_model_for_image_folder(model_name: str, best_stg_path: Path, config_path: Path, deimv2_repo_root: Path, image_folder_path: Path, output_root_dir: Path, anns_path: Path, device: str, render_scale: int, line_width: int, max_images: int | None, individual_score_threshold: float, individual_iou_threshold: float, ap_score_threshold: float, max_detections_individual: int | None, max_detections_ap: int | None, model_label_to_category_id: dict[int, int] | None, show_detections: bool, save_prediction_images: bool, reset_prediction_images: bool, overwrite_results: bool, location_factors: dict[str, dict[int, float]] | None, case_name: str, folder_label: str, rng: random.Random) -> None:
     """Run detection for one fixed model on one image folder."""
     if not best_stg_path.exists():
         raise FileNotFoundError(f"Missing checkpoint: {best_stg_path}")
@@ -320,7 +290,6 @@ def process_model_for_image_folder(
     print(f"Config: {config_path}")
     print(f"Annotations: {anns_path}")
     print(f"Output dir: {run_output_root}")
-    print(f"Apply off-nadir success dropout: {apply_offnadir_success_dropout}")
     print(f"{'=' * 100}")
 
     detector = load_detector(
@@ -402,12 +371,7 @@ def process_model_for_image_folder(
     )
     print(f"MODEL_LABEL_TO_CATEGORY_ID: {model_label_to_category_id}")
 
-    next_print = 100
-    for k, image_path in enumerate(image_paths):
-        if k == next_print:
-            print(f"Progress: {k}/{len(image_paths)}", end="\r")
-            next_print += 100
-
+    for image_path in image_paths:
         image_record = get_image_record(annotations_data, image_path)
         image_id = int(image_record["id"])
         gt_boxes = extract_gt_boxes(
@@ -428,7 +392,6 @@ def process_model_for_image_folder(
             folder_label=folder_label,
             location_factors=location_factors,
             rng=rng,
-            apply_offnadir_success_dropout=apply_offnadir_success_dropout,
         )
 
         debug_model_output_rows.append(
@@ -437,7 +400,6 @@ def process_model_for_image_folder(
                 "image_id": image_id,
                 "num_model_outputs_before_threshold": len(raw_predictions_before_dropout),
                 "num_model_outputs_after_dropout": len(raw_predictions),
-                "dropout_enabled": dropout_debug["dropout_enabled"],
                 "dropout_applied": dropout_debug["dropout_applied"],
                 "dropout_keep": dropout_debug["dropout_keep"],
                 "dropout_fraction": dropout_debug["dropout_fraction"],
@@ -555,6 +517,28 @@ def process_model_for_image_folder(
                 line_width=line_width,
             )
 
+        print(f"\nImage: {image_path.name}")
+        print(f"Model outputs before dropout: {len(raw_predictions_before_dropout)}")
+        print(f"Model outputs after dropout: {len(raw_predictions)}")
+        print(
+            f"Dropout applied={dropout_debug['dropout_applied']} "
+            f"| keep={dropout_debug['dropout_keep']} "
+            f"| f={dropout_debug['dropout_fraction']} "
+            f"| location={dropout_debug['dropout_location']} "
+            f"| angle={dropout_debug['dropout_offnadir_angle_deg']}"
+        )
+        print(f"Reported detections after threshold: {len(individual_predictions)}")
+        print(
+            f"TP={individual_scores['tp']} "
+            f"FP={individual_scores['fp']} "
+            f"FN={individual_scores['fn']} "
+            f"Precision={individual_scores['precision']:.4f} "
+            f"Recall={individual_scores['recall']:.4f} "
+            f"F1={individual_scores['f1']:.4f} "
+            f"mean_tp_iou={individual_scores['mean_tp_iou']:.4f} "
+            f"best_tp_confidence={individual_scores['best_tp_confidence']:.4f}"
+        )
+
     total_thresholded_predictions_individual = int(sum(int(row["num_predictions"]) for row in image_summary_rows))
     total_model_outputs_before_threshold = int(sum(int(row["num_model_outputs_before_threshold"]) for row in debug_model_output_rows))
     total_model_outputs_after_dropout = int(sum(int(row["num_model_outputs_after_dropout"]) for row in debug_model_output_rows))
@@ -592,7 +576,6 @@ def process_model_for_image_folder(
             "image_folder": str(image_folder_path),
             "case_name": case_name,
             "folder_label": folder_label,
-            "dropout_enabled": apply_offnadir_success_dropout,
             "num_images_processed": len(image_paths),
             "positive_sample_count": len(positive_sample_best_ious),
             "all_sample_count": len(all_sample_best_ious),
@@ -667,10 +650,10 @@ def main() -> None:
     """Loop over all case folders and selected image folders for one fixed model."""
     script_dir = Path(__file__).resolve().parent
     master_dir = script_dir.parent
-    deimv2_repo_root = script_dir / "DEIMv2-main"
+    deimv2_repo_root = script_dir / "DEIMV2-main"
 
-    model_name = "texture_offnadir_255"
-    master_results = "EXPERIMENTS/reflection_offnadir_glint_255"
+    model_name = "04_reflection_offnadir_glint_255"
+    master_results = "FINAL_RESULTS"
 
     mode = "all"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
@@ -705,7 +688,7 @@ def main() -> None:
     location_overview_path = script_dir / "DEIMv2-main" / "data" / "0_merged" / "reflection_offnadir_glint_255" / "location_detection_overview.xlsx"
 
     if not deimv2_repo_root.exists():
-        raise FileNotFoundError(f"DEIMv2 repo root does not exist: {deimv2_repo_root}")
+        raise FileNotFoundError(f"DEIMV2 repo root does not exist: {deimv2_repo_root}")
 
     if not master_results_root.exists():
         raise FileNotFoundError(f"Master results root does not exist: {master_results_root}")
@@ -814,7 +797,6 @@ def main() -> None:
                 case_name=case_dir.name,
                 folder_label=folder_label,
                 rng=rng,
-                apply_offnadir_success_dropout=apply_offnadir_success_dropout,
             )
             processed += 1
         except FileNotFoundError as exc:

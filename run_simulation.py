@@ -917,7 +917,16 @@ while elapsed_seconds <= sim_duration_seconds:
 
             continue
 
-        if cue_illuminated and not cue_slew_active_timebased:
+        cue_slew_active_actual = bool(att_models_dict[actor.name].slew_active)
+        cue_is_moving = bool(cue_slew_active_timebased) or cue_slew_active_actual
+
+        current_eul = np.asarray(att_models_dict[actor.name]._actor_attitude_deg, float)
+        target_eul = np.asarray(att_models_dict[actor.name]._target_attitude_deg, float)
+        attitude_error_deg = np.linalg.norm((current_eul - target_eul + 180.0) % 360.0 - 180.0)
+
+        cue_is_stable = (not cue_is_moving) and (attitude_error_deg <= 0.25)
+
+        if cue_illuminated and cue_is_stable:
             current_task = eo_tools_dict[actor.name].current_task
             current_task_id = current_task["target_id"] if current_task is not None else None
 

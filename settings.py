@@ -4,6 +4,8 @@ from urllib.request import proxy_bypass
 from paseos.custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath, estimate_box_inertia, pass_time_from_nadir
 from paseos.custom_paseos.utils.constants import R_earth, mu_earth
 
+
+
 from simulation.satellite_config_utils import get_satellite_group_configs
 
 from datetime import datetime, timezone, timedelta
@@ -25,7 +27,7 @@ img_path = os.path.join(images_folder, img_file)
 anns_folder = "dataset/create_dataset/"
 anns_path = os.path.join(anns_folder, "final_annotations.json")
 
-real_run = False
+real_run = True
 
 if real_run:
     print_values = False
@@ -48,7 +50,7 @@ else:
 
 
 t0 = datetime(2025, 9, 20, 2, 33, 39, tzinfo=timezone.utc)
-whale_seed = 42
+whale_seed = 1
 
 if not real_run:
     t0 += timedelta(seconds=-3 * 60)
