@@ -46,8 +46,11 @@ class DetSolver(BaseSolver):
         n_parameters = sum([p.numel() for p in self.model.parameters() if not p.requires_grad])
         print(f'number of non-trainable parameters: {n_parameters}')
 
-        top1 = 0
-        best_stat = {'epoch': -1, }
+        top1 = float("-inf")  # global best AP50
+        best_stg1 = float("-inf")  # best AP50 in stage 1
+        best_stg2_local = float("-inf")  # best AP50 in stage 2, even if not global best
+        best_stat = {'epoch': -1}
+
         # evaluate again before resume training
         if self.last_epoch > 0:
             module = self.ema.module if self.ema else self.model
@@ -59,11 +62,21 @@ class DetSolver(BaseSolver):
                 self.evaluator,
                 self.device, epoch=self.last_epoch, writer=self.writer
             )
-            for k in test_stats:
-                best_stat['epoch'] = self.last_epoch
-                best_stat[k] = test_stats[k][0]
-                top1 = test_stats[k][0]
-                print(f'best_stat: {best_stat}')
+            if "coco_eval_bbox" in test_stats and len(test_stats["coco_eval_bbox"]) > 1:
+                metric_name = "coco_eval_bbox_ap50"
+                metric_val = float(test_stats["coco_eval_bbox"][1])  # AP50
+
+                best_stat["epoch"] = self.last_epoch
+                best_stat[metric_name] = metric_val
+                top1 = metric_val
+
+                stop_epoch = self.train_dataloader.collate_fn.stop_epoch
+                if self.last_epoch < stop_epoch:
+                    best_stg1 = metric_val
+                else:
+                    best_stg2_local = metric_val
+
+                print(f"best_stat: {best_stat}")
 
         best_stat_print = best_stat.copy()
         start_time = time.time()
@@ -121,44 +134,55 @@ class DetSolver(BaseSolver):
                 self.device, epoch=epoch, writer=self.writer
             )
 
-            for k in test_stats:
-                if self.writer and dist_utils.is_main_process():
-                    for i, v in enumerate(test_stats[k]):
-                        self.writer.add_scalar(f'Test/{k}_{i}'.format(k), v, epoch)
+            if "coco_eval_bbox" not in test_stats or len(test_stats["coco_eval_bbox"]) <= 1:
+                raise RuntimeError("Missing coco_eval_bbox AP50 in test_stats.")
 
-                if k in best_stat:
-                    best_stat['epoch'] = epoch if test_stats[k][0] > best_stat[k] else best_stat['epoch']
-                    best_stat[k] = max(best_stat[k], test_stats[k][0])
-                else:
-                    best_stat['epoch'] = epoch
-                    best_stat[k] = test_stats[k][0]
+            if self.writer and dist_utils.is_main_process():
+                for i, v in enumerate(test_stats["coco_eval_bbox"]):
+                    self.writer.add_scalar(f"Test/coco_eval_bbox_{i}", float(v), epoch)
 
-                if best_stat[k] > top1:
-                    best_stat_print['epoch'] = epoch
-                    top1 = best_stat[k]
-                    if self.output_dir:
-                        if epoch >= self.train_dataloader.collate_fn.stop_epoch:
-                            dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg2.pth')
-                        else:
-                            dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg1.pth')
+            metric_name = "coco_eval_bbox_ap50"
+            metric_val = float(test_stats["coco_eval_bbox"][1])  # AP50
+            stop_epoch = self.train_dataloader.collate_fn.stop_epoch
+            in_stage2 = epoch >= stop_epoch
 
-                best_stat_print[k] = max(best_stat[k], top1)
-                print(f'best_stat: {best_stat_print}')  # global best
+            # Track best seen value for reporting
+            if metric_name in best_stat:
+                if metric_val > best_stat[metric_name]:
+                    best_stat[metric_name] = metric_val
+                    best_stat["epoch"] = epoch
+            else:
+                best_stat[metric_name] = metric_val
+                best_stat["epoch"] = epoch
 
-                if best_stat['epoch'] == epoch and self.output_dir:
-                    if epoch >= self.train_dataloader.collate_fn.stop_epoch:
-                        if test_stats[k][0] > top1:
-                            top1 = test_stats[k][0]
-                            dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg2.pth')
+            best_stat_print["epoch"] = best_stat["epoch"]
+            best_stat_print[metric_name] = best_stat[metric_name]
+
+            # Stage 1 best
+            if self.output_dir and not in_stage2 and metric_val > best_stg1:
+                best_stg1 = metric_val
+                dist_utils.save_on_master(self.state_dict(), self.output_dir / "best_stg1.pth")
+
+            # Stage 2 local best
+            if self.output_dir and in_stage2 and metric_val > best_stg2_local:
+                best_stg2_local = metric_val
+                dist_utils.save_on_master(self.state_dict(), self.output_dir / "best_stg2_local.pth")
+
+            # Global best AP50
+            if metric_val > top1:
+                top1 = metric_val
+                best_stat["epoch"] = epoch
+                best_stat[metric_name] = metric_val
+                best_stat_print["epoch"] = epoch
+                best_stat_print[metric_name] = metric_val
+
+                if self.output_dir:
+                    if in_stage2:
+                        dist_utils.save_on_master(self.state_dict(), self.output_dir / "best_stg2.pth")
                     else:
-                        top1 = max(test_stats[k][0], top1)
-                        dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg1.pth')
+                        dist_utils.save_on_master(self.state_dict(), self.output_dir / "best_stg1.pth")
 
-                elif epoch >= self.train_dataloader.collate_fn.stop_epoch:
-                    best_stat = {'epoch': -1, }
-                    self.ema.decay -= 0.0001
-                    self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
-                    print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
+            print(f"best_stat: {best_stat_print}")
 
 
             log_stats = {

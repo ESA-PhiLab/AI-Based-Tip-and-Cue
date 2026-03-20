@@ -53,9 +53,9 @@ nPlanes_tip = 4
 nPlanes_cue = 4
 
 offnadir_limit = 40  # Maximum off-nadir observation angle (deg), max 62.5 deg
-delta_t_tipcue = 5 * 60  # Time delay between Tip and Cue satellite (s)
+delta_t_tipcue = 2 * 60  # Time delay between Tip and Cue satellite (s)
 
-whale_seed = 42
+whale_seed = 1
 
 if not real_run:
     sim_duration_hours = 10/60 #5826.4/3600
@@ -74,6 +74,8 @@ else:
 
     extension = f"_{int(offnadir_limit)}deg_{int(delta_t_tipcue / 60)}min" if nSats_tip * nPlanes_tip > 0 else ""
     sim_name = f"{nm_ext}_{nPlanes_cue}x{nSats_cue}sat" + extension + f"_{whale_seed}sd"
+
+    sim_name += "_independent"
 
 sim_name = "".join(c if c not in '\\/:*?"<>|' else "_" for c in sim_name).rstrip(". ")
 
@@ -205,7 +207,7 @@ if real_run:
 
 if not real_run:
     n_targets = 500
-    whale_seed = 42
+    whale_seed = 1
 
 pos_fraction = 1.0
 
@@ -215,7 +217,7 @@ mask_tif = "land_mask.tif"
 mask_npy = "land_mask.npy"
 
 max_abs_lat = 70.0  # Optional: exclude very high latitudes (avoid polar mask artifacts)
-observation_time_limit = 20 * 60  # Observation time limit
+observation_time_limit = 90 * 60  # Observation time limit
 
 # Whale kinematics
 speed_mean = 1.5

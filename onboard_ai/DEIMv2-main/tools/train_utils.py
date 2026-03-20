@@ -79,7 +79,7 @@ def pick_checkpoint(out_dir: Path) -> Path:
                 continue
 
             try:
-                ap = float(stats[0])
+                ap = float(stats[1])  # AP50
                 epoch = int(obj.get("epoch"))
             except Exception:
                 continue
@@ -112,12 +112,17 @@ def pick_checkpoint(out_dir: Path) -> Path:
             preferred: list[Path] = []
             if stop_epoch is not None and best_epoch >= stop_epoch:
                 preferred = [p for p in candidates if p.name == "best_stg2.pth"]
+                if not preferred:
+                    preferred = [p for p in candidates if p.name == "best_stg2_local.pth"]
             elif stop_epoch is not None and best_epoch < stop_epoch:
                 preferred = [p for p in candidates if p.name == "best_stg1.pth"]
 
             if preferred:
                 chosen = preferred[0]
-                print(f"[pick_checkpoint] Selected (metric-based): {chosen} | best_epoch={best_epoch} | best_AP50:95={best_ap:.6f}")
+                print(
+                    f"[pick_checkpoint] Selected (metric-based): {chosen} "
+                    f"| best_epoch={best_epoch} | best_AP50:95={best_ap:.6f}"
+                )
                 return chosen
 
             # If stage files missing, fall back to any best* file by mtime

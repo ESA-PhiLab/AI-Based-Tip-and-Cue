@@ -264,6 +264,9 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
     # stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     if coco_evaluator is not None:
         if 'bbox' in iou_types:
+            # COCO stats order:
+            # [0]=AP@[0.50:0.95], [1]=AP50, [2]=AP75, [3]=APs, [4]=APm, [5]=APl,
+            # [6]=AR@1, [7]=AR@10, [8]=AR@100, [9]=ARs, [10]=ARm, [11]=ARl
             stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
         if 'segm' in iou_types:
             stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()

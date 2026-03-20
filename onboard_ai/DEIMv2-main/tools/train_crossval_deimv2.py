@@ -110,7 +110,7 @@ def _find_resume_ckpt(fold_dir: Path) -> Path | None:
 
     by_name = {p.name: p for p in candidates}
 
-    for key in ["last.pth", "best_stg2.pth", "best_stg1.pth", "best.pth"]:
+    for key in ["last.pth", "best_stg2.pth", "best_stg2_local.pth", "best_stg1.pth", "best.pth"]:
         if key in by_name:
             return by_name[key]
 

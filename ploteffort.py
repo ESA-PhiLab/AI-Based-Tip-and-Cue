@@ -61,7 +61,7 @@ def plot_thesis_effort(month_values: dict[str, float], start: str = "2025-04", e
     ax.set_ylim(0, 2.0)
     ax.set_yticks(np.arange(0, 2.1, 0.5))
 
-    ax.set_ylabel("Thesis Effort")
+    ax.set_ylabel("Thesis Effort (0-2)")
     ax.set_xlabel("Month")
     ax.set_title("Monthly Thesis Effort")
 
@@ -88,7 +88,7 @@ plot_thesis_effort({
     "November 2025": 0.0,
     "December 2025": 0.5,
     "January 2026": 0.1,
-    "February 2026": 1.6,
-    "March 2026": 1.6,
-    "April 2026": 1.6,
+    "February 2026": 1.8,
+    "March 2026": 1.8,
+    "April 2026": 1.8
 })

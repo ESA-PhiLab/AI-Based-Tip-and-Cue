@@ -129,9 +129,10 @@ def main() -> None:
     """Create TC1x1 time-delay and off-nadir sweep plots from overview_random.xlsx."""
     script_dir = Path(__file__).resolve().parent
 
-    final_results_folder_name = "EXPERIMENTS/reflection_offnadir_glint_255"
-    overview_filename = "overview_random.xlsx"
-    output_folder_name = "final_plots"
+    location_plot = "random"
+    final_results_folder_name = "EXPERIMENTS/texture_offnadir_255"
+    overview_filename = f"overview_{location_plot}.xlsx"
+    output_folder_name = f"final_plots_{location_plot}"
 
     final_results_root = _resolve_final_results_root(script_dir, final_results_folder_name)
     overview_path = final_results_root / overview_filename

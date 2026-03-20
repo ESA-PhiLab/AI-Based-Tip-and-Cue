@@ -54,11 +54,11 @@ BASE_DIR = DATASET_PATH / "create_dataset" / "0_merged" / mode
 ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
 
 # Example 2: custom folder with image subfolders
-DATASET_PATH = Path(r"C:/Users/nadine/Documents/Phi-Lab_MasterThesis/2_Full_Thesis/Report/V5_Report/figures/deep-learning/difficult")
+DATASET_PATH = Path(r"C:/Users/nadine/Documents/Phi-Lab_MasterThesis/2_Full_Thesis/Report/V5_Report/figures/results/no_radiometric_geometric")
 BASE_DIR = DATASET_PATH
 ANNOTATIONS_PATH = DATASET_PATH / "create_dataset" / "0_merged" / mode / "final_annotations_repaired.json"
 GRID_ROWS = 3
-GRID_COLS = 6
+GRID_COLS = 7
 
 # Example 3: whales from space visualization
 # DATASET_PATH = Path(r"C:/Users/nadine/Documents/Phi-Lab_MasterThesis/2_Full_Thesis/Report/V5_Report/figures/dataset/whales_from_space_samples")

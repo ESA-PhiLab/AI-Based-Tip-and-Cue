@@ -378,7 +378,7 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     master_dir = script_dir.parent
 
-    final_results_folder_name = "EXPERIMENTS/texture_offnadir_255"
+    final_results_folder_name = "EXPERIMENTS/reflection_nadir_glint_255"
     mode = "all"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
     overwrite_results = True

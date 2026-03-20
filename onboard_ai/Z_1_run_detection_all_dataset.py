@@ -238,8 +238,16 @@ def process_model_for_image_folder(
         f"{[int(cat['id']) for cat in annotations_data.get('categories', []) if isinstance(cat, dict) and 'id' in cat]}"
     )
     print(f"MODEL_LABEL_TO_CATEGORY_ID: {model_label_to_category_id}")
+    print(f"Start running detections...")
 
-    for image_path in image_paths:
+    next_print = 100
+    for k, image_path in enumerate(image_paths):
+
+
+        if k == next_print:
+            print(f"Progress: {k}/{len(image_paths)}", end="\r")
+            next_print+=100
+
         image_record = get_image_record(annotations_data, image_path)
         image_id = int(image_record["id"])
         gt_boxes = extract_gt_boxes(
@@ -369,19 +377,19 @@ def process_model_for_image_folder(
                 line_width=line_width,
             )
 
-        print(f"\nImage: {image_path.name}")
-        print(f"Model outputs before threshold: {len(raw_predictions)}")
-        print(f"Reported detections after threshold: {len(individual_predictions)}")
-        print(
-            f"TP={individual_scores['tp']} "
-            f"FP={individual_scores['fp']} "
-            f"FN={individual_scores['fn']} "
-            f"Precision={individual_scores['precision']:.4f} "
-            f"Recall={individual_scores['recall']:.4f} "
-            f"F1={individual_scores['f1']:.4f} "
-            f"mean_tp_iou={individual_scores['mean_tp_iou']:.4f} "
-            f"best_tp_confidence={individual_scores['best_tp_confidence']:.4f}"
-        )
+        # print(f"\nImage: {image_path.name}")
+        # print(f"Model outputs before threshold: {len(raw_predictions)}")
+        # print(f"Reported detections after threshold: {len(individual_predictions)}")
+        # print(
+        #     f"TP={individual_scores['tp']} "
+        #     f"FP={individual_scores['fp']} "
+        #     f"FN={individual_scores['fn']} "
+        #     f"Precision={individual_scores['precision']:.4f} "
+        #     f"Recall={individual_scores['recall']:.4f} "
+        #     f"F1={individual_scores['f1']:.4f} "
+        #     f"mean_tp_iou={individual_scores['mean_tp_iou']:.4f} "
+        #     f"best_tp_confidence={individual_scores['best_tp_confidence']:.4f}"
+        # )
 
     total_thresholded_predictions_individual = int(sum(int(row["num_predictions"]) for row in image_summary_rows))
     total_model_outputs_before_threshold = int(sum(int(row["num_model_outputs_before_threshold"]) for row in debug_model_output_rows))
@@ -491,7 +499,7 @@ def main() -> None:
     master_dir = script_dir.parent
     deimv2_repo_root = script_dir / "DEIMV2-main"
 
-    model_name = "04_reflection_offnadir_glint_255"
+    model_name = "reflection_offnadir_glint_255"
 
     mode = "random"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
@@ -510,7 +518,7 @@ def main() -> None:
     max_detections_ap = None
 
     model_path = master_dir / "onboard_ai" / "final_models"
-    best_stg_path = model_path / model_name / "final_location_holdout" / "best_stg2.pth"
+    best_stg_path = model_path / model_name / "final_location_holdout" / "best_stg1.pth"
     config_path = model_path / model_name / "final_location_holdout" / "config" / "base_config_with_train_norm.yml"
 
     master_results_root = master_dir / "onboard_ai" / "DEIMv2-main" / "data" / "0_merged" / "reflection_offnadir_glint_255"

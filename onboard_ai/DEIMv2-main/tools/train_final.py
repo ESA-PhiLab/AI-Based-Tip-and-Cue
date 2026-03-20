@@ -378,7 +378,7 @@ def main() -> int:
 
     log_path = out_dir / "train_stdout.log"
 
-    for stale in ["best_stg1.pth", "best_stg2.pth", "last.pth"]:
+    for stale in ["best_stg1.pth", "best_stg2.pth", "best_stg2_local.pth", "last.pth"]:
         p = out_dir / stale
         if p.exists():
             try:
@@ -400,6 +400,8 @@ def main() -> int:
         variant = "stg1"
     elif n == "best_stg2.pth":
         variant = "stg2"
+    elif n == "best_stg2_local.pth":
+        variant = "stg2_local"
     elif n == "last.pth":
         variant = "last"
     elif n.lower().startswith("best"):
