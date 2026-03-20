@@ -4,7 +4,7 @@ import orekit
 import pyvista as pv
 import numpy as np
 import pykep as pk
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import atexit
 import time
 import gc
@@ -28,11 +28,13 @@ from paseos.custom_paseos.utils.reference_frame_transformation import IRF2LVLH
 from simulation.targets.whales import update_whales, init_whales
 from simulation.targets.water_target_utils import load_land_mask, generate_random_water_targets, build_land_mask
 from simulation.sim_utils import init_eo_tools, init_attitude_models, link_eo_attitude, cleanup_timeout_targets, propagate_actor, satellite_in_shadow, daylight_mask, convert_M_to_lv, pointing_cost, count_orbits_completed, compute_coverage_fraction, _clear_actor_task
+from simulation.tasking import ensure_cue_task_state, add_tip_confirmed_task, release_current_task, claim_best_global_task
 from simulation.plotting.plot_functions import plot_orbits, plot_all_fov_footprints_plotly, plot_offnadir_distribution, plot_latency_distribution, plot_viewing_time_distribution, plot_gsd_distribution
 from simulation.plotting.plot_pyvista import make_plotter_eci, reset_plotter, update_plotter, compute_movie_framerate, camera_position_xy, close_plotter_safely, _pump_pyvista_events
 from simulation.plotting.plot_constellation import plot_constellation_pyvista_plain
 from simulation.sim_logging import init_excel_log, log_tip, log_cue, log_combined, log_img, gsd_offnadir, at_exit, Logger, compute_stats, format_hms, merge_tip_cue_combined
 from simulation.constants import R_earth
+
 
 from onboard_ai.onboard_ai_tip import tip_ai_decision
 from onboard_ai.onboard_ai_cue import cue_ai_decision
@@ -42,8 +44,8 @@ from offnadir_imaging.rendering import generate_image
 from pathlib import Path
 
 show_constellation = True
-show_orbits = True
-plot_propagation, uhd = True, False
+show_orbits = False
+plot_propagation, uhd = True, True
 plot_footprints = True
 plot_whale_trajectories = False
 
@@ -131,10 +133,10 @@ all_planets = planet_lst_tip + planet_lst_cue
 
 
 
-print(f"Tip planets: {len(planet_lst_tip)}")
-print(f"Cue planets: {len(planet_lst_cue)}")
-print("Tip names:", [p.name for p in planet_lst_tip[:5]])
-print("Cue names:", [p.name for p in planet_lst_cue[:5]])
+print(f"Tip satellites: {len(planet_lst_tip)}")
+print(f"Cue satellites: {len(planet_lst_cue)}")
+print("Tip names:", [p.name for p in planet_lst_tip[:8]])
+print("Cue names:", [p.name for p in planet_lst_cue[:8]])
 
 if show_constellation:
     #plot_constellation_pyvista(planet_lst_tip, planet_lst_cue, t0)
@@ -142,7 +144,8 @@ if show_constellation:
 
 # Create actors
 tip_actors, cue_actors = [], []
-for planet in all_planets:
+
+for planet in planet_lst_tip:
     orbital_elements_true = convert_M_to_lv(planet.orbital_elements, t0_orekit)
 
     propagator = OrekitPropagator(
@@ -152,7 +155,11 @@ for planet in all_planets:
         area_s=area_s, cr_s=cr_s, area_d=area_d, cd=cd
     )
 
-    actor = ActorBuilder.get_actor_scaffold(name=planet.name, actor_type=SpacecraftActor, epoch=t0_pykep)
+    actor = ActorBuilder.get_actor_scaffold(
+        name=planet.name,
+        actor_type=SpacecraftActor,
+        epoch=t0_pykep
+    )
     actor.running_ai = False
 
     ActorBuilder.set_custom_orbit(actor, lambda t, p=propagator: (
@@ -163,7 +170,34 @@ for planet in all_planets:
     ActorBuilder.set_geometric_model(actor, sat_mass)
     ActorBuilder.set_central_body(actor, pk.planet.jpl_lp("earth"), radius=R_earth)
 
-    (tip_actors if "Tip" in planet.name else cue_actors).append(actor)
+    tip_actors.append(actor)
+
+for planet in planet_lst_cue:
+    orbital_elements_true = convert_M_to_lv(planet.orbital_elements, t0_orekit)
+
+    propagator = OrekitPropagator(
+        orbital_elements=orbital_elements_true,
+        epoch=t0_orekit,
+        satellite_mass=sat_mass,
+        area_s=area_s, cr_s=cr_s, area_d=area_d, cd=cd
+    )
+
+    actor = ActorBuilder.get_actor_scaffold(
+        name=planet.name,
+        actor_type=SpacecraftActor,
+        epoch=t0_pykep
+    )
+    actor.running_ai = False
+
+    ActorBuilder.set_custom_orbit(actor, lambda t, p=propagator: (
+        list(p.eph((t.mjd2000 - t0_pykep.mjd2000) * pk.DAY2SEC).getPVCoordinates().getPosition().toArray()),
+        list(p.eph((t.mjd2000 - t0_pykep.mjd2000) * pk.DAY2SEC).getPVCoordinates().getVelocity().toArray())
+    ), t0_pykep)
+
+    ActorBuilder.set_geometric_model(actor, sat_mass)
+    ActorBuilder.set_central_body(actor, pk.planet.jpl_lp("earth"), radius=R_earth)
+
+    cue_actors.append(actor)
 
 eul_ang_tip_default = [0.0, 0.0, 0.0]
 eul_ang_cue_default = [0.0, 0.0, 0.0]
@@ -189,7 +223,14 @@ if params_tip["build_constellation"]:
             "group": "Tip",
         }
 else:
-    for actor, sat in zip(tip_actors, params_tip["satellites"]):
+    tip_sat_by_name = {sat["name"]: sat for sat in params_tip["satellites"]}
+    for actor in tip_actors:
+        if actor.name not in tip_sat_by_name:
+            raise KeyError(
+                f"Tip actor '{actor.name}' not found in params_tip['satellites']. "
+                f"Available names: {list(tip_sat_by_name.keys())}"
+            )
+        sat = tip_sat_by_name[actor.name]
         satellite_specs[actor.name] = {
             "fov_deg": float(sat["fov_deg"]),
             "sensor": dict(sat["sensor"]),
@@ -206,13 +247,22 @@ if params_cue["build_constellation"]:
             "group": "Cue",
         }
 else:
-    for actor, sat in zip(cue_actors, params_cue["satellites"]):
+    cue_sat_by_name = {sat["name"]: sat for sat in params_cue["satellites"]}
+    for actor in cue_actors:
+        if actor.name not in cue_sat_by_name:
+            raise KeyError(
+                f"Cue actor '{actor.name}' not found in params_cue['satellites']. "
+                f"Available names: {list(cue_sat_by_name.keys())}"
+            )
+        sat = cue_sat_by_name[actor.name]
         satellite_specs[actor.name] = {
             "fov_deg": float(sat["fov_deg"]),
             "sensor": dict(sat["sensor"]),
             "offnadir_limit": float(sat["sensor"]["offnadir_limit_deg"]),
             "group": "Cue",
         }
+
+print("Satellite specs keys:", list(satellite_specs.keys()))
 
 eo_tools_dict = init_eo_tools(tip_actors, cue_actors, satellite_specs)
 
@@ -225,9 +275,7 @@ att_models_dict = init_attitude_models(
 
 link_eo_attitude(eo_tools_dict, att_models_dict)
 
-for actor in cue_actors:
-    eo_tools_dict[actor.name].t_task_assigned = None
-    eo_tools_dict[actor.name].t_to_obs_expected = None
+ensure_cue_task_state(eo_tools_dict, cue_actors)
 
 if len(tip_actors) != 0:
     sim = paseos.init_sim(local_actor=tip_actors[0])
@@ -531,39 +579,18 @@ while elapsed_seconds <= sim_duration_seconds:
                         n_confirmed_tip +=1
 
                         if whale.confirmed_tip:
-
-                            best_cue, best_dist = None, float("inf")
-
-                            for cue_actor in cue_actors:
-                                # Propagate cue satellite forward by avg_time_delay
-                                t_future = pk.epoch(t_pykep.mjd2000 + avg_time_delay / pk.DAY2SEC)
-                                r_future, _, _, _ = propagate_actor(cue_actor, t_future, None, n_steps, show_orbits=False)
-
-                                # Target position in ECI at the same future time
-                                tgt_lat, tgt_lon, tgt_alt = task_coord
-                                tgt_vec = np.array(Point_Geodetic2ECI(tgt_lat, tgt_lon, tgt_alt, t_datetime + timedelta(seconds=avg_time_delay)))
-
-                                # Distance between satellite and target in ECI
-                                dist = np.linalg.norm(r_future - tgt_vec)
-
-                                if dist < best_dist:
-                                    best_dist = dist
-                                    best_cue = cue_actor.name
-
-                            whale.assigned_cue = best_cue
-                            whale.t_tasked_tip = t_datetime
-                            tasked_targets[whale_idx] = whale
+                            add_tip_confirmed_task(
+                                whale=whale,
+                                whale_idx=whale_idx,
+                                tasked_targets=tasked_targets,
+                                t_datetime=t_datetime
+                            )
                             n_tasked_tip += 1
 
-                            eo_tools_dict[best_cue].task_queue.append({
-                                "target_id": whale_idx,
-                                "coord": task_coord,
-                                "assign_time": t_datetime
-                            })
-
-                            whale.ai_class_predicted="whale-tipped"
-
-                            print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, assigned to {best_cue} (actual={whale.ai_class_true})")
+                            print(
+                                f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, "
+                                f"added to global Cue pool (actual={whale.ai_class_true})"
+                            )
 
                         elif not whale.confirmed_tip:
                             whale.ai_class_predicted="not-whale"
@@ -571,7 +598,7 @@ while elapsed_seconds <= sim_duration_seconds:
                             n_confirmed_neg +=1
                             cleanup_idx.append(whale_idx)
 
-                            print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, no Cue assigned (actual={whale.ai_class_true})")
+                            print(f"!! {actor.name}: Confirmed Target {whale_idx}={whale.ai_class_predicted}, not added to Cue pool (actual={whale.ai_class_true})")
 
                         if logging:
                             log_tip(writer_tip,
@@ -640,16 +667,15 @@ while elapsed_seconds <= sim_duration_seconds:
                 current_task = eo_tools_dict[actor.name].current_task
                 task_id = eo_tools_dict[actor.name].current_task["target_id"]
 
-                print(f"!! {actor.name}: Expected observation time for Target {task_id} exceeded, clear task")
+                print(f"!! {actor.name}: Expected observation time for Target {task_id} exceeded, release task")
 
-
-
-                att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
-                _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
-
-                # Global removal happens at the next loop via cleanup_timeout_targets:
-                if task_id in tasked_targets:
-                    cleanup_idx.append(task_id)
+                release_current_task(
+                    actor_name=actor.name,
+                    eo_tools_dict=eo_tools_dict,
+                    att_models_dict=att_models_dict,
+                    all_targets=all_targets,
+                    eul_default=eul_ang_cue_default
+                )
 
         else:
             elapsed_since_task_s = None
@@ -675,77 +701,40 @@ while elapsed_seconds <= sim_duration_seconds:
 
                 if t_datetime > tip_time + timedelta(seconds=delay_transmission_TC):
 
-                    if any(task.get("target_id") == whale_idx for task in eo_tools_dict[actor.name].task_queue) and whale.state_tasked == 0:
-                        print(f"!! {actor.name}: Received task for Target {whale_idx}")
-                        whale.state_tasked = 1
+
 
 
                     # If no current task, check the queue
-                    if eo_tools_dict[actor.name].current_task is None and eo_tools_dict[actor.name].task_queue:
-                        candidate_tasks = []
+                    if eo_tools_dict[actor.name].current_task is None:
+                        best_task = claim_best_global_task(
+                            actor=actor,
+                            r_vec=r_vec,
+                            v_vec=v_vec,
+                            t_datetime=t_datetime,
+                            tasked_targets=tasked_targets,
+                            all_targets=all_targets,
+                            eo_tools_dict=eo_tools_dict,
+                            satellite_specs=satellite_specs,
+                            avg_time_delay=avg_time_delay,
+                            elevation_min=elevation_min,
+                            omega_max_rad=omega_max_rad,
+                            alpha_max_rad=alpha_max_rad,
+                            zeta=zeta,
+                            wn_rad=wn_rad,
+                            offnadir_margin=offnadir_margin,
+                            sim_step_seconds=sim_step_seconds,
+                            delay_transmission_TC=delay_transmission_TC,
+                            point_eci_to_geodetic_fn=Point_ECI2Geodetic
+                        )
 
-                        for task in eo_tools_dict[actor.name].task_queue:
-                            will_be_visible, _ = eo_tools_dict[actor.name].will_be_visible_within(
-                                task["coord"], r_vec, v_vec, t_datetime,
-                                avg_time_delay, el_min_deg=elevation_min, step=60.0
-                            )
-
-                            if not will_be_visible:
-                                continue
-
-                            offnadir_limit_local = float(satellite_specs[actor.name]["offnadir_limit"])
-
-                            target_eul_deg, offnadir_at_obs, offnadir_unbound, time_to_obs, pointing_vec_lvlh_target = \
-                                eo_tools_dict[actor.name].compute_optimal_future_attitude(
-                                    r_eci=r_vec,
-                                    v_eci=v_vec,
-                                    target_geodetic=task["coord"],
-                                    t_datetime=t_datetime,
-                                    omega_max_rad=omega_max_rad,
-                                    alpha_max_rad=alpha_max_rad,
-                                    zeta=zeta,
-                                    wn_rad=wn_rad,
-                                    offnadir_max=offnadir_limit_local,
-                                    offnadir_margin=offnadir_margin,
-                                    dt_step_coarse=max(sim_step_seconds, 2.0),
-                                    dt_step_fine=max(sim_step_seconds / 5.0, 0.25),
-                                    dt_max=avg_time_delay,
-                                    mode="per_axis"
-                                )
-
-                            if target_eul_deg is None or time_to_obs is None:
-                                continue
-
-                            task_eval = dict(task)
-                            task_eval["target_eul_deg"] = np.asarray(target_eul_deg, float)
-                            task_eval["offnadir_at_obs"] = float(offnadir_at_obs)
-                            task_eval["offnadir_unbound"] = float(offnadir_unbound)
-                            task_eval["time_to_obs"] = float(time_to_obs)
-                            task_eval["pointing_vec_lvlh_target"] = np.asarray(pointing_vec_lvlh_target, float)
-
-                            candidate_tasks.append(task_eval)
-
-                        if candidate_tasks:
-                            eo_tools_dict[actor.name].current_task = min(
-                                candidate_tasks,
-                                key=lambda task: task["time_to_obs"]
-                            )
-
-                            eo_tools_dict[actor.name].task_queue = [
-                                t for t in eo_tools_dict[actor.name].task_queue
-                                if t.get("target_id") != eo_tools_dict[actor.name].current_task["target_id"]
-                            ]
-
-                            task_id = eo_tools_dict[actor.name].current_task["target_id"]
-
-                            eo_tools_dict[actor.name].t_task_assigned = t_datetime
-                            eo_tools_dict[actor.name].t_to_obs_expected = float(
-                                eo_tools_dict[actor.name].current_task["time_to_obs"]
-                            )
+                        if best_task is not None:
+                            task_id = best_task["target_id"]
 
                             print(
-                                f"!! {actor.name}: Starting task for Target {task_id} "
-                                f"(expected obs in {eo_tools_dict[actor.name].t_to_obs_expected:.1f} s)"
+                                f"!! {actor.name}: Claimed global task for Target {task_id} "
+                                f"(expected obs in {eo_tools_dict[actor.name].t_to_obs_expected:.1f} s, "
+                                f"off-nadir at obs {best_task['offnadir_at_obs']:.1f} deg, "
+                                f"central angle {best_task['central_angle_deg']:.1f} deg)"
                             )
 
                             if task_id in all_targets:
@@ -806,15 +795,15 @@ while elapsed_seconds <= sim_duration_seconds:
 
                         if not (in_view or will_be_in_view_later):
                             # Task finished → reset and pick next later
-                            print(f"!! {actor.name}: Target {task_id} out of view, delete task")
+                            print(f"!! {actor.name}: Target {task_id} out of view for this satellite, release task")
 
-                            # reset local EO tool state
-                            att_models_dict[actor.name]._new_target_attitude_deg = eul_ang_cue_default
-                            _clear_actor_task(actor.name, task_id, eo_tools_dict, att_models_dict, eul_default=eul_ang_cue_default)
-
-                            # Global removal happens at the next loop via cleanup_timeout_targets:
-                            if task_id in tasked_targets:
-                                cleanup_idx.append(task_id)
+                            release_current_task(
+                                actor_name=actor.name,
+                                eo_tools_dict=eo_tools_dict,
+                                att_models_dict=att_models_dict,
+                                all_targets=all_targets,
+                                eul_default=eul_ang_cue_default
+                            )
 
             if eo_tools_dict[actor.name].current_task is None:
                 actor_eul = np.asarray(att_models_dict[actor.name]._actor_attitude_deg, float)

@@ -51,6 +51,9 @@ t0 = datetime(2025, 9, 20, 2, 33, 39, tzinfo=timezone.utc)
 whale_seed = 42
 
 if not real_run:
+    t0 += timedelta(seconds=-3 * 60)
+
+if not real_run:
     sim_duration_hours = 15 / 60
     sim_time = "slow"
 else:
@@ -223,7 +226,7 @@ alpha_stab_res = alpha_max_rad / 10
 if real_run:
     n_targets = 500
 else:
-    n_targets = 1000
+    n_targets = 3000
 
 
 pos_fraction = 1.0
@@ -234,7 +237,7 @@ mask_tif = "land_mask.tif"
 mask_npy = "land_mask.npy"
 
 max_abs_lat = 70.0
-observation_time_limit = 90 * 60
+observation_time_limit = 24 * 60 * 60
 
 speed_mean = 1.5
 speed_min = 0.2
