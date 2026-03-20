@@ -41,9 +41,9 @@ from offnadir_imaging.rendering import generate_image
 
 from pathlib import Path
 
-show_constellation = False
-show_orbits = False
-plot_propagation, uhd = True, True
+show_constellation = True
+show_orbits = True
+plot_propagation, uhd = True, False
 plot_footprints = True
 plot_whale_trajectories = False
 
@@ -129,6 +129,13 @@ planet_lst_cue, sats_cue, _ = build_constellation(params_cue, "Cue", t0_pykep)
 # Combine planets
 all_planets = planet_lst_tip + planet_lst_cue
 
+
+
+print(f"Tip planets: {len(planet_lst_tip)}")
+print(f"Cue planets: {len(planet_lst_cue)}")
+print("Tip names:", [p.name for p in planet_lst_tip[:5]])
+print("Cue names:", [p.name for p in planet_lst_cue[:5]])
+
 if show_constellation:
     #plot_constellation_pyvista(planet_lst_tip, planet_lst_cue, t0)
     plot_constellation_pyvista_plain(planet_lst_tip, planet_lst_cue, t0)
@@ -171,15 +178,51 @@ rng_dem = random.Random(seed_dem)
 n_targets_pos = int(round(n_targets * pos_fraction))
 n_targets_neg = n_targets - n_targets_pos
 
-# EO Tools
-# EO Tools
-eo_tools_dict = init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, offnadir_limit)
+satellite_specs = {}
+
+if params_tip["build_constellation"]:
+    for actor in tip_actors:
+        satellite_specs[actor.name] = {
+            "fov_deg": float(params_tip["fov_deg"]),
+            "sensor": dict(params_tip["sensor"]),
+            "offnadir_limit": float(params_tip["sensor"]["offnadir_limit_deg"]),
+            "group": "Tip",
+        }
+else:
+    for actor, sat in zip(tip_actors, params_tip["satellites"]):
+        satellite_specs[actor.name] = {
+            "fov_deg": float(sat["fov_deg"]),
+            "sensor": dict(sat["sensor"]),
+            "offnadir_limit": float(sat["sensor"]["offnadir_limit_deg"]),
+            "group": "Tip",
+        }
+
+if params_cue["build_constellation"]:
+    for actor in cue_actors:
+        satellite_specs[actor.name] = {
+            "fov_deg": float(params_cue["fov_deg"]),
+            "sensor": dict(params_cue["sensor"]),
+            "offnadir_limit": float(params_cue["sensor"]["offnadir_limit_deg"]),
+            "group": "Cue",
+        }
+else:
+    for actor, sat in zip(cue_actors, params_cue["satellites"]):
+        satellite_specs[actor.name] = {
+            "fov_deg": float(sat["fov_deg"]),
+            "sensor": dict(sat["sensor"]),
+            "offnadir_limit": float(sat["sensor"]["offnadir_limit_deg"]),
+            "group": "Cue",
+        }
+
+eo_tools_dict = init_eo_tools(tip_actors, cue_actors, satellite_specs)
+
 att_models_dict = init_attitude_models(
     tip_actors, cue_actors,
     eul_ang_tip_default, eul_ang_cue_default,
     omega_max_rad, alpha_max_rad, zeta, wn_rad,
-    offnadir_limit, offnadir_margin
+    satellite_specs, offnadir_margin
 )
+
 link_eo_attitude(eo_tools_dict, att_models_dict)
 
 for actor in cue_actors:
@@ -308,15 +351,16 @@ if logging:
     results_dir = os.path.join("0_results", sim_name)
     os.makedirs(results_dir, exist_ok=True)
 
-    copy_file = "settings.py"
-    if os.path.exists(copy_file):
-        dst = os.path.join(results_dir, copy_file)
-        shutil.copy(copy_file, dst)
-        if verbose:
-            print(f"Copied {copy_file} to {dst.replace(os.sep, '/')}")
-    else:
-        if verbose:
-            print(f"Warning: {copy_file} not found, skipping.")
+    copy_files = ["settings.py", "satellite_config.py"]
+    for copy_file in copy_files:
+        if os.path.exists(copy_file):
+            dst = os.path.join(results_dir, copy_file)
+            shutil.copy(copy_file, dst)
+            if verbose:
+                print(f"Copied {copy_file} to {dst.replace(os.sep, '/')}")
+        else:
+            if verbose:
+                print(f"Warning: {copy_file} not found, skipping.")
 
     atexit.register(at_exit, save_name=sim_name, main_path=main_path, pl=(pl if plot_propagation else None), verbose_def=False, verbose_error=False)
     print("Initiated logging files")
@@ -441,7 +485,8 @@ while elapsed_seconds <= sim_duration_seconds:
                     n_observed_tip += 1
 
                     h_m = float(np.linalg.norm(np.array(r))) - R_earth
-                    gsd_tip = gsd_offnadir(gsd0_tip, h_m, offnadir_tip_deg)
+                    gsd0_tip_local = float(satellite_specs[actor.name]["sensor"]["GSD"])
+                    gsd_tip = gsd_offnadir(gsd0_tip_local, h_m, offnadir_tip_deg)
 
                     if logging:
                         tip_lat, tip_lon, tip_alt = Point_ECI2Geodetic(r[0], r[1], r[2], t_datetime).flatten()
@@ -642,11 +687,13 @@ while elapsed_seconds <= sim_duration_seconds:
                         for task in eo_tools_dict[actor.name].task_queue:
                             will_be_visible, _ = eo_tools_dict[actor.name].will_be_visible_within(
                                 task["coord"], r_vec, v_vec, t_datetime,
-                                delta_t_tipcue, el_min_deg=elevation_min, step=60.0
+                                avg_time_delay, el_min_deg=elevation_min, step=60.0
                             )
 
                             if not will_be_visible:
                                 continue
+
+                            offnadir_limit_local = float(satellite_specs[actor.name]["offnadir_limit"])
 
                             target_eul_deg, offnadir_at_obs, offnadir_unbound, time_to_obs, pointing_vec_lvlh_target = \
                                 eo_tools_dict[actor.name].compute_optimal_future_attitude(
@@ -658,11 +705,11 @@ while elapsed_seconds <= sim_duration_seconds:
                                     alpha_max_rad=alpha_max_rad,
                                     zeta=zeta,
                                     wn_rad=wn_rad,
-                                    offnadir_max=offnadir_limit,
+                                    offnadir_max=offnadir_limit_local,
                                     offnadir_margin=offnadir_margin,
                                     dt_step_coarse=max(sim_step_seconds, 2.0),
                                     dt_step_fine=max(sim_step_seconds / 5.0, 0.25),
-                                    dt_max=delta_t_tipcue,
+                                    dt_max=avg_time_delay,
                                     mode="per_axis"
                                 )
 
@@ -755,7 +802,7 @@ while elapsed_seconds <= sim_duration_seconds:
                             att_models_dict[actor.name].slew_stab_time_max,
                             el_min_deg=elevation_min, step=30.0
                         )
-                        will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, delta_t_tipcue, el_min_deg=elevation_min, step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
+                        will_be_in_view_later, _ = eo_tools_dict[actor.name].will_be_visible_within(task_coord, r_vec, v_vec, t_datetime, avg_time_delay, el_min_deg=elevation_min, step=60.0)  # check visibility within 2.5 min, as that is more than enough to prepare slewing and settle
 
                         if not (in_view or will_be_in_view_later):
                             # Task finished → reset and pick next later
@@ -901,7 +948,8 @@ while elapsed_seconds <= sim_duration_seconds:
                     allow_observation = False
 
                 # CUE OBSERVATION
-                if allow_observation and in_footprint and whale.state_observing != 2 and offnadir_cue_deg <= (offnadir_limit + offnadir_margin):
+                offnadir_limit_local = float(satellite_specs[actor.name]["offnadir_limit"])
+                if allow_observation and in_footprint and whale.state_observing != 2 and offnadir_cue_deg <= (offnadir_limit_local + offnadir_margin):
 
                     print(f"!! {actor.name}: Observed Target {whale_idx} at off-nadir {offnadir_cue_deg:.2f} deg")
 
@@ -940,7 +988,8 @@ while elapsed_seconds <= sim_duration_seconds:
                         whale.state_tasked = 0
 
                     h_m = float(np.linalg.norm(np.array(r))) - R_earth
-                    gsd_cue = gsd_offnadir(gsd0_cue, h_m, offnadir_cue_deg)
+                    gsd0_cue_local = float(satellite_specs[actor.name]["sensor"]["GSD"])
+                    gsd_cue = gsd_offnadir(gsd0_cue_local, h_m, offnadir_cue_deg)
 
                     cue_lat, cue_lon, cue_alt = Point_ECI2Geodetic(r[0], r[1], r[2], t_datetime).flatten()
                     cue_lat, cue_lon, cue_alt = float(cue_lat), float(cue_lon), float(cue_alt)
@@ -949,8 +998,18 @@ while elapsed_seconds <= sim_duration_seconds:
                     if create_image:
 
                         print("Generate image")
-                        texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg_new = generate_image(img_path, anns_path, satellite, cue_lat, cue_lon, cue_alt, target_coord[0], target_coord[1], target_coord[2], t_datetime, sensor_characteristics, wave_properties, bools, dem_seed)
+                        sensor_characteristics_local = dict(satellite_specs[actor.name]["sensor"])
 
+                        texture_disp, radiance_no_glint, radiance_disp_no_glint, rho_no_glint, rho_disp_no_glint, radiance_final, radiance_disp_final, rho_final, rho_disp_final, black_mask_full, scale, offnadir_deg_new = generate_image(
+                            img_path, anns_path, satellite,
+                            cue_lat, cue_lon, cue_alt,
+                            target_coord[0], target_coord[1], target_coord[2],
+                            t_datetime,
+                            sensor_characteristics_local,
+                            wave_properties,
+                            bools,
+                            dem_seed
+                        )
                         print(f"Old off nadir:{offnadir_cue_deg:.2f} deg")
                         print(f"New off nadir:{offnadir_deg_new:.2f} deg")
 
@@ -960,9 +1019,10 @@ while elapsed_seconds <= sim_duration_seconds:
                     else:
                         latency_observation = 0.0
 
+                    offnadir_limit_local = float(satellite_specs[actor.name]["offnadir_limit"])
                     viewing_time_left = eo_tools_dict[actor.name].compute_viewing_time(
-                        r_vec, v_vec, whale.coord_observed, t_datetime, offnadir_limit, offnadir_margin=offnadir_margin, dt_max=observation_time_limit )
-
+                        r_vec, v_vec, whale.coord_observed, t_datetime, offnadir_limit_local, offnadir_margin=offnadir_margin, dt_max=observation_time_limit
+                    )
                     if logging:
                         log_cue(writer_cue,
                                 detection_id=whale.detection_id,
@@ -1137,9 +1197,12 @@ if plot_propagation:
 # =========================
 # --- Report (ordered) ---
 # =========================
+
+
+
 print(f"\n\n---------------------- Mission Summary {sim_name} -----------------------------------\n")
-# --- System setup ---
-n_sats_total = nSats_tip + nSats_cue
+
+n_sats_total = nPlanes_tip * nSats_tip + nPlanes_cue * nSats_cue
 print(f"Number of satellites:                       {n_sats_total} (Tip={nSats_tip}, Cue={nSats_cue})")
 print(f"Total targets:                              {n_targets} (positive={n_targets_pos}, negative={n_targets_neg})")
 print(f"Simulation time:                            {sim_duration_hours} h\n")
@@ -1269,9 +1332,11 @@ conf_per_day_all           = n_confirmed_cue / duration_days if duration_days > 
 conf_per_sat_per_orbit_all = conf_per_orbit_all / n_sats_total if n_sats_total > 0 else 0
 conf_per_sat_per_day_all   = conf_per_day_all / n_sats_total if n_sats_total > 0 else 0
 
-cue_tasks_per_sat = n_tasked_cue / nSats_cue if nSats_cue > 0 else 0
-obs_per_cue_sat   = n_observed_cue / nSats_cue if nSats_cue > 0 else 0
-conf_per_cue_sat  = n_confirmed_cue / nSats_cue if nSats_cue > 0 else 0
+n_cue_total = nPlanes_cue * nSats_cue
+
+cue_tasks_per_sat = n_tasked_cue / n_cue_total if n_cue_total > 0 else 0
+obs_per_cue_sat   = n_observed_cue / n_cue_total if n_cue_total > 0 else 0
+conf_per_cue_sat  = n_confirmed_cue / n_cue_total if n_cue_total > 0 else 0
 
 print(f"Tasks per Cue satellite:                    {cue_tasks_per_sat:.2f} tasks/sat")
 print(f"Observations per Cue satellite:             {obs_per_cue_sat:.2f} targets/sat")

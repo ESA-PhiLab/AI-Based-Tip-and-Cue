@@ -30,47 +30,60 @@ import numpy as np
 # -----------------------------------------------------------------------------
 # Initialization
 # -----------------------------------------------------------------------------
-def init_eo_tools(tip_actors, cue_actors, fov_tip, fov_cue, offnadir_limit):
-    """Initialize EO tools for all actors (geometry only)."""
+def init_eo_tools(tip_actors, cue_actors, satellite_specs):
+    """Initialize EO tools per satellite using per-actor FOV and off-nadir limit."""
     eo_tools = {}
+
     for actor in tip_actors:
-        eo_tools[actor.name] = EOTools(actor, [fov_tip], [fov_tip], offnadir_limit)
+        fov_deg = float(satellite_specs[actor.name]["fov_deg"])
+        offnadir_limit = float(satellite_specs[actor.name]["offnadir_limit"])
+        eo_tools[actor.name] = EOTools(actor, [fov_deg], [fov_deg], offnadir_limit)
+
     for actor in cue_actors:
-        eo_tools[actor.name] = EOTools(actor, [fov_cue], [fov_cue], offnadir_limit)
+        fov_deg = float(satellite_specs[actor.name]["fov_deg"])
+        offnadir_limit = float(satellite_specs[actor.name]["offnadir_limit"])
+        eo_tools[actor.name] = EOTools(actor, [fov_deg], [fov_deg], offnadir_limit)
+
     return eo_tools
 
-
-def init_attitude_models(tip_actors, cue_actors, eul_ang_tip_init, eul_ang_cue_init, omega_max_rad, alpha_max_rad, zeta, wn_rad, offnadir_limit, offnadir_margin):
-    """Initialize attitude models for all actors (stateful dynamics)."""
+def init_attitude_models(tip_actors, cue_actors, eul_ang_tip_init, eul_ang_cue_init, omega_max_rad, alpha_max_rad, zeta, wn_rad, satellite_specs, offnadir_margin):
+    """Initialize attitude models per satellite and precompute per-actor slew/stabilization bounds."""
     att_models = {}
+
     for actor in tip_actors:
         att_models[actor.name] = AttitudeModel(
             actor,
-            actor_initial_attitude_deg=eul_ang_tip_init,  # degrees
+            actor_initial_attitude_deg=eul_ang_tip_init,
             actor_initial_angular_velocity=[0.0, 0.0, 0.0],
         )
-
         att_models[actor.name].set_target_euler(eul_ang_tip_init)
 
     for actor in cue_actors:
         att_models[actor.name] = AttitudeModel(
             actor,
-            actor_initial_attitude_deg=eul_ang_cue_init,  # degrees
+            actor_initial_attitude_deg=eul_ang_cue_init,
             actor_initial_angular_velocity=[0.0, 0.0, 0.0],
         )
         att_models[actor.name].set_target_euler(eul_ang_cue_init)
 
+        offnadir_limit_local = float(satellite_specs[actor.name]["offnadir_limit"])
+
         att_models[actor.name].slew_stab_time_max, _, _ = att_models[actor.name].get_pointing_stabilization_time(
             current_eul=[0.0, 0.0, 0.0],
-            target_eul=[offnadir_limit + offnadir_margin, offnadir_limit + offnadir_margin, offnadir_limit + offnadir_margin],
+            target_eul=[
+                offnadir_limit_local + offnadir_margin,
+                offnadir_limit_local + offnadir_margin,
+                offnadir_limit_local + offnadir_margin,
+            ],
             omega_max_rad=omega_max_rad,
             alpha_max_rad=alpha_max_rad,
             zeta=zeta,
             wn_rad=wn_rad,
             mode="per_axis",
             current_w_rad=[0.0, 0.0, 0.0],
-            current_a_rad=[0.0, 0.0, 0.0]
+            current_a_rad=[0.0, 0.0, 0.0],
         )
+
     return att_models
 
 
@@ -231,9 +244,7 @@ def convert_M_to_lv(orbital_elements, epoch):
 
 def pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime,
                   omega_max_rad, alpha_max_rad, zeta, wn_rad,
-                  offnadir_limit, offnadir_margin, delta_t_tipcue, sim_step_seconds) -> tuple[float, float]:
-
-    print("evaluate cost")
+                  offnadir_limit, offnadir_margin, dt_task_window, sim_step_seconds) -> tuple[float, float]:
     """Return (earliest feasible time-to-observation [s], wrapped Euler-change norm [deg]); inf if infeasible."""
     target_eul_deg, _, _, time_to_obs, _ = eo_tools.compute_optimal_future_attitude(
         r_eci=r_vec,
@@ -246,9 +257,9 @@ def pointing_cost(task, eo_tools, r_vec, v_vec, t_datetime,
         wn_rad=wn_rad,
         offnadir_max=offnadir_limit,
         offnadir_margin=offnadir_margin,
-        dt_step_coarse=5*sim_step_seconds,
+        dt_step_coarse=5 * sim_step_seconds,
         dt_step_fine=sim_step_seconds,
-        dt_max=delta_t_tipcue,
+        dt_max=dt_task_window,
         mode="per_axis"
     )
 
