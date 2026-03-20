@@ -118,9 +118,9 @@ def claim_best_global_task(actor, r_vec, v_vec, t_datetime, tasked_targets, all_
             sat_lon_deg=sat_lon,
             tgt_lat_deg=tgt_lat,
             tgt_lon_deg=tgt_lon,
-            max_dlat_deg=22.0,
-            max_dlon_deg=40.0,
-            max_central_angle_deg=40.0
+            max_dlat_deg=20.0,
+            max_dlon_deg=20.0,
+            max_central_angle_deg=20.0
         )
         if not keep_task:
             continue

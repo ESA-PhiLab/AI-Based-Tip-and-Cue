@@ -465,6 +465,8 @@ while elapsed_seconds <= sim_duration_seconds:
 
     cleanup_idx = []
 
+    queue_changed = False
+
     for idx in all_cleanup_idx:
         if verbose:
             print(f"!! Reset Target {idx} observation history")
@@ -592,6 +594,8 @@ while elapsed_seconds <= sim_duration_seconds:
                                 f"added to global Cue pool (actual={whale.ai_class_true})"
                             )
 
+                            queue_changed = True
+
                         elif not whale.confirmed_tip:
                             whale.ai_class_predicted="not-whale"
                             confirmed_targets_neg[whale_idx] = whale
@@ -701,47 +705,45 @@ while elapsed_seconds <= sim_duration_seconds:
 
                 if t_datetime > tip_time + timedelta(seconds=delay_transmission_TC):
 
-
-
-
-                    # If no current task, check the queue
-                    if eo_tools_dict[actor.name].current_task is None:
-                        best_task = claim_best_global_task(
-                            actor=actor,
-                            r_vec=r_vec,
-                            v_vec=v_vec,
-                            t_datetime=t_datetime,
-                            tasked_targets=tasked_targets,
-                            all_targets=all_targets,
-                            eo_tools_dict=eo_tools_dict,
-                            satellite_specs=satellite_specs,
-                            avg_time_delay=avg_time_delay,
-                            elevation_min=elevation_min,
-                            omega_max_rad=omega_max_rad,
-                            alpha_max_rad=alpha_max_rad,
-                            zeta=zeta,
-                            wn_rad=wn_rad,
-                            offnadir_margin=offnadir_margin,
-                            sim_step_seconds=sim_step_seconds,
-                            delay_transmission_TC=delay_transmission_TC,
-                            point_eci_to_geodetic_fn=Point_ECI2Geodetic
-                        )
-
-                        if best_task is not None:
-                            task_id = best_task["target_id"]
-                            eo_tools_dict[actor.name].return_to_default_announced = False
-
-                            print(
-                                f"!! {actor.name}: Claimed global task for Target {task_id} "
-                                f"(expected obs in {eo_tools_dict[actor.name].t_to_obs_expected:.1f} s, "
-                                f"off-nadir at obs {best_task['offnadir_at_obs']:.1f} deg, "
-                                f"central angle {best_task['central_angle_deg']:.1f} deg)"
+                    if n_steps % 10 == 0 or queue_changed:
+                        # If no current task, check the queue every 10 steps
+                        if eo_tools_dict[actor.name].current_task is None:
+                            best_task = claim_best_global_task(
+                                actor=actor,
+                                r_vec=r_vec,
+                                v_vec=v_vec,
+                                t_datetime=t_datetime,
+                                tasked_targets=tasked_targets,
+                                all_targets=all_targets,
+                                eo_tools_dict=eo_tools_dict,
+                                satellite_specs=satellite_specs,
+                                avg_time_delay=avg_time_delay,
+                                elevation_min=elevation_min,
+                                omega_max_rad=omega_max_rad,
+                                alpha_max_rad=alpha_max_rad,
+                                zeta=zeta,
+                                wn_rad=wn_rad,
+                                offnadir_margin=offnadir_margin,
+                                sim_step_seconds=sim_step_seconds,
+                                delay_transmission_TC=delay_transmission_TC,
+                                point_eci_to_geodetic_fn=Point_ECI2Geodetic
                             )
 
-                            if task_id in all_targets:
-                                all_targets[task_id].t_tasked_cue = t_datetime
+                            if best_task is not None:
+                                task_id = best_task["target_id"]
+                                eo_tools_dict[actor.name].return_to_default_announced = False
 
-                            n_tasked_cue += 1
+                                print(
+                                    f"!! {actor.name}: Claimed global task for Target {task_id} "
+                                    f"(expected obs in {eo_tools_dict[actor.name].t_to_obs_expected:.1f} s, "
+                                    f"off-nadir at obs {best_task['offnadir_at_obs']:.1f} deg, "
+                                    f"central angle {best_task['central_angle_deg']:.1f} deg)"
+                                )
+
+                                if task_id in all_targets:
+                                    all_targets[task_id].t_tasked_cue = t_datetime
+
+                                n_tasked_cue += 1
 
 
 

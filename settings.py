@@ -4,8 +4,6 @@ from urllib.request import proxy_bypass
 from paseos.custom_paseos.utils.help_functions import compute_orbital_period, fov_angle_from_swath, estimate_box_inertia, pass_time_from_nadir
 from paseos.custom_paseos.utils.constants import R_earth, mu_earth
 
-
-
 from simulation.satellite_config_utils import get_satellite_group_configs
 
 from datetime import datetime, timezone, timedelta

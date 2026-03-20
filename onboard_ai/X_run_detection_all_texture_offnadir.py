@@ -30,6 +30,8 @@ from run_detection_one import (
     show_detections_for_image,
 )
 
+RANDOM_SEED = 42
+
 
 def _clear_prediction_images_dir(prediction_images_dir: Path) -> None:
     """Delete existing rendered prediction images in one folder."""
@@ -100,11 +102,12 @@ def _resolve_image_jobs(case_root: Path, mode: str, distinct_locations: list[str
 
 
 def _extract_offnadir_angle_deg(case_name: str) -> int | None:
-    """Extract off-nadir angle from case name like TC_1x1sat_40deg_3min_1sd."""
-    match = re.match(r"^TC_(\d+)x(\d+)sat_(\d+)deg_(\d+)min(?:_\d+sd)?$", str(case_name))
-    if match:
-        return int(match.group(3))
-    return None
+    """Extract off-nadir angle only for TC case names; otherwise return None."""
+    case_name = str(case_name).strip()
+    match = re.match(r"^TC_(\d+)x(\d+)sat_(\d+)deg_(\d+)min(?:_\d+sd)?$", case_name)
+    if not match:
+        return None
+    return int(match.group(3))
 
 
 def _infer_location_from_image_name(image_name: str) -> str | None:
@@ -204,8 +207,11 @@ def _resolve_success_fraction_for_image(image_path: Path, case_name: str, folder
 
     offnadir_angle_deg = _extract_offnadir_angle_deg(case_name)
 
-    if location is None or offnadir_angle_deg is None:
+    if location is None:
         return None, location, offnadir_angle_deg
+
+    if offnadir_angle_deg is None:
+        return None, location, None
 
     if location not in location_factors:
         return None, location, offnadir_angle_deg
@@ -216,21 +222,139 @@ def _resolve_success_fraction_for_image(image_path: Path, case_name: str, folder
     return location_factors[location][offnadir_angle_deg], location, offnadir_angle_deg
 
 
-def _apply_stochastic_positive_sample_dropout(raw_predictions: list[dict[str, Any]], gt_boxes: list[Any], image_path: Path, case_name: str, folder_label: str, location_factors: dict[str, dict[int, float]] | None, rng: random.Random, apply_offnadir_success_dropout: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """For positive whale samples, keep predictions with probability f, otherwise drop all."""
+def _bbox_to_xyxy(box: Any) -> tuple[float, float, float, float] | None:
+    """Convert common bbox formats to xyxy."""
+    if box is None:
+        return None
+
+    if isinstance(box, dict):
+        if all(key in box for key in ["x1", "y1", "x2", "y2"]):
+            return float(box["x1"]), float(box["y1"]), float(box["x2"]), float(box["y2"])
+
+        if "bbox" in box:
+            bbox = box["bbox"]
+            if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                x1, y1, a, b = bbox
+                x1 = float(x1)
+                y1 = float(y1)
+                a = float(a)
+                b = float(b)
+
+                if a >= x1 and b >= y1:
+                    return x1, y1, a, b
+                return x1, y1, x1 + a, y1 + b
+
+        if all(key in box for key in ["xmin", "ymin", "xmax", "ymax"]):
+            return float(box["xmin"]), float(box["ymin"]), float(box["xmax"]), float(box["ymax"])
+
+    if isinstance(box, (list, tuple)) and len(box) == 4:
+        x1, y1, a, b = box
+        x1 = float(x1)
+        y1 = float(y1)
+        a = float(a)
+        b = float(b)
+
+        if a >= x1 and b >= y1:
+            return x1, y1, a, b
+        return x1, y1, x1 + a, y1 + b
+
+    return None
+
+
+def _bbox_iou_xyxy(box1: tuple[float, float, float, float], box2: tuple[float, float, float, float]) -> float:
+    """Compute IoU for two xyxy boxes."""
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+
+    inter_w = max(0.0, x2 - x1)
+    inter_h = max(0.0, y2 - y1)
+    inter_area = inter_w * inter_h
+
+    area1 = max(0.0, box1[2] - box1[0]) * max(0.0, box1[3] - box1[1])
+    area2 = max(0.0, box2[2] - box2[0]) * max(0.0, box2[3] - box2[1])
+
+    union = area1 + area2 - inter_area
+    if union <= 0.0:
+        return 0.0
+
+    return inter_area / union
+
+
+def _extract_gt_objects_for_image(annotations_data: dict[str, Any], image_id: int) -> list[dict[str, Any]]:
+    """Extract GT objects with stable ids and boxes for one image."""
+    gt_objects: list[dict[str, Any]] = []
+
+    for ann in annotations_data.get("annotations", []):
+        if not isinstance(ann, dict):
+            continue
+        if int(ann.get("image_id", -1)) != int(image_id):
+            continue
+
+        bbox_xyxy = _bbox_to_xyxy(ann)
+        if bbox_xyxy is None:
+            bbox_xyxy = _bbox_to_xyxy(ann.get("bbox"))
+
+        if bbox_xyxy is None:
+            continue
+
+        gt_objects.append(
+            {
+                "ann_id": str(ann.get("id", len(gt_objects))),
+                "bbox_xyxy": bbox_xyxy,
+            }
+        )
+
+    return gt_objects
+
+
+def _drop_predictions_for_dropped_gt(raw_predictions: list[dict[str, Any]], gt_objects: list[dict[str, Any]], gt_keep_map: dict[str, bool], match_iou_threshold: float) -> list[dict[str, Any]]:
+    """Remove only predictions matched to GT whales that were dropped."""
+    filtered_predictions: list[dict[str, Any]] = []
+
+    for pred in raw_predictions:
+        pred_bbox = _bbox_to_xyxy(pred)
+        if pred_bbox is None:
+            filtered_predictions.append(pred)
+            continue
+
+        best_gt_id = None
+        best_iou = -1.0
+
+        for gt_obj in gt_objects:
+            iou = _bbox_iou_xyxy(pred_bbox, gt_obj["bbox_xyxy"])
+            if iou > best_iou:
+                best_iou = iou
+                best_gt_id = gt_obj["ann_id"]
+
+        if best_gt_id is None or best_iou < match_iou_threshold:
+            filtered_predictions.append(pred)
+            continue
+
+        if gt_keep_map.get(best_gt_id, True):
+            filtered_predictions.append(pred)
+
+    return filtered_predictions
+
+
+def _apply_stochastic_positive_sample_dropout(raw_predictions: list[dict[str, Any]], gt_objects: list[dict[str, Any]], image_path: Path, case_name: str, folder_label: str, location_factors: dict[str, dict[int, float]] | None, apply_offnadir_success_dropout: bool, match_iou_threshold: float) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Apply stochastic dropout per GT whale object, not per image."""
     debug_info = {
         "dropout_enabled": apply_offnadir_success_dropout,
         "dropout_applied": False,
-        "dropout_keep": None,
         "dropout_fraction": None,
         "dropout_location": None,
         "dropout_offnadir_angle_deg": None,
+        "gt_total": len(gt_objects),
+        "gt_kept": None,
+        "gt_dropped": None,
     }
 
     if not apply_offnadir_success_dropout:
         return raw_predictions, debug_info
 
-    if not gt_boxes:
+    if not gt_objects:
         return raw_predictions, debug_info
 
     if location_factors is None:
@@ -251,15 +375,35 @@ def _apply_stochastic_positive_sample_dropout(raw_predictions: list[dict[str, An
         return raw_predictions, debug_info
 
     success_fraction = max(0.0, min(1.0, float(success_fraction)))
-    keep = 1 if rng.random() < success_fraction else 0
+
+    gt_keep_map: dict[str, bool] = {}
+    kept_count = 0
+    dropped_count = 0
+
+    for gt_obj in gt_objects:
+        whale_key = gt_obj["ann_id"]
+        deterministic_key = f"{case_name}|{folder_label}|{image_path.stem}|{whale_key}|{RANDOM_SEED}"
+        local_rng = random.Random(deterministic_key)
+        keep = local_rng.random() < success_fraction
+        gt_keep_map[whale_key] = keep
+
+        if keep:
+            kept_count += 1
+        else:
+            dropped_count += 1
+
+    filtered_predictions = _drop_predictions_for_dropped_gt(
+        raw_predictions=raw_predictions,
+        gt_objects=gt_objects,
+        gt_keep_map=gt_keep_map,
+        match_iou_threshold=match_iou_threshold,
+    )
 
     debug_info["dropout_applied"] = True
-    debug_info["dropout_keep"] = keep
+    debug_info["gt_kept"] = kept_count
+    debug_info["gt_dropped"] = dropped_count
 
-    if keep == 0:
-        return [], debug_info
-
-    return raw_predictions, debug_info
+    return filtered_predictions, debug_info
 
 
 def process_model_for_image_folder(
@@ -287,7 +431,6 @@ def process_model_for_image_folder(
     location_factors: dict[str, dict[int, float]] | None,
     case_name: str,
     folder_label: str,
-    rng: random.Random,
     apply_offnadir_success_dropout: bool,
 ) -> None:
     """Run detection for one fixed model on one image folder."""
@@ -414,6 +557,10 @@ def process_model_for_image_folder(
             annotations=annotations_data,
             image_path=image_path,
         )
+        gt_objects = _extract_gt_objects_for_image(
+            annotations_data=annotations_data,
+            image_id=image_id,
+        )
 
         raw_predictions_before_dropout = run_loaded_detection_raw(
             detector=detector,
@@ -422,13 +569,13 @@ def process_model_for_image_folder(
 
         raw_predictions, dropout_debug = _apply_stochastic_positive_sample_dropout(
             raw_predictions=raw_predictions_before_dropout,
-            gt_boxes=gt_boxes,
+            gt_objects=gt_objects,
             image_path=image_path,
             case_name=case_name,
             folder_label=folder_label,
             location_factors=location_factors,
-            rng=rng,
             apply_offnadir_success_dropout=apply_offnadir_success_dropout,
+            match_iou_threshold=float(individual_iou_threshold),
         )
 
         debug_model_output_rows.append(
@@ -439,10 +586,12 @@ def process_model_for_image_folder(
                 "num_model_outputs_after_dropout": len(raw_predictions),
                 "dropout_enabled": dropout_debug["dropout_enabled"],
                 "dropout_applied": dropout_debug["dropout_applied"],
-                "dropout_keep": dropout_debug["dropout_keep"],
                 "dropout_fraction": dropout_debug["dropout_fraction"],
                 "dropout_location": dropout_debug["dropout_location"],
                 "dropout_offnadir_angle_deg": dropout_debug["dropout_offnadir_angle_deg"],
+                "gt_total": dropout_debug["gt_total"],
+                "gt_kept": dropout_debug["gt_kept"],
+                "gt_dropped": dropout_debug["gt_dropped"],
             }
         )
 
@@ -670,7 +819,7 @@ def main() -> None:
     deimv2_repo_root = script_dir / "DEIMv2-main"
 
     model_name = "texture_offnadir_255"
-    master_results = "EXPERIMENTS/reflection_offnadir_glint_255"
+    master_results = f"EXPERIMENTS/{model_name}"
 
     mode = "all"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
@@ -700,7 +849,6 @@ def main() -> None:
     reset_prediction_images = True
 
     apply_offnadir_success_dropout = True
-    random_seed = 42
 
     location_overview_path = script_dir / "DEIMv2-main" / "data" / "0_merged" / "reflection_offnadir_glint_255" / "location_detection_overview.xlsx"
 
@@ -722,8 +870,6 @@ def main() -> None:
         location_factors = _load_location_detection_factors(location_overview_path)
     else:
         location_factors = None
-
-    rng = random.Random(random_seed)
 
     case_dirs = _find_master_case_directories(master_results_root)
     if not case_dirs:
@@ -755,7 +901,7 @@ def main() -> None:
     print(f"Config: {config_path}")
     print(f"Location overview path: {location_overview_path}")
     print(f"Apply off-nadir success dropout: {apply_offnadir_success_dropout}")
-    print(f"Random seed: {random_seed}")
+    print(f"Random seed: {RANDOM_SEED}")
     print(f"Found {len(case_dirs)} case folders inside {master_results_root}.")
     print(f"Resolved {len(all_jobs)} image folder jobs.")
     print()
@@ -813,7 +959,6 @@ def main() -> None:
                 location_factors=location_factors,
                 case_name=case_dir.name,
                 folder_label=folder_label,
-                rng=rng,
                 apply_offnadir_success_dropout=apply_offnadir_success_dropout,
             )
             processed += 1

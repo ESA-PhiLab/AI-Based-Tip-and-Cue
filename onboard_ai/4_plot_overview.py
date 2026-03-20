@@ -11,7 +11,6 @@ PLOT_FONT_SIZE_TITLE = 16
 PLOT_FONT_SIZE_AXIS = 16
 PLOT_FONT_SIZE_TICKS = 14
 PLOT_FONT_SIZE_LEGEND = 14
-PLOT_FONT_SIZE_LEGEND_LARGE = 16
 
 plt.style.use("seaborn-v0_8-whitegrid")
 
@@ -30,7 +29,6 @@ plt.rcParams.update({
     "axes.labelpad": 12,
 })
 
-
 CASE_COLUMN = "case_name"
 
 METRICS = [
@@ -47,19 +45,9 @@ METRICS = [
 
 
 def _resolve_final_results_root(script_dir: Path, final_results_folder_name: str) -> Path:
-    """Resolve FINAL_RESULTS root using the same folder logic as the overview script."""
+    """Resolve FINAL_RESULTS root from script directory and result folder name."""
     master_dir = script_dir.parent
     return master_dir / "0_results" / final_results_folder_name
-
-
-def _resolve_sheet_name(xlsx_path: Path) -> str:
-    """Use grouped_mean if available, otherwise mean."""
-    xl = pd.ExcelFile(xlsx_path)
-    if "grouped_mean" in xl.sheet_names:
-        return "grouped_mean"
-    if "mean" in xl.sheet_names:
-        return "mean"
-    raise ValueError(f"No suitable sheet found in {xlsx_path}. Available sheets: {xl.sheet_names}")
 
 
 def _sanitize_filename(name: str) -> str:
@@ -67,14 +55,14 @@ def _sanitize_filename(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_")
 
 
-def _load_overview_table(xlsx_path: Path, sheet_name: str) -> pd.DataFrame:
-    """Load overview sheet and convert required columns to numeric."""
-    df = pd.read_excel(xlsx_path, sheet_name=sheet_name)
+def _load_grouped_mean_table(xlsx_path: Path) -> pd.DataFrame:
+    """Load grouped_mean sheet and convert required columns to numeric."""
+    df = pd.read_excel(xlsx_path, sheet_name="grouped_mean")
 
     required_columns = [CASE_COLUMN, "offnadir_angle_deg", "time_delay_min"] + METRICS
     missing = [column for column in required_columns if column not in df.columns]
     if missing:
-        raise KeyError(f"Missing required columns in {xlsx_path}: {missing}")
+        raise KeyError(f"Missing required columns in grouped_mean of {xlsx_path}: {missing}")
 
     output = df.copy()
     output[CASE_COLUMN] = output[CASE_COLUMN].astype(str)
@@ -87,35 +75,116 @@ def _load_overview_table(xlsx_path: Path, sheet_name: str) -> pd.DataFrame:
     return output
 
 
-def _filter_tc1x1(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep only TC1x1 configurations."""
+def _load_all_cases_table(xlsx_path: Path) -> pd.DataFrame:
+    """Load all_cases sheet, extract seed and grouped case name, and convert required columns."""
+    df = pd.read_excel(xlsx_path, sheet_name="all_cases")
+
+    required_columns = [CASE_COLUMN, "offnadir_angle_deg", "time_delay_min"] + METRICS
+    missing = [column for column in required_columns if column not in df.columns]
+    if missing:
+        raise KeyError(f"Missing required columns in all_cases of {xlsx_path}: {missing}")
+
+    output = df.copy()
+    output[CASE_COLUMN] = output[CASE_COLUMN].astype(str)
+    output["offnadir_angle_deg"] = pd.to_numeric(output["offnadir_angle_deg"], errors="coerce")
+    output["time_delay_min"] = pd.to_numeric(output["time_delay_min"], errors="coerce")
+
+    for metric in METRICS:
+        output[metric] = pd.to_numeric(output[metric], errors="coerce")
+
+    output["seed"] = output[CASE_COLUMN].str.extract(r"_(\d+)sd$", expand=False)
+    output["case_name_grouped"] = output[CASE_COLUMN].str.replace(r"_(\d+)sd$", "", regex=True)
+
+    return output
+
+
+def _filter_tc1x1_grouped_mean(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only grouped TC1x1 configurations."""
     return df[df[CASE_COLUMN].str.match(r"^TC_1x1sat_\d+deg_\d+min$", na=False)].copy()
 
 
-def _save_subset_csv(df: pd.DataFrame, output_path: Path, sort_column: str) -> None:
+def _filter_tc1x1_all_cases(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only seeded TC1x1 configurations from all_cases."""
+    return df[df[CASE_COLUMN].str.match(r"^TC_1x1sat_\d+deg_\d+min_\d+sd$", na=False)].copy()
+
+
+def _save_subset_csv(df: pd.DataFrame, output_path: Path, sort_columns: list[str]) -> None:
     """Save one filtered sweep table to CSV."""
     preferred_columns = [
         CASE_COLUMN,
+        "case_name_grouped",
+        "seed",
         "N_sats_total",
         "offnadir_angle_deg",
         "time_delay_min",
     ] + METRICS
+
     existing_columns = [column for column in preferred_columns if column in df.columns]
-    df.sort_values(sort_column)[existing_columns].to_csv(output_path, index=False)
+    df.sort_values(sort_columns)[existing_columns].to_csv(output_path, index=False)
 
 
-def _make_metric_plot(df: pd.DataFrame, x_column: str, metric: str, xlabel: str, title: str, output_path: Path) -> None:
-    """Plot one metric against one sweep variable and save the figure."""
-    plot_df = df[[CASE_COLUMN, x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column)
+def _make_mean_only_plot(df_mean: pd.DataFrame, x_column: str, metric: str, xlabel: str, title: str, output_path: Path) -> None:
+    """Plot only the grouped mean line for one metric."""
+    plot_df = df_mean[[CASE_COLUMN, x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column)
 
     if plot_df.empty:
-        print(f"[SKIP] No valid data for plot: {output_path.name}")
+        print(f"[SKIP] No valid data for mean-only plot: {output_path.name}")
         return
 
     ylabel = "Off-nadir angle [deg]" if metric == "theta_mean_success_deg" else metric
 
     plt.figure(figsize=(7.2, 4.8))
-    plt.plot(plot_df[x_column], plot_df[metric], marker="o", label=metric)
+    plt.plot(plot_df[x_column], plot_df[metric], marker="o", label="mean")
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.legend(fontsize=PLOT_FONT_SIZE_LEGEND)
+    plt.tight_layout()
+    plt.savefig(output_path, bbox_inches="tight")
+    plt.close()
+
+
+def _make_mean_and_runs_plot(df_mean: pd.DataFrame, df_runs: pd.DataFrame, x_column: str, metric: str, xlabel: str, title: str, output_path: Path) -> None:
+    """Plot grouped mean plus one aggregated line per seed from all_cases."""
+    mean_plot_df = df_mean[[CASE_COLUMN, x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column)
+
+    if mean_plot_df.empty:
+        print(f"[SKIP] No valid data for mean+runs plot: {output_path.name}")
+        return
+
+    runs_plot_df = df_runs.copy()
+    runs_plot_df = runs_plot_df[
+        runs_plot_df["case_name_grouped"].str.match(r"^TC_1x1sat_\d+deg_\d+min$", na=False)
+    ]
+    runs_plot_df = runs_plot_df[["case_name_grouped", "seed", x_column, metric]].dropna(subset=[x_column, metric])
+
+    duplicate_counts = (
+        runs_plot_df.groupby(["seed", x_column], dropna=False)
+        .size()
+        .reset_index(name="count")
+    )
+    problematic = duplicate_counts[duplicate_counts["count"] > 1]
+
+    if not problematic.empty:
+        print(f"[WARN] Duplicate rows found for {output_path.name}. Aggregating by mean over seed + {x_column}.")
+        print(problematic.sort_values(["seed", x_column]).to_string(index=False))
+
+    runs_plot_df = (
+        runs_plot_df.groupby(["seed", x_column], as_index=False)[metric]
+        .mean()
+        .sort_values(["seed", x_column])
+    )
+
+    ylabel = "Off-nadir angle [deg]" if metric == "theta_mean_success_deg" else metric
+
+    plt.figure(figsize=(7.2, 4.8))
+
+    for seed, seed_df in runs_plot_df.groupby("seed", dropna=True):
+        seed_df = seed_df.sort_values(x_column)
+        plt.plot(seed_df[x_column], seed_df[metric], marker="o", alpha=0.7, label=f"run {seed}")
+
+    plt.plot(mean_plot_df[x_column], mean_plot_df[metric], marker="o", linewidth=2.4, label="mean")
+
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.title(title)
@@ -126,11 +195,15 @@ def _make_metric_plot(df: pd.DataFrame, x_column: str, metric: str, xlabel: str,
 
 
 def main() -> None:
-    """Create TC1x1 time-delay and off-nadir sweep plots from overview_random.xlsx."""
+    """Create TC1x1 time-delay and off-nadir sweep plots with mean-only and mean+run versions."""
     script_dir = Path(__file__).resolve().parent
 
-
-    final_results_list = ["reflection_offnadir_glint_255", "reflection_nadir_glint_255", "texture_offnadir_255", "texture_nadir_255"]
+    final_results_list = [
+        "reflection_offnadir_glint_255",
+        "reflection_nadir_glint_255",
+        "texture_offnadir_255",
+        "texture_nadir_255",
+    ]
     location_plot_names = ["random", "Auckland2006", "Pelagos2016"]
 
     for final_results in final_results_list:
@@ -138,7 +211,6 @@ def main() -> None:
         final_results_folder_name = "EXPERIMENTS/" + final_results
 
         for location_plot in location_plot_names:
-
             overview_filename = f"overview_{location_plot}.xlsx"
             output_folder_name = f"final_plots_{location_plot}"
 
@@ -151,20 +223,31 @@ def main() -> None:
             if not overview_path.exists():
                 raise FileNotFoundError(f"Overview file does not exist: {overview_path}")
 
-            sheet_name = _resolve_sheet_name(overview_path)
-            df = _load_overview_table(overview_path, sheet_name)
-            df_tc1x1 = _filter_tc1x1(df)
+            df_mean = _load_grouped_mean_table(overview_path)
+            df_runs = _load_all_cases_table(overview_path)
 
-            if df_tc1x1.empty:
-                raise ValueError("No TC1x1 rows found in the overview table.")
+            df_mean_tc1x1 = _filter_tc1x1_grouped_mean(df_mean)
+            df_runs_tc1x1 = _filter_tc1x1_all_cases(df_runs)
 
-            time_delay_df = df_tc1x1[df_tc1x1["offnadir_angle_deg"] == 40].copy()
-            offnadir_df = df_tc1x1[df_tc1x1["time_delay_min"] == 5].copy()
+            if df_mean_tc1x1.empty:
+                raise ValueError("No grouped TC1x1 rows found in grouped_mean.")
+            if df_runs_tc1x1.empty:
+                raise ValueError("No seeded TC1x1 rows found in all_cases.")
 
-            if time_delay_df.empty:
-                raise ValueError("No TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40.")
-            if offnadir_df.empty:
-                raise ValueError("No TC1x1 rows found for off-nadir sweep with time_delay_min == 5.")
+            time_delay_mean_df = df_mean_tc1x1[df_mean_tc1x1["offnadir_angle_deg"] == 40].copy()
+            offnadir_mean_df = df_mean_tc1x1[df_mean_tc1x1["time_delay_min"] == 5].copy()
+
+            time_delay_runs_df = df_runs_tc1x1[df_runs_tc1x1["offnadir_angle_deg"] == 40].copy()
+            offnadir_runs_df = df_runs_tc1x1[df_runs_tc1x1["time_delay_min"] == 5].copy()
+
+            if time_delay_mean_df.empty:
+                raise ValueError("No grouped TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40.")
+            if offnadir_mean_df.empty:
+                raise ValueError("No grouped TC1x1 rows found for off-nadir sweep with time_delay_min == 5.")
+            if time_delay_runs_df.empty:
+                raise ValueError("No seeded TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40.")
+            if offnadir_runs_df.empty:
+                raise ValueError("No seeded TC1x1 rows found for off-nadir sweep with time_delay_min == 5.")
 
             output_root = final_results_root / output_folder_name
             time_delay_output_dir = output_root / "time_delay_sweep"
@@ -174,40 +257,73 @@ def main() -> None:
             offnadir_output_dir.mkdir(parents=True, exist_ok=True)
 
             _save_subset_csv(
-                df=time_delay_df,
-                output_path=time_delay_output_dir / "time_delay_sweep_data_TC1x1.csv",
-                sort_column="time_delay_min",
+                df=time_delay_mean_df,
+                output_path=time_delay_output_dir / "time_delay_sweep_data_TC1x1_grouped_mean.csv",
+                sort_columns=["time_delay_min"],
             )
             _save_subset_csv(
-                df=offnadir_df,
-                output_path=offnadir_output_dir / "offnadir_sweep_data_TC1x1.csv",
-                sort_column="offnadir_angle_deg",
+                df=offnadir_mean_df,
+                output_path=offnadir_output_dir / "offnadir_sweep_data_TC1x1_grouped_mean.csv",
+                sort_columns=["offnadir_angle_deg"],
+            )
+            _save_subset_csv(
+                df=time_delay_runs_df,
+                output_path=time_delay_output_dir / "time_delay_sweep_data_TC1x1_all_runs.csv",
+                sort_columns=["seed", "time_delay_min"],
+            )
+            _save_subset_csv(
+                df=offnadir_runs_df,
+                output_path=offnadir_output_dir / "offnadir_sweep_data_TC1x1_all_runs.csv",
+                sort_columns=["seed", "offnadir_angle_deg"],
             )
 
             for metric in METRICS:
-                _make_metric_plot(
-                    df=time_delay_df,
+                _make_mean_only_plot(
+                    df_mean=time_delay_mean_df,
                     x_column="time_delay_min",
                     metric=metric,
                     xlabel="Latency [min]",
                     title=f"{metric} vs latency for TC1x1 at 40° off-nadir",
-                    output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg.png",
+                    output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean.png",
                 )
 
-                _make_metric_plot(
-                    df=offnadir_df,
+                _make_mean_only_plot(
+                    df_mean=offnadir_mean_df,
                     x_column="offnadir_angle_deg",
                     metric=metric,
                     xlabel="Off-nadir angle [deg]",
                     title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency",
-                    output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min.png",
+                    output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean.png",
+                )
+
+                _make_mean_and_runs_plot(
+                    df_mean=time_delay_mean_df,
+                    df_runs=time_delay_runs_df,
+                    x_column="time_delay_min",
+                    metric=metric,
+                    xlabel="Latency [min]",
+                    title=f"{metric} vs latency for TC1x1 at 40° off-nadir",
+                    output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean_and_runs.png",
+                )
+
+                _make_mean_and_runs_plot(
+                    df_mean=offnadir_mean_df,
+                    df_runs=offnadir_runs_df,
+                    x_column="offnadir_angle_deg",
+                    metric=metric,
+                    xlabel="Off-nadir angle [deg]",
+                    title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency",
+                    output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean_and_runs.png",
                 )
 
             print(f"Overview file: {overview_path}")
-            print(f"Sheet used: {sheet_name}")
-            print(f"Total TC1x1 rows: {len(df_tc1x1)}")
-            print(f"Time-delay sweep rows: {len(time_delay_df)}")
-            print(f"Off-nadir sweep rows: {len(offnadir_df)}")
+            print("Sheets used: grouped_mean for mean, all_cases for individual seeded runs")
+            print(f"Total grouped TC1x1 rows: {len(df_mean_tc1x1)}")
+            print(f"Total seeded TC1x1 rows: {len(df_runs_tc1x1)}")
+            print(f"Time-delay grouped rows: {len(time_delay_mean_df)}")
+            print(f"Time-delay seeded rows: {len(time_delay_runs_df)}")
+            print(f"Off-nadir grouped rows: {len(offnadir_mean_df)}")
+            print(f"Off-nadir seeded rows: {len(offnadir_runs_df)}")
             print(f"Plots written to: {output_root}")
 
 

@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import random
-import re
 import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-import pandas as pd
 
 from run_detection_one import (
     _compute_overall_detection_stats,
@@ -99,167 +95,30 @@ def _resolve_image_jobs(case_root: Path, mode: str, distinct_locations: list[str
     return jobs
 
 
-def _extract_offnadir_angle_deg(case_name: str) -> int | None:
-    """Extract off-nadir angle from case name."""
-    match = re.match(r"^TC_(\d+)x(\d+)sat_(\d+)deg_(\d+)min(?:_\d+sd)?$", str(case_name))
-    if match:
-        return int(match.group(3))
-    return None
 
-
-def _infer_location_from_image_name(image_name: str) -> str | None:
-    """Infer source location from image filename."""
-    image_name_lower = str(image_name).lower()
-    if "auckland2006" in image_name_lower:
-        return "Auckland2006"
-    if "pelagos2016" in image_name_lower:
-        return "Pelagos2016"
-    return None
-
-
-def _infer_location_from_folder_label(folder_name: str) -> str | None:
-    """Infer source location from folder name."""
-    folder_name_lower = str(folder_name).lower()
-    if "auckland2006" in folder_name_lower:
-        return "Auckland2006"
-    if "pelagos2016" in folder_name_lower:
-        return "Pelagos2016"
-    return None
-
-
-def _load_location_detection_factors(overview_path: Path) -> dict[str, dict[int, float]]:
-    """Load success fraction per location and off-nadir angle."""
-    whales_df = pd.read_excel(overview_path, sheet_name="whales_F")
-    original_ids_df = pd.read_excel(overview_path, sheet_name="original_ids")
-
-    whales_df = whales_df.copy()
-    original_ids_df = original_ids_df.copy()
-
-    whales_df.columns = [str(col).strip() for col in whales_df.columns]
-    original_ids_df.columns = [str(col).strip() for col in original_ids_df.columns]
-
-    whales_location_col = whales_df.columns[0]
-    whales_df = whales_df.rename(columns={whales_location_col: "location"})
-    whales_df["location"] = whales_df["location"].astype(str).str.strip()
-
-    original_location_col = original_ids_df.columns[0]
-    original_ids_df = original_ids_df.rename(columns={original_location_col: "location"})
-    original_ids_df["location"] = original_ids_df["location"].astype(str).str.strip()
-
-    whales_df = whales_df[whales_df["location"].str.lower() != "column_total"].copy()
-    original_ids_df = original_ids_df[original_ids_df["location"].str.lower() != "column_total"].copy()
-
-    unique_ids_col = None
-    for col in original_ids_df.columns:
-        if col != "location":
-            unique_ids_col = col
-            break
-
-    if unique_ids_col is None:
-        raise KeyError(f"No unique-id count column found in sheet 'original_ids' of {overview_path}")
-
-    original_ids_map = {
-        str(row["location"]): float(row[unique_ids_col])
-        for _, row in original_ids_df.iterrows()
-        if pd.notna(row[unique_ids_col])
-    }
-
-    factors: dict[str, dict[int, float]] = {}
-
-    for _, row in whales_df.iterrows():
-        location = str(row["location"])
-
-        if location not in original_ids_map:
-            continue
-
-        total_possible = float(original_ids_map[location])
-        if total_possible <= 0:
-            continue
-
-        factors[location] = {}
-
-        for column in whales_df.columns:
-            if column == "location":
-                continue
-
-            match = re.search(r"(\d+)", str(column))
-            if not match:
-                continue
-
-            angle_deg = int(match.group(1))
-            successful_count = pd.to_numeric(row[column], errors="coerce")
-            if pd.isna(successful_count):
-                continue
-
-            factors[location][angle_deg] = float(successful_count) / total_possible
-
-    return factors
-
-
-def _resolve_success_fraction_for_image(image_path: Path, case_name: str, folder_label: str, location_factors: dict[str, dict[int, float]]) -> tuple[float | None, str | None, int | None]:
-    """Resolve success fraction for one image."""
-    location = _infer_location_from_image_name(image_path.name)
-
-    if location is None:
-        location = _infer_location_from_folder_label(folder_label)
-
-    offnadir_angle_deg = _extract_offnadir_angle_deg(case_name)
-
-    if location is None or offnadir_angle_deg is None:
-        return None, location, offnadir_angle_deg
-
-    if location not in location_factors:
-        return None, location, offnadir_angle_deg
-
-    if offnadir_angle_deg not in location_factors[location]:
-        return None, location, offnadir_angle_deg
-
-    return location_factors[location][offnadir_angle_deg], location, offnadir_angle_deg
-
-
-def _apply_stochastic_positive_sample_dropout(raw_predictions: list[dict[str, Any]], gt_boxes: list[Any], image_path: Path, case_name: str, folder_label: str, location_factors: dict[str, dict[int, float]] | None, rng: random.Random) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Drop predictions for positive samples with probability 1-f."""
-    debug_info = {
-        "dropout_applied": False,
-        "dropout_keep": None,
-        "dropout_fraction": None,
-        "dropout_location": None,
-        "dropout_offnadir_angle_deg": None,
-    }
-
-    if not gt_boxes:
-        return raw_predictions, debug_info
-
-    if location_factors is None:
-        return raw_predictions, debug_info
-
-    success_fraction, location, offnadir_angle_deg = _resolve_success_fraction_for_image(
-        image_path=image_path,
-        case_name=case_name,
-        folder_label=folder_label,
-        location_factors=location_factors,
-    )
-
-    debug_info["dropout_location"] = location
-    debug_info["dropout_offnadir_angle_deg"] = offnadir_angle_deg
-    debug_info["dropout_fraction"] = success_fraction
-
-    if success_fraction is None:
-        return raw_predictions, debug_info
-
-    success_fraction = max(0.0, min(1.0, float(success_fraction)))
-    keep = 1 if rng.random() < success_fraction else 0
-
-    debug_info["dropout_applied"] = True
-    debug_info["dropout_keep"] = keep
-
-    if keep == 0:
-        return [], debug_info
-
-    return raw_predictions, debug_info
-
-
-def process_model_for_image_folder(model_name: str, best_stg_path: Path, config_path: Path, deimv2_repo_root: Path, image_folder_path: Path, output_root_dir: Path, anns_path: Path, device: str, render_scale: int, line_width: int, max_images: int | None, individual_score_threshold: float, individual_iou_threshold: float, ap_score_threshold: float, max_detections_individual: int | None, max_detections_ap: int | None, model_label_to_category_id: dict[int, int] | None, show_detections: bool, save_prediction_images: bool, reset_prediction_images: bool, overwrite_results: bool, location_factors: dict[str, dict[int, float]] | None, case_name: str, folder_label: str, rng: random.Random) -> None:
+def process_model_for_image_folder(
+    model_name: str,
+    best_stg_path: Path,
+    config_path: Path,
+    deimv2_repo_root: Path,
+    image_folder_path: Path,
+    output_root_dir: Path,
+    anns_path: Path,
+    device: str,
+    render_scale: int,
+    line_width: int,
+    max_images: int | None,
+    individual_score_threshold: float,
+    individual_iou_threshold: float,
+    ap_score_threshold: float,
+    max_detections_individual: int | None,
+    max_detections_ap: int | None,
+    model_label_to_category_id: dict[int, int] | None,
+    show_detections: bool,
+    save_prediction_images: bool,
+    reset_prediction_images: bool,
+    overwrite_results: bool,
+) -> None:
     """Run detection for one fixed model on one image folder."""
     if not best_stg_path.exists():
         raise FileNotFoundError(f"Missing checkpoint: {best_stg_path}")
@@ -379,32 +238,16 @@ def process_model_for_image_folder(model_name: str, best_stg_path: Path, config_
             image_path=image_path,
         )
 
-        raw_predictions_before_dropout = run_loaded_detection_raw(
+        raw_predictions = run_loaded_detection_raw(
             detector=detector,
             image=image_path,
-        )
-
-        raw_predictions, dropout_debug = _apply_stochastic_positive_sample_dropout(
-            raw_predictions=raw_predictions_before_dropout,
-            gt_boxes=gt_boxes,
-            image_path=image_path,
-            case_name=case_name,
-            folder_label=folder_label,
-            location_factors=location_factors,
-            rng=rng,
         )
 
         debug_model_output_rows.append(
             {
                 "image": image_path.name,
                 "image_id": image_id,
-                "num_model_outputs_before_threshold": len(raw_predictions_before_dropout),
-                "num_model_outputs_after_dropout": len(raw_predictions),
-                "dropout_applied": dropout_debug["dropout_applied"],
-                "dropout_keep": dropout_debug["dropout_keep"],
-                "dropout_fraction": dropout_debug["dropout_fraction"],
-                "dropout_location": dropout_debug["dropout_location"],
-                "dropout_offnadir_angle_deg": dropout_debug["dropout_offnadir_angle_deg"],
+                "num_model_outputs_before_threshold": len(raw_predictions),
             }
         )
 
@@ -518,15 +361,7 @@ def process_model_for_image_folder(model_name: str, best_stg_path: Path, config_
             )
 
         print(f"\nImage: {image_path.name}")
-        print(f"Model outputs before dropout: {len(raw_predictions_before_dropout)}")
-        print(f"Model outputs after dropout: {len(raw_predictions)}")
-        print(
-            f"Dropout applied={dropout_debug['dropout_applied']} "
-            f"| keep={dropout_debug['dropout_keep']} "
-            f"| f={dropout_debug['dropout_fraction']} "
-            f"| location={dropout_debug['dropout_location']} "
-            f"| angle={dropout_debug['dropout_offnadir_angle_deg']}"
-        )
+        print(f"Model outputs before threshold: {len(raw_predictions)}")
         print(f"Reported detections after threshold: {len(individual_predictions)}")
         print(
             f"TP={individual_scores['tp']} "
@@ -541,7 +376,6 @@ def process_model_for_image_folder(model_name: str, best_stg_path: Path, config_
 
     total_thresholded_predictions_individual = int(sum(int(row["num_predictions"]) for row in image_summary_rows))
     total_model_outputs_before_threshold = int(sum(int(row["num_model_outputs_before_threshold"]) for row in debug_model_output_rows))
-    total_model_outputs_after_dropout = int(sum(int(row["num_model_outputs_after_dropout"]) for row in debug_model_output_rows))
 
     coco_metrics = compute_coco_ap_metrics(
         annotations_data=annotations_data,
@@ -574,8 +408,6 @@ def process_model_for_image_folder(model_name: str, best_stg_path: Path, config_
             "checkpoint": str(best_stg_path),
             "config": str(config_path),
             "image_folder": str(image_folder_path),
-            "case_name": case_name,
-            "folder_label": folder_label,
             "num_images_processed": len(image_paths),
             "positive_sample_count": len(positive_sample_best_ious),
             "all_sample_count": len(all_sample_best_ious),
@@ -592,7 +424,6 @@ def process_model_for_image_folder(model_name: str, best_stg_path: Path, config_
             "reported_predictions_individual_threshold": total_thresholded_predictions_individual,
             "predictions_used_for_coco_ap": total_ap_predictions,
             "debug_model_outputs_before_threshold_total": total_model_outputs_before_threshold,
-            "debug_model_outputs_after_dropout_total": total_model_outputs_after_dropout,
             "avg_best_iou_positive_samples": _safe_mean(positive_sample_best_ious),
             "std_best_iou_positive_samples": _safe_std(positive_sample_best_ious),
             "avg_best_confidence_positive_samples": _safe_mean(positive_sample_best_confidences),
@@ -638,7 +469,6 @@ def process_model_for_image_folder(model_name: str, best_stg_path: Path, config_
     print(f"Reported predictions (thresholded): {total_thresholded_predictions_individual}")
     print(f"Predictions used for COCO AP: {total_ap_predictions}")
     print(f"Debug model outputs before threshold: {total_model_outputs_before_threshold}")
-    print(f"Debug model outputs after dropout: {total_model_outputs_after_dropout}")
 
     print("\nOutputs written to:")
     print(results_xlsx_path)
@@ -652,8 +482,10 @@ def main() -> None:
     master_dir = script_dir.parent
     deimv2_repo_root = script_dir / "DEIMV2-main"
 
+
     model_name = "04_reflection_offnadir_glint_255"
     master_results = "FINAL_RESULTS"
+
 
     mode = "all"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
@@ -682,11 +514,6 @@ def main() -> None:
     save_prediction_images = True
     reset_prediction_images = True
 
-    apply_offnadir_success_dropout = True
-    random_seed = 42
-
-    location_overview_path = script_dir / "DEIMv2-main" / "data" / "0_merged" / "reflection_offnadir_glint_255" / "location_detection_overview.xlsx"
-
     if not deimv2_repo_root.exists():
         raise FileNotFoundError(f"DEIMV2 repo root does not exist: {deimv2_repo_root}")
 
@@ -699,14 +526,7 @@ def main() -> None:
     if not config_path.exists():
         raise FileNotFoundError(f"Model config does not exist: {config_path}")
 
-    if apply_offnadir_success_dropout:
-        if not location_overview_path.exists():
-            raise FileNotFoundError(f"Location detection overview file does not exist: {location_overview_path}")
-        location_factors = _load_location_detection_factors(location_overview_path)
-    else:
-        location_factors = None
 
-    rng = random.Random(random_seed)
 
     case_dirs = _find_master_case_directories(master_results_root)
     if not case_dirs:
@@ -736,9 +556,6 @@ def main() -> None:
     print(f"Using fixed model: {model_name}")
     print(f"Checkpoint: {best_stg_path}")
     print(f"Config: {config_path}")
-    print(f"Location overview path: {location_overview_path}")
-    print(f"Apply off-nadir success dropout: {apply_offnadir_success_dropout}")
-    print(f"Random seed: {random_seed}")
     print(f"Found {len(case_dirs)} case folders inside {master_results_root}.")
     print(f"Resolved {len(all_jobs)} image folder jobs.")
     print()
@@ -760,7 +577,6 @@ def main() -> None:
         image_folder_path = Path(job["image_folder_path"])
         output_root_dir = case_dir / str(job["output_dir_name"])
         anns_path = image_folder_path / "annotations_postprocessed.json"
-        folder_label = str(job["label"])
 
         if not anns_path.exists():
             raise FileNotFoundError(f"Annotations file does not exist: {anns_path}")
@@ -768,7 +584,6 @@ def main() -> None:
         print(f"\n\n[{current_job}/{total_jobs}] Starting model: {model_name}")
         print(f"Case: {case_dir.name}")
         print(f"Dataset: {image_folder_path.name}")
-        print(f"Folder label: {folder_label}")
 
         try:
             process_model_for_image_folder(
@@ -793,10 +608,6 @@ def main() -> None:
                 save_prediction_images=save_prediction_images,
                 reset_prediction_images=reset_prediction_images,
                 overwrite_results=overwrite_results,
-                location_factors=location_factors,
-                case_name=case_dir.name,
-                folder_label=folder_label,
-                rng=rng,
             )
             processed += 1
         except FileNotFoundError as exc:
