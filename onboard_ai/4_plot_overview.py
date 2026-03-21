@@ -43,6 +43,50 @@ METRICS = [
     "coco_ap50_95",
 ]
 
+FINAL_RESULTS_LIST = [
+    "reflection_offnadir_glint_255",
+    "reflection_nadir_glint_255",
+    "texture_offnadir_255",
+    "texture_nadir_255",
+]
+
+LOCATION_PLOT_NAMES = ["random", "Auckland2006", "Pelagos2016"]
+
+EXPERIMENT_LABELS = {
+    "reflection_offnadir_glint_255": "reflection off-nadir",
+    "reflection_nadir_glint_255": "reflection nadir",
+    "texture_offnadir_255": "texture off-nadir",
+    "texture_nadir_255": "texture nadir",
+}
+
+COMPARISON_GROUPS = {
+    "reflection_offnadir_vs_reflection_nadir": [
+        "reflection_offnadir_glint_255",
+        "reflection_nadir_glint_255",
+    ],
+    "reflection_offnadir_vs_texture_offnadir": [
+        "reflection_offnadir_glint_255",
+        "texture_offnadir_255",
+    ],
+    "reflection_offnadir_vs_texture_nadir": [
+        "reflection_offnadir_glint_255",
+        "texture_nadir_255",
+    ],
+    "all_four": [
+        "reflection_offnadir_glint_255",
+        "reflection_nadir_glint_255",
+        "texture_offnadir_255",
+        "texture_nadir_255",
+    ],
+}
+
+
+COLOR_MAP = {
+    "reflection_offnadir_glint_255": "tab:blue",   # Default blue
+    "reflection_nadir_glint_255": "tab:green",    # Default orange
+    "texture_offnadir_255": "tab:orange",           # Default green
+    "texture_nadir_255": "tab:red",               # Default red
+}
 
 def _resolve_final_results_root(script_dir: Path, final_results_folder_name: str) -> Path:
     """Resolve FINAL_RESULTS root from script directory and result folder name."""
@@ -123,6 +167,29 @@ def _save_subset_csv(df: pd.DataFrame, output_path: Path, sort_columns: list[str
     df.sort_values(sort_columns)[existing_columns].to_csv(output_path, index=False)
 
 
+def _get_y_limits(metric: str) -> tuple[float, float] | None:
+    """Return fixed y-limits for selected metrics."""
+    y_limits = {
+        "C_succ_overall": (0, 60),
+        "E_e2e": (0, 1),
+        "Q_mean_success": (0, 1),
+        "overall_f1_detection": (0, 1),
+        "coco_ap50": (0, 1),
+        "coco_ap50_95": (0, 1),
+        "theta_mean_success_deg": (0, 60),
+        "V_mean_success_s": (0, 400),
+        "L_mean_success_s": (0, 400),
+    }
+    return y_limits.get(metric, None)
+
+
+def _get_ylabel(metric: str) -> str:
+    """Return plot y-axis label."""
+    if metric == "theta_mean_success_deg":
+        return "Off-nadir angle [deg]"
+    return metric
+
+
 def _make_mean_only_plot(df_mean: pd.DataFrame, x_column: str, metric: str, xlabel: str, title: str, output_path: Path) -> None:
     """Plot only the grouped mean line for one metric."""
     plot_df = df_mean[[CASE_COLUMN, x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column)
@@ -131,13 +198,16 @@ def _make_mean_only_plot(df_mean: pd.DataFrame, x_column: str, metric: str, xlab
         print(f"[SKIP] No valid data for mean-only plot: {output_path.name}")
         return
 
-    ylabel = "Off-nadir angle [deg]" if metric == "theta_mean_success_deg" else metric
-
     plt.figure(figsize=(7.2, 4.8))
     plt.plot(plot_df[x_column], plot_df[metric], marker="o", label="mean")
     plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
+    plt.ylabel(_get_ylabel(metric))
     plt.title(title)
+
+    ylim = _get_y_limits(metric)
+    if ylim is not None:
+        plt.ylim(*ylim)
+
     plt.legend(fontsize=PLOT_FONT_SIZE_LEGEND)
     plt.tight_layout()
     plt.savefig(output_path, bbox_inches="tight")
@@ -175,8 +245,6 @@ def _make_mean_and_runs_plot(df_mean: pd.DataFrame, df_runs: pd.DataFrame, x_col
         .sort_values(["seed", x_column])
     )
 
-    ylabel = "Off-nadir angle [deg]" if metric == "theta_mean_success_deg" else metric
-
     plt.figure(figsize=(7.2, 4.8))
 
     for seed, seed_df in runs_plot_df.groupby("seed", dropna=True):
@@ -186,31 +254,186 @@ def _make_mean_and_runs_plot(df_mean: pd.DataFrame, df_runs: pd.DataFrame, x_col
     plt.plot(mean_plot_df[x_column], mean_plot_df[metric], marker="o", linewidth=2.4, label="mean")
 
     plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
+    plt.ylabel(_get_ylabel(metric))
     plt.title(title)
+
+    ylim = _get_y_limits(metric)
+    if ylim is not None:
+        plt.ylim(*ylim)
+
     plt.legend(fontsize=PLOT_FONT_SIZE_LEGEND)
     plt.tight_layout()
     plt.savefig(output_path, bbox_inches="tight")
     plt.close()
 
 
+def _load_tc1x1_mean_sweeps_for_location(script_dir: Path, final_results: str, location_plot: str) -> dict[str, pd.DataFrame]:
+    """Load grouped-mean TC1x1 sweep subsets for one experiment and one location."""
+    final_results_folder_name = "EXPERIMENTS/" + final_results
+    final_results_root = _resolve_final_results_root(script_dir, final_results_folder_name)
+    overview_path = final_results_root / f"overview_{location_plot}.xlsx"
+
+    if not final_results_root.exists():
+        raise FileNotFoundError(f"FINAL_RESULTS root does not exist: {final_results_root}")
+
+    if not overview_path.exists():
+        raise FileNotFoundError(f"Overview file does not exist: {overview_path}")
+
+    df_mean = _load_grouped_mean_table(overview_path)
+    df_mean_tc1x1 = _filter_tc1x1_grouped_mean(df_mean)
+
+    if df_mean_tc1x1.empty:
+        raise ValueError(f"No grouped TC1x1 rows found in grouped_mean for {final_results} / {location_plot}")
+
+    time_delay_mean_df = df_mean_tc1x1[df_mean_tc1x1["offnadir_angle_deg"] == 40].copy()
+    offnadir_mean_df = df_mean_tc1x1[df_mean_tc1x1["time_delay_min"] == 5].copy()
+
+    if time_delay_mean_df.empty:
+        raise ValueError(f"No grouped TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40 in {overview_path}")
+    if offnadir_mean_df.empty:
+        raise ValueError(f"No grouped TC1x1 rows found for off-nadir sweep with time_delay_min == 5 in {overview_path}")
+
+    return {
+        "overview_path": pd.DataFrame({"path": [str(overview_path)]}),
+        "time_delay_mean_df": time_delay_mean_df,
+        "offnadir_mean_df": offnadir_mean_df,
+    }
+
+
+def _make_combined_comparison_plot(
+    data_by_experiment: dict[str, pd.DataFrame],
+    experiment_order: list[str],
+    x_column: str,
+    metric: str,
+    xlabel: str,
+    title: str,
+    output_path: Path,
+) -> None:
+    """Plot grouped mean comparison across multiple experiments."""
+    plt.figure(figsize=(7.2, 4.8))
+
+    plotted_any = False
+
+    for experiment_name in experiment_order:
+        if experiment_name not in data_by_experiment:
+            continue
+
+        df = data_by_experiment[experiment_name]
+        plot_df = df[[x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column)
+
+        if plot_df.empty:
+            continue
+
+        # Apply the appropriate color for the experiment
+        color = COLOR_MAP.get(experiment_name, "black")
+        plt.plot(
+            plot_df[x_column],
+            plot_df[metric],
+            marker="o",
+            label=EXPERIMENT_LABELS.get(experiment_name, experiment_name),
+            color=color
+        )
+        plotted_any = True
+
+    if not plotted_any:
+        print(f"[SKIP] No valid data for combined plot: {output_path.name}")
+        plt.close()
+        return
+
+    plt.xlabel(xlabel)
+    plt.ylabel(_get_ylabel(metric))
+    plt.title(title)
+
+    ylim = _get_y_limits(metric)
+    if ylim is not None:
+        plt.ylim(*ylim)
+
+    plt.legend(fontsize=PLOT_FONT_SIZE_LEGEND)
+    plt.tight_layout()
+    plt.savefig(output_path, bbox_inches="tight")
+    plt.close()
+
+
+def _write_combined_comparison_plots(script_dir: Path, location_plot: str) -> None:
+    """Create combined comparison plots for one location across experiment groups."""
+    base_results_root = _resolve_final_results_root(script_dir, "EXPERIMENTS")
+    combined_root = base_results_root / f"plots_combined_{location_plot}"
+    combined_root.mkdir(parents=True, exist_ok=True)
+
+    mean_sweep_tables: dict[str, dict[str, pd.DataFrame]] = {}
+
+    for final_results in FINAL_RESULTS_LIST:
+        mean_sweep_tables[final_results] = _load_tc1x1_mean_sweeps_for_location(
+            script_dir=script_dir,
+            final_results=final_results,
+            location_plot=location_plot,
+        )
+
+    for group_name, experiment_names in COMPARISON_GROUPS.items():
+        group_root = combined_root / group_name
+        time_delay_output_dir = group_root / "time_delay_sweep"
+        offnadir_output_dir = group_root / "offnadir_sweep"
+
+        time_delay_output_dir.mkdir(parents=True, exist_ok=True)
+        offnadir_output_dir.mkdir(parents=True, exist_ok=True)
+
+        time_delay_data_by_experiment = {
+            experiment_name: mean_sweep_tables[experiment_name]["time_delay_mean_df"]
+            for experiment_name in experiment_names
+        }
+        offnadir_data_by_experiment = {
+            experiment_name: mean_sweep_tables[experiment_name]["offnadir_mean_df"]
+            for experiment_name in experiment_names
+        }
+
+        for metric in METRICS:
+            _make_combined_comparison_plot(
+                data_by_experiment=time_delay_data_by_experiment,
+                experiment_order=experiment_names,
+                x_column="time_delay_min",
+                metric=metric,
+                xlabel="Latency [min]",
+                title=f"{metric} vs latency for TC1x1 at 40° off-nadir",
+                output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_comparison.png",
+            )
+
+            _make_combined_comparison_plot(
+                data_by_experiment=offnadir_data_by_experiment,
+                experiment_order=experiment_names,
+                x_column="offnadir_angle_deg",
+                metric=metric,
+                xlabel="Off-nadir angle [deg]",
+                title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency",
+                output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_comparison.png",
+            )
+
+        for experiment_name in experiment_names:
+            time_delay_csv_path = time_delay_output_dir / f"{experiment_name}_time_delay_grouped_mean.csv"
+            offnadir_csv_path = offnadir_output_dir / f"{experiment_name}_offnadir_grouped_mean.csv"
+
+            _save_subset_csv(
+                df=time_delay_data_by_experiment[experiment_name],
+                output_path=time_delay_csv_path,
+                sort_columns=["time_delay_min"],
+            )
+            _save_subset_csv(
+                df=offnadir_data_by_experiment[experiment_name],
+                output_path=offnadir_csv_path,
+                sort_columns=["offnadir_angle_deg"],
+            )
+
+        print(f"[OK] Combined plots written for location '{location_plot}' in: {group_root}")
+
+
 def main() -> None:
-    """Create TC1x1 time-delay and off-nadir sweep plots with mean-only and mean+run versions."""
+    """Create per-experiment TC1x1 plots and combined comparison plots."""
     script_dir = Path(__file__).resolve().parent
 
-    final_results_list = [
-        "reflection_offnadir_glint_255",
-        "reflection_nadir_glint_255",
-        "texture_offnadir_255",
-        "texture_nadir_255",
-    ]
-    location_plot_names = ["random", "Auckland2006", "Pelagos2016"]
-
-    for final_results in final_results_list:
+    for final_results in FINAL_RESULTS_LIST:
         print(f"\n=============== Start processing {final_results} ===============")
         final_results_folder_name = "EXPERIMENTS/" + final_results
 
-        for location_plot in location_plot_names:
+        for location_plot in LOCATION_PLOT_NAMES:
             overview_filename = f"overview_{location_plot}.xlsx"
             output_folder_name = f"final_plots_{location_plot}"
 
@@ -325,6 +548,15 @@ def main() -> None:
             print(f"Off-nadir grouped rows: {len(offnadir_mean_df)}")
             print(f"Off-nadir seeded rows: {len(offnadir_runs_df)}")
             print(f"Plots written to: {output_root}")
+
+    print("\n=============== Creating combined comparison plots ===============")
+    for location_plot in LOCATION_PLOT_NAMES:
+        _write_combined_comparison_plots(
+            script_dir=script_dir,
+            location_plot=location_plot,
+        )
+
+    print("\nFinished all per-experiment and combined comparison plots.")
 
 
 if __name__ == "__main__":

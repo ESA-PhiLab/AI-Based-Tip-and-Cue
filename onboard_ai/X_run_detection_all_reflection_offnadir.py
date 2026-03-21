@@ -830,7 +830,7 @@ def main() -> None:
     line_width = 15
 
     max_images: int | None = None
-    individual_score_threshold = 0.3
+    individual_score_threshold = 0.5 # 0.380189
     individual_iou_threshold = 0.5
     ap_score_threshold = 0.0
 

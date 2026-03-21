@@ -1,6 +1,6 @@
 # AI-Based-Tip-and-Cue
 
-![Alt Text](0_resources/images/simulation.gif)
+![Alt Text](0_resources/images/vid_short.gif)
 
 **Under development.**\
 Expected release: March 2026

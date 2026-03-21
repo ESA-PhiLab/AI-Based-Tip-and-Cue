@@ -48,7 +48,7 @@ else:
 
 
 t0 = datetime(2025, 9, 20, 2, 33, 39, tzinfo=timezone.utc)
-whale_seed = 1
+whale_seed = 17
 
 if not real_run:
     t0 += timedelta(seconds=-3 * 60)
