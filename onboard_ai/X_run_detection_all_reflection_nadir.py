@@ -848,7 +848,7 @@ def main() -> None:
     save_prediction_images = True
     reset_prediction_images = True
 
-    apply_offnadir_success_dropout = False
+    apply_offnadir_success_dropout = True
 
     location_overview_path = script_dir / "DEIMv2-main" / "data" / "0_merged" / "reflection_offnadir_glint_255" / "location_detection_overview.xlsx"
 
