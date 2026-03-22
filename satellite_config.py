@@ -59,7 +59,7 @@ DEFAULT_TIP_SENSOR = {
 }
 
 DEFAULT_CUE_SENSOR = {
-    "resolution": 124,
+    "resolution": 64,
     "sample_count": 512,
     "GSD": 0.31,
     "specular_weight": 0.2,

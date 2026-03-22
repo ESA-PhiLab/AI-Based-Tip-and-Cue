@@ -28,6 +28,10 @@ for path in (PROJECT_ROOT, CREATE_DATASET_DIR):
         sys.path.insert(0, str(path))
 
 from settings import *
+from satellite_config import *
+
+from satellite_config import DEFAULT_CUE_SENSOR
+sensor_characteristics = DEFAULT_CUE_SENSOR
 
 
 SIMULATION_SEED = int(globals().get("whale_seed", 17))

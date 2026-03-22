@@ -33,14 +33,16 @@ CASE_COLUMN = "case_name"
 
 METRICS = [
     "C_succ_overall",
-    "E_e2e",
+    "C_succ_task_overall",
     "L_mean_success_s",
     "V_mean_success_s",
+    "IoU_mean_success",
     "Q_mean_success",
-    "theta_mean_success_deg",
-    "overall_f1_detection",
     "coco_ap50",
     "coco_ap50_95",
+    "detector_precision",
+    "detector_recall",
+    "detector_f1",
 ]
 
 FINAL_RESULTS_LIST = [
@@ -51,6 +53,7 @@ FINAL_RESULTS_LIST = [
 ]
 
 LOCATION_PLOT_NAMES = ["random", "Auckland2006", "Pelagos2016"]
+LOCATION_COMBINED_PLOT_NAMES = ["Auckland2006", "Pelagos2016"]
 
 EXPERIMENT_LABELS = {
     "reflection_offnadir_glint_255": "reflection off-nadir",
@@ -80,27 +83,101 @@ COMPARISON_GROUPS = {
     ],
 }
 
-
 COLOR_MAP = {
-    "reflection_offnadir_glint_255": "tab:blue",   # Default blue
-    "reflection_nadir_glint_255": "tab:green",    # Default orange
-    "texture_offnadir_255": "tab:orange",           # Default green
-    "texture_nadir_255": "tab:red",               # Default red
+    "reflection_offnadir_glint_255": "tab:blue",
+    "reflection_nadir_glint_255": "tab:green",
+    "texture_offnadir_255": "tab:orange",
+    "texture_nadir_255": "tab:red",
 }
 
+LOCATION_COLOR_MAP = {
+    "Auckland2006": "tab:blue",
+    "Pelagos2016": "tab:orange",
+}
+
+METRIC_PLOT_META = {
+    "C_succ_overall": {
+        "symbol": r"$C_{\mathrm{succ}}$",
+        "description": "Successful whale detections",
+        "unit": "",
+        "ylim": (0, 60),
+    },
+    "C_succ_task_overall": {
+        "symbol": r"$C_{\mathrm{succ,task}}$",
+        "description": "Successful task confirmations",
+        "unit": "",
+        "ylim": (0, 60),
+    },
+    "L_mean_success_s": {
+        "symbol": r"$L$",
+        "description": "Mean latency",
+        "unit": "[s]",
+        "ylim": (0, 400),
+    },
+    "V_mean_success_s": {
+        "symbol": r"$V$",
+        "description": "Mean viewing time",
+        "unit": "[s]",
+        "ylim": (0, 400),
+    },
+    "IoU_mean_success": {
+        "symbol": r"$\overline{\mathrm{IoU}}$",
+        "description": "Mean IoU",
+        "unit": "",
+        "ylim": (0, 1),
+    },
+    "Q_mean_success": {
+        "symbol": r"$Q$",
+        "description": "Mean confidence",
+        "unit": "",
+        "ylim": (0, 1),
+    },
+    "coco_ap50": {
+        "symbol": r"$\mathrm{AP}_{50}$",
+        "description": "",
+        "unit": "",
+        "ylim": (0, 1),
+    },
+    "coco_ap50_95": {
+        "symbol": r"$\mathrm{AP}_{50:95}$",
+        "description": "",
+        "unit": "",
+        "ylim": (0, 1),
+    },
+    "detector_precision": {
+        "symbol": r"$P$",
+        "description": "Precision",
+        "unit": "",
+        "ylim": (0, 1),
+    },
+    "detector_recall": {
+        "symbol": r"$R$",
+        "description": "Recall",
+        "unit": "",
+        "ylim": (0, 1),
+    },
+    "detector_f1": {
+        "symbol": r"$F_1$",
+        "description": "score",
+        "unit": "",
+        "ylim": (0, 1),
+    },
+}
+
+
 def _resolve_final_results_root(script_dir: Path, final_results_folder_name: str) -> Path:
-    """Resolve FINAL_RESULTS root from script directory and result folder name."""
+    """Resolve results root path."""
     master_dir = script_dir.parent
     return master_dir / "0_results" / final_results_folder_name
 
 
 def _sanitize_filename(name: str) -> str:
-    """Make a metric name safe for filenames."""
+    """Make filename-safe string."""
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_")
 
 
 def _load_grouped_mean_table(xlsx_path: Path) -> pd.DataFrame:
-    """Load grouped_mean sheet and convert required columns to numeric."""
+    """Load grouped_mean sheet and coerce numeric columns."""
     df = pd.read_excel(xlsx_path, sheet_name="grouped_mean")
 
     required_columns = [CASE_COLUMN, "offnadir_angle_deg", "time_delay_min"] + METRICS
@@ -120,7 +197,7 @@ def _load_grouped_mean_table(xlsx_path: Path) -> pd.DataFrame:
 
 
 def _load_all_cases_table(xlsx_path: Path) -> pd.DataFrame:
-    """Load all_cases sheet, extract seed and grouped case name, and convert required columns."""
+    """Load all_cases sheet and extract grouped case name plus seed."""
     df = pd.read_excel(xlsx_path, sheet_name="all_cases")
 
     required_columns = [CASE_COLUMN, "offnadir_angle_deg", "time_delay_min"] + METRICS
@@ -143,17 +220,17 @@ def _load_all_cases_table(xlsx_path: Path) -> pd.DataFrame:
 
 
 def _filter_tc1x1_grouped_mean(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep only grouped TC1x1 configurations."""
+    """Keep grouped TC1x1 configurations only."""
     return df[df[CASE_COLUMN].str.match(r"^TC_1x1sat_\d+deg_\d+min$", na=False)].copy()
 
 
 def _filter_tc1x1_all_cases(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep only seeded TC1x1 configurations from all_cases."""
+    """Keep seeded TC1x1 configurations only."""
     return df[df[CASE_COLUMN].str.match(r"^TC_1x1sat_\d+deg_\d+min_\d+sd$", na=False)].copy()
 
 
 def _save_subset_csv(df: pd.DataFrame, output_path: Path, sort_columns: list[str]) -> None:
-    """Save one filtered sweep table to CSV."""
+    """Save filtered subset to CSV."""
     preferred_columns = [
         CASE_COLUMN,
         "case_name_grouped",
@@ -167,44 +244,118 @@ def _save_subset_csv(df: pd.DataFrame, output_path: Path, sort_columns: list[str
     df.sort_values(sort_columns)[existing_columns].to_csv(output_path, index=False)
 
 
-def _get_y_limits(metric: str) -> tuple[float, float] | None:
-    """Return fixed y-limits for selected metrics."""
-    y_limits = {
-        "C_succ_overall": (0, 60),
-        "E_e2e": (0, 1),
-        "Q_mean_success": (0, 1),
-        "overall_f1_detection": (0, 1),
-        "coco_ap50": (0, 1),
-        "coco_ap50_95": (0, 1),
-        "theta_mean_success_deg": (0, 60),
-        "V_mean_success_s": (0, 400),
-        "L_mean_success_s": (0, 400),
+def _get_metric_plot_config(metric: str, y_unit_mode: str = "native") -> dict[str, object]:
+    """Return ylabel, y-limits, and scale factor for one metric."""
+    if metric not in METRIC_PLOT_META:
+        raise KeyError(f"Missing plot metadata for metric: {metric}")
+
+    meta = METRIC_PLOT_META[metric]
+    scale = 1.0
+    unit = meta["unit"]
+    ylim = meta["ylim"]
+
+    if y_unit_mode == "minutes":
+        if metric not in {"L_mean_success_s", "V_mean_success_s"}:
+            raise ValueError(f"Minute conversion is only supported for time metrics, got: {metric}")
+        scale = 1.0 / 60.0
+        unit = "[min]"
+        if ylim is not None:
+            ylim = (ylim[0] / 60.0, ylim[1] / 60.0)
+    elif y_unit_mode != "native":
+        raise ValueError(f"Unsupported y_unit_mode: {y_unit_mode}")
+
+    label_parts = [meta["symbol"]]
+    if meta["description"]:
+        label_parts.append(meta["description"])
+    if unit:
+        label_parts.append(unit)
+
+    ylabel = "\n".join(label_parts)
+    return {
+        "ylabel": ylabel,
+        "ylim": ylim,
+        "scale": scale,
     }
-    return y_limits.get(metric, None)
 
 
-def _get_ylabel(metric: str) -> str:
-    """Return plot y-axis label."""
-    if metric == "theta_mean_success_deg":
-        return "Off-nadir angle [deg]"
-    return metric
+def _get_time_delay_plot_variants(metric: str) -> list[dict[str, str]]:
+    """Return variants for time-delay plots."""
+    variants = [
+        {
+            "y_unit_mode": "native",
+            "file_suffix": "",
+            "title_suffix": "",
+        }
+    ]
+
+    if metric in {"L_mean_success_s", "V_mean_success_s"}:
+        variants.append(
+            {
+                "y_unit_mode": "minutes",
+                "file_suffix": "_ymin",
+                "title_suffix": " (y-axis in minutes)",
+            }
+        )
+
+    return variants
 
 
-def _make_mean_only_plot(df_mean: pd.DataFrame, x_column: str, metric: str, xlabel: str, title: str, output_path: Path) -> None:
-    """Plot only the grouped mean line for one metric."""
-    plot_df = df_mean[[CASE_COLUMN, x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column)
+def _load_tc1x1_sweep_tables(overview_path: Path) -> dict[str, pd.DataFrame]:
+    """Load grouped/all-case TC1x1 sweep tables from one overview file."""
+    df_mean = _load_grouped_mean_table(overview_path)
+    df_runs = _load_all_cases_table(overview_path)
+
+    df_mean_tc1x1 = _filter_tc1x1_grouped_mean(df_mean)
+    df_runs_tc1x1 = _filter_tc1x1_all_cases(df_runs)
+
+    if df_mean_tc1x1.empty:
+        raise ValueError(f"No grouped TC1x1 rows found in grouped_mean for {overview_path}")
+    if df_runs_tc1x1.empty:
+        raise ValueError(f"No seeded TC1x1 rows found in all_cases for {overview_path}")
+
+    time_delay_mean_df = df_mean_tc1x1[df_mean_tc1x1["offnadir_angle_deg"] == 40].copy()
+    offnadir_mean_df = df_mean_tc1x1[df_mean_tc1x1["time_delay_min"] == 5].copy()
+
+    time_delay_runs_df = df_runs_tc1x1[df_runs_tc1x1["offnadir_angle_deg"] == 40].copy()
+    offnadir_runs_df = df_runs_tc1x1[df_runs_tc1x1["time_delay_min"] == 5].copy()
+
+    if time_delay_mean_df.empty:
+        raise ValueError(f"No grouped TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40 in {overview_path}")
+    if offnadir_mean_df.empty:
+        raise ValueError(f"No grouped TC1x1 rows found for off-nadir sweep with time_delay_min == 5 in {overview_path}")
+    if time_delay_runs_df.empty:
+        raise ValueError(f"No seeded TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40 in {overview_path}")
+    if offnadir_runs_df.empty:
+        raise ValueError(f"No seeded TC1x1 rows found for off-nadir sweep with time_delay_min == 5 in {overview_path}")
+
+    return {
+        "df_mean_tc1x1": df_mean_tc1x1,
+        "df_runs_tc1x1": df_runs_tc1x1,
+        "time_delay_mean_df": time_delay_mean_df,
+        "offnadir_mean_df": offnadir_mean_df,
+        "time_delay_runs_df": time_delay_runs_df,
+        "offnadir_runs_df": offnadir_runs_df,
+    }
+
+
+def _make_mean_only_plot(df_mean: pd.DataFrame, x_column: str, metric: str, xlabel: str, title: str, output_path: Path, y_unit_mode: str = "native") -> None:
+    """Plot grouped mean only."""
+    plot_config = _get_metric_plot_config(metric, y_unit_mode=y_unit_mode)
+    plot_df = df_mean[[CASE_COLUMN, x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column).copy()
 
     if plot_df.empty:
         print(f"[SKIP] No valid data for mean-only plot: {output_path.name}")
         return
 
+    plot_df[metric] = plot_df[metric] * float(plot_config["scale"])
+
     plt.figure(figsize=(7.2, 4.8))
     plt.plot(plot_df[x_column], plot_df[metric], marker="o", label="mean")
     plt.xlabel(xlabel)
-    plt.ylabel(_get_ylabel(metric))
+    plt.ylabel(str(plot_config["ylabel"]))
     plt.title(title)
 
-    ylim = _get_y_limits(metric)
+    ylim = plot_config["ylim"]
     if ylim is not None:
         plt.ylim(*ylim)
 
@@ -214,13 +365,16 @@ def _make_mean_only_plot(df_mean: pd.DataFrame, x_column: str, metric: str, xlab
     plt.close()
 
 
-def _make_mean_and_runs_plot(df_mean: pd.DataFrame, df_runs: pd.DataFrame, x_column: str, metric: str, xlabel: str, title: str, output_path: Path) -> None:
-    """Plot grouped mean plus one aggregated line per seed from all_cases."""
-    mean_plot_df = df_mean[[CASE_COLUMN, x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column)
+def _make_mean_and_runs_plot(df_mean: pd.DataFrame, df_runs: pd.DataFrame, x_column: str, metric: str, xlabel: str, title: str, output_path: Path, y_unit_mode: str = "native") -> None:
+    """Plot grouped mean and per-seed runs."""
+    plot_config = _get_metric_plot_config(metric, y_unit_mode=y_unit_mode)
+    mean_plot_df = df_mean[[CASE_COLUMN, x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column).copy()
 
     if mean_plot_df.empty:
         print(f"[SKIP] No valid data for mean+runs plot: {output_path.name}")
         return
+
+    mean_plot_df[metric] = mean_plot_df[metric] * float(plot_config["scale"])
 
     runs_plot_df = df_runs.copy()
     runs_plot_df = runs_plot_df[
@@ -228,22 +382,15 @@ def _make_mean_and_runs_plot(df_mean: pd.DataFrame, df_runs: pd.DataFrame, x_col
     ]
     runs_plot_df = runs_plot_df[["case_name_grouped", "seed", x_column, metric]].dropna(subset=[x_column, metric])
 
-    duplicate_counts = (
-        runs_plot_df.groupby(["seed", x_column], dropna=False)
-        .size()
-        .reset_index(name="count")
-    )
+    duplicate_counts = runs_plot_df.groupby(["seed", x_column], dropna=False).size().reset_index(name="count")
     problematic = duplicate_counts[duplicate_counts["count"] > 1]
 
     if not problematic.empty:
         print(f"[WARN] Duplicate rows found for {output_path.name}. Aggregating by mean over seed + {x_column}.")
         print(problematic.sort_values(["seed", x_column]).to_string(index=False))
 
-    runs_plot_df = (
-        runs_plot_df.groupby(["seed", x_column], as_index=False)[metric]
-        .mean()
-        .sort_values(["seed", x_column])
-    )
+    runs_plot_df = runs_plot_df.groupby(["seed", x_column], as_index=False)[metric].mean().sort_values(["seed", x_column]).copy()
+    runs_plot_df[metric] = runs_plot_df[metric] * float(plot_config["scale"])
 
     plt.figure(figsize=(7.2, 4.8))
 
@@ -254,10 +401,129 @@ def _make_mean_and_runs_plot(df_mean: pd.DataFrame, df_runs: pd.DataFrame, x_col
     plt.plot(mean_plot_df[x_column], mean_plot_df[metric], marker="o", linewidth=2.4, label="mean")
 
     plt.xlabel(xlabel)
-    plt.ylabel(_get_ylabel(metric))
+    plt.ylabel(str(plot_config["ylabel"]))
     plt.title(title)
 
-    ylim = _get_y_limits(metric)
+    ylim = plot_config["ylim"]
+    if ylim is not None:
+        plt.ylim(*ylim)
+
+    plt.legend(fontsize=PLOT_FONT_SIZE_LEGEND)
+    plt.tight_layout()
+    plt.savefig(output_path, bbox_inches="tight")
+    plt.close()
+
+
+def _make_combined_location_mean_only_plot(data_by_location: dict[str, dict[str, pd.DataFrame]], location_order: list[str], df_key: str, x_column: str, metric: str, xlabel: str, title: str, output_path: Path, y_unit_mode: str = "native") -> None:
+    """Plot mean curves of multiple locations in one figure."""
+    plot_config = _get_metric_plot_config(metric, y_unit_mode=y_unit_mode)
+    plt.figure(figsize=(7.2, 4.8))
+    plotted_any = False
+
+    for location_name in location_order:
+        if location_name not in data_by_location:
+            continue
+
+        df_mean = data_by_location[location_name][df_key]
+        plot_df = df_mean[[x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column).copy()
+
+        if plot_df.empty:
+            continue
+
+        plot_df[metric] = plot_df[metric] * float(plot_config["scale"])
+
+        plt.plot(
+            plot_df[x_column],
+            plot_df[metric],
+            marker="o",
+            linewidth=2.4,
+            label=location_name,
+            color=LOCATION_COLOR_MAP.get(location_name, None),
+        )
+        plotted_any = True
+
+    if not plotted_any:
+        print(f"[SKIP] No valid data for combined-location mean-only plot: {output_path.name}")
+        plt.close()
+        return
+
+    plt.xlabel(xlabel)
+    plt.ylabel(str(plot_config["ylabel"]))
+    plt.title(title)
+
+    ylim = plot_config["ylim"]
+    if ylim is not None:
+        plt.ylim(*ylim)
+
+    plt.legend(fontsize=PLOT_FONT_SIZE_LEGEND)
+    plt.tight_layout()
+    plt.savefig(output_path, bbox_inches="tight")
+    plt.close()
+
+
+def _make_combined_location_mean_and_runs_plot(data_by_location: dict[str, dict[str, pd.DataFrame]], location_order: list[str], mean_df_key: str, runs_df_key: str, x_column: str, metric: str, xlabel: str, title: str, output_path: Path, y_unit_mode: str = "native") -> None:
+    """Plot mean and runs of multiple locations in one figure."""
+    plot_config = _get_metric_plot_config(metric, y_unit_mode=y_unit_mode)
+    plt.figure(figsize=(7.2, 4.8))
+    plotted_any = False
+
+    for location_name in location_order:
+        if location_name not in data_by_location:
+            continue
+
+        color = LOCATION_COLOR_MAP.get(location_name, None)
+
+        mean_plot_df = data_by_location[location_name][mean_df_key][[x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column).copy()
+        runs_plot_df = data_by_location[location_name][runs_df_key][["case_name_grouped", "seed", x_column, metric]].dropna(subset=[x_column, metric]).copy()
+
+        if mean_plot_df.empty:
+            continue
+
+        mean_plot_df[metric] = mean_plot_df[metric] * float(plot_config["scale"])
+
+        duplicate_counts = runs_plot_df.groupby(["seed", x_column], dropna=False).size().reset_index(name="count")
+        problematic = duplicate_counts[duplicate_counts["count"] > 1]
+
+        if not problematic.empty:
+            print(f"[WARN] Duplicate rows found for {output_path.name} / {location_name}. Aggregating by mean over seed + {x_column}.")
+            print(problematic.sort_values(["seed", x_column]).to_string(index=False))
+
+        runs_plot_df = runs_plot_df.groupby(["seed", x_column], as_index=False)[metric].mean().sort_values(["seed", x_column]).copy()
+        runs_plot_df[metric] = runs_plot_df[metric] * float(plot_config["scale"])
+
+        first_run = True
+        for _, seed_df in runs_plot_df.groupby("seed", dropna=True):
+            seed_df = seed_df.sort_values(x_column)
+            plt.plot(
+                seed_df[x_column],
+                seed_df[metric],
+                marker="o",
+                alpha=0.30,
+                color=color,
+                label=f"{location_name} runs" if first_run else None,
+            )
+            first_run = False
+
+        plt.plot(
+            mean_plot_df[x_column],
+            mean_plot_df[metric],
+            marker="o",
+            linewidth=2.8,
+            color=color,
+            label=f"{location_name} mean",
+        )
+        plotted_any = True
+
+    if not plotted_any:
+        print(f"[SKIP] No valid data for combined-location mean+runs plot: {output_path.name}")
+        plt.close()
+        return
+
+    plt.xlabel(xlabel)
+    plt.ylabel(str(plot_config["ylabel"]))
+    plt.title(title)
+
+    ylim = plot_config["ylim"]
     if ylim is not None:
         plt.ylim(*ylim)
 
@@ -268,7 +534,7 @@ def _make_mean_and_runs_plot(df_mean: pd.DataFrame, df_runs: pd.DataFrame, x_col
 
 
 def _load_tc1x1_mean_sweeps_for_location(script_dir: Path, final_results: str, location_plot: str) -> dict[str, pd.DataFrame]:
-    """Load grouped-mean TC1x1 sweep subsets for one experiment and one location."""
+    """Load grouped mean TC1x1 sweeps for one experiment and location."""
     final_results_folder_name = "EXPERIMENTS/" + final_results
     final_results_root = _resolve_final_results_root(script_dir, final_results_folder_name)
     overview_path = final_results_root / f"overview_{location_plot}.xlsx"
@@ -279,39 +545,19 @@ def _load_tc1x1_mean_sweeps_for_location(script_dir: Path, final_results: str, l
     if not overview_path.exists():
         raise FileNotFoundError(f"Overview file does not exist: {overview_path}")
 
-    df_mean = _load_grouped_mean_table(overview_path)
-    df_mean_tc1x1 = _filter_tc1x1_grouped_mean(df_mean)
-
-    if df_mean_tc1x1.empty:
-        raise ValueError(f"No grouped TC1x1 rows found in grouped_mean for {final_results} / {location_plot}")
-
-    time_delay_mean_df = df_mean_tc1x1[df_mean_tc1x1["offnadir_angle_deg"] == 40].copy()
-    offnadir_mean_df = df_mean_tc1x1[df_mean_tc1x1["time_delay_min"] == 5].copy()
-
-    if time_delay_mean_df.empty:
-        raise ValueError(f"No grouped TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40 in {overview_path}")
-    if offnadir_mean_df.empty:
-        raise ValueError(f"No grouped TC1x1 rows found for off-nadir sweep with time_delay_min == 5 in {overview_path}")
+    sweep_tables = _load_tc1x1_sweep_tables(overview_path)
 
     return {
-        "overview_path": pd.DataFrame({"path": [str(overview_path)]}),
-        "time_delay_mean_df": time_delay_mean_df,
-        "offnadir_mean_df": offnadir_mean_df,
+        "time_delay_mean_df": sweep_tables["time_delay_mean_df"],
+        "offnadir_mean_df": sweep_tables["offnadir_mean_df"],
     }
 
 
-def _make_combined_comparison_plot(
-    data_by_experiment: dict[str, pd.DataFrame],
-    experiment_order: list[str],
-    x_column: str,
-    metric: str,
-    xlabel: str,
-    title: str,
-    output_path: Path,
-) -> None:
-    """Plot grouped mean comparison across multiple experiments."""
-    plt.figure(figsize=(7.2, 4.8))
+def _make_combined_comparison_plot(data_by_experiment: dict[str, pd.DataFrame], experiment_order: list[str], x_column: str, metric: str, xlabel: str, title: str, output_path: Path, y_unit_mode: str = "native") -> None:
+    """Plot grouped mean comparison across experiments."""
+    plot_config = _get_metric_plot_config(metric, y_unit_mode=y_unit_mode)
 
+    plt.figure(figsize=(7.2, 4.8))
     plotted_any = False
 
     for experiment_name in experiment_order:
@@ -319,19 +565,20 @@ def _make_combined_comparison_plot(
             continue
 
         df = data_by_experiment[experiment_name]
-        plot_df = df[[x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column)
+        plot_df = df[[x_column, metric]].dropna(subset=[x_column, metric]).sort_values(x_column).copy()
 
         if plot_df.empty:
             continue
 
-        # Apply the appropriate color for the experiment
+        plot_df[metric] = plot_df[metric] * float(plot_config["scale"])
+
         color = COLOR_MAP.get(experiment_name, "black")
         plt.plot(
             plot_df[x_column],
             plot_df[metric],
             marker="o",
             label=EXPERIMENT_LABELS.get(experiment_name, experiment_name),
-            color=color
+            color=color,
         )
         plotted_any = True
 
@@ -341,10 +588,10 @@ def _make_combined_comparison_plot(
         return
 
     plt.xlabel(xlabel)
-    plt.ylabel(_get_ylabel(metric))
+    plt.ylabel(str(plot_config["ylabel"]))
     plt.title(title)
 
-    ylim = _get_y_limits(metric)
+    ylim = plot_config["ylim"]
     if ylim is not None:
         plt.ylim(*ylim)
 
@@ -354,8 +601,103 @@ def _make_combined_comparison_plot(
     plt.close()
 
 
+def _write_combined_location_plots(script_dir: Path, final_results: str) -> None:
+    """Create combined Auckland2006 + Pelagos2016 plots per experiment."""
+    final_results_folder_name = "EXPERIMENTS/" + final_results
+    final_results_root = _resolve_final_results_root(script_dir, final_results_folder_name)
+    output_root = final_results_root / "final_plots_combined"
+    time_delay_output_dir = output_root / "time_delay_sweep"
+    offnadir_output_dir = output_root / "offnadir_sweep"
+
+    time_delay_output_dir.mkdir(parents=True, exist_ok=True)
+    offnadir_output_dir.mkdir(parents=True, exist_ok=True)
+
+    data_by_location: dict[str, dict[str, pd.DataFrame]] = {}
+
+    for location_plot in LOCATION_COMBINED_PLOT_NAMES:
+        overview_path = final_results_root / f"overview_{location_plot}.xlsx"
+
+        if not overview_path.exists():
+            raise FileNotFoundError(f"Overview file does not exist: {overview_path}")
+
+        data_by_location[location_plot] = _load_tc1x1_sweep_tables(overview_path)
+
+        _save_subset_csv(
+            df=data_by_location[location_plot]["time_delay_mean_df"],
+            output_path=time_delay_output_dir / f"{location_plot}_time_delay_sweep_data_TC1x1_grouped_mean.csv",
+            sort_columns=["time_delay_min"],
+        )
+        _save_subset_csv(
+            df=data_by_location[location_plot]["time_delay_runs_df"],
+            output_path=time_delay_output_dir / f"{location_plot}_time_delay_sweep_data_TC1x1_all_runs.csv",
+            sort_columns=["seed", "time_delay_min"],
+        )
+        _save_subset_csv(
+            df=data_by_location[location_plot]["offnadir_mean_df"],
+            output_path=offnadir_output_dir / f"{location_plot}_offnadir_sweep_data_TC1x1_grouped_mean.csv",
+            sort_columns=["offnadir_angle_deg"],
+        )
+        _save_subset_csv(
+            df=data_by_location[location_plot]["offnadir_runs_df"],
+            output_path=offnadir_output_dir / f"{location_plot}_offnadir_sweep_data_TC1x1_all_runs.csv",
+            sort_columns=["seed", "offnadir_angle_deg"],
+        )
+
+    for metric in METRICS:
+        for variant in _get_time_delay_plot_variants(metric):
+            _make_combined_location_mean_only_plot(
+                data_by_location=data_by_location,
+                location_order=LOCATION_COMBINED_PLOT_NAMES,
+                df_key="time_delay_mean_df",
+                x_column="time_delay_min",
+                metric=metric,
+                xlabel="Latency [min]",
+                title=f"{metric} vs latency for TC1x1 at 40° off-nadir (Auckland2006 and Pelagos2016){variant['title_suffix']}",
+                output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean_Auckland2006_Pelagos2016{variant['file_suffix']}.png",
+                y_unit_mode=variant["y_unit_mode"],
+            )
+
+            _make_combined_location_mean_and_runs_plot(
+                data_by_location=data_by_location,
+                location_order=LOCATION_COMBINED_PLOT_NAMES,
+                mean_df_key="time_delay_mean_df",
+                runs_df_key="time_delay_runs_df",
+                x_column="time_delay_min",
+                metric=metric,
+                xlabel="Latency [min]",
+                title=f"{metric} vs latency for TC1x1 at 40° off-nadir (Auckland2006 and Pelagos2016){variant['title_suffix']}",
+                output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean_and_runs_Auckland2006_Pelagos2016{variant['file_suffix']}.png",
+                y_unit_mode=variant["y_unit_mode"],
+            )
+
+        _make_combined_location_mean_only_plot(
+            data_by_location=data_by_location,
+            location_order=LOCATION_COMBINED_PLOT_NAMES,
+            df_key="offnadir_mean_df",
+            x_column="offnadir_angle_deg",
+            metric=metric,
+            xlabel="Off-nadir angle [deg]",
+            title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency (Auckland2006 and Pelagos2016)",
+            output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean_Auckland2006_Pelagos2016.png",
+        )
+
+        _make_combined_location_mean_and_runs_plot(
+            data_by_location=data_by_location,
+            location_order=LOCATION_COMBINED_PLOT_NAMES,
+            mean_df_key="offnadir_mean_df",
+            runs_df_key="offnadir_runs_df",
+            x_column="offnadir_angle_deg",
+            metric=metric,
+            xlabel="Off-nadir angle [deg]",
+            title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency (Auckland2006 and Pelagos2016)",
+            output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean_and_runs_Auckland2006_Pelagos2016.png",
+        )
+
+    print(f"[OK] Combined Auckland2006 + Pelagos2016 plots written to: {output_root}")
+
+
 def _write_combined_comparison_plots(script_dir: Path, location_plot: str) -> None:
-    """Create combined comparison plots for one location across experiment groups."""
+    """Create combined comparison plots for one location."""
     base_results_root = _resolve_final_results_root(script_dir, "EXPERIMENTS")
     combined_root = base_results_root / f"plots_combined_{location_plot}"
     combined_root.mkdir(parents=True, exist_ok=True)
@@ -387,15 +729,17 @@ def _write_combined_comparison_plots(script_dir: Path, location_plot: str) -> No
         }
 
         for metric in METRICS:
-            _make_combined_comparison_plot(
-                data_by_experiment=time_delay_data_by_experiment,
-                experiment_order=experiment_names,
-                x_column="time_delay_min",
-                metric=metric,
-                xlabel="Latency [min]",
-                title=f"{metric} vs latency for TC1x1 at 40° off-nadir",
-                output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_comparison.png",
-            )
+            for variant in _get_time_delay_plot_variants(metric):
+                _make_combined_comparison_plot(
+                    data_by_experiment=time_delay_data_by_experiment,
+                    experiment_order=experiment_names,
+                    x_column="time_delay_min",
+                    metric=metric,
+                    xlabel="Latency [min]",
+                    title=f"{metric} vs latency for TC1x1 at 40° off-nadir{variant['title_suffix']}",
+                    output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_comparison{variant['file_suffix']}.png",
+                    y_unit_mode=variant["y_unit_mode"],
+                )
 
             _make_combined_comparison_plot(
                 data_by_experiment=offnadir_data_by_experiment,
@@ -426,7 +770,7 @@ def _write_combined_comparison_plots(script_dir: Path, location_plot: str) -> No
 
 
 def main() -> None:
-    """Create per-experiment TC1x1 plots and combined comparison plots."""
+    """Create per-experiment, per-location, combined-location, and combined-comparison plots."""
     script_dir = Path(__file__).resolve().parent
 
     for final_results in FINAL_RESULTS_LIST:
@@ -446,31 +790,14 @@ def main() -> None:
             if not overview_path.exists():
                 raise FileNotFoundError(f"Overview file does not exist: {overview_path}")
 
-            df_mean = _load_grouped_mean_table(overview_path)
-            df_runs = _load_all_cases_table(overview_path)
+            sweep_tables = _load_tc1x1_sweep_tables(overview_path)
 
-            df_mean_tc1x1 = _filter_tc1x1_grouped_mean(df_mean)
-            df_runs_tc1x1 = _filter_tc1x1_all_cases(df_runs)
-
-            if df_mean_tc1x1.empty:
-                raise ValueError("No grouped TC1x1 rows found in grouped_mean.")
-            if df_runs_tc1x1.empty:
-                raise ValueError("No seeded TC1x1 rows found in all_cases.")
-
-            time_delay_mean_df = df_mean_tc1x1[df_mean_tc1x1["offnadir_angle_deg"] == 40].copy()
-            offnadir_mean_df = df_mean_tc1x1[df_mean_tc1x1["time_delay_min"] == 5].copy()
-
-            time_delay_runs_df = df_runs_tc1x1[df_runs_tc1x1["offnadir_angle_deg"] == 40].copy()
-            offnadir_runs_df = df_runs_tc1x1[df_runs_tc1x1["time_delay_min"] == 5].copy()
-
-            if time_delay_mean_df.empty:
-                raise ValueError("No grouped TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40.")
-            if offnadir_mean_df.empty:
-                raise ValueError("No grouped TC1x1 rows found for off-nadir sweep with time_delay_min == 5.")
-            if time_delay_runs_df.empty:
-                raise ValueError("No seeded TC1x1 rows found for time-delay sweep with offnadir_angle_deg == 40.")
-            if offnadir_runs_df.empty:
-                raise ValueError("No seeded TC1x1 rows found for off-nadir sweep with time_delay_min == 5.")
+            df_mean_tc1x1 = sweep_tables["df_mean_tc1x1"]
+            df_runs_tc1x1 = sweep_tables["df_runs_tc1x1"]
+            time_delay_mean_df = sweep_tables["time_delay_mean_df"]
+            offnadir_mean_df = sweep_tables["offnadir_mean_df"]
+            time_delay_runs_df = sweep_tables["time_delay_runs_df"]
+            offnadir_runs_df = sweep_tables["offnadir_runs_df"]
 
             output_root = final_results_root / output_folder_name
             time_delay_output_dir = output_root / "time_delay_sweep"
@@ -501,14 +828,27 @@ def main() -> None:
             )
 
             for metric in METRICS:
-                _make_mean_only_plot(
-                    df_mean=time_delay_mean_df,
-                    x_column="time_delay_min",
-                    metric=metric,
-                    xlabel="Latency [min]",
-                    title=f"{metric} vs latency for TC1x1 at 40° off-nadir",
-                    output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean.png",
-                )
+                for variant in _get_time_delay_plot_variants(metric):
+                    _make_mean_only_plot(
+                        df_mean=time_delay_mean_df,
+                        x_column="time_delay_min",
+                        metric=metric,
+                        xlabel="Latency [min]",
+                        title=f"{metric} vs latency for TC1x1 at 40° off-nadir{variant['title_suffix']}",
+                        output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean{variant['file_suffix']}.png",
+                        y_unit_mode=variant["y_unit_mode"],
+                    )
+
+                    _make_mean_and_runs_plot(
+                        df_mean=time_delay_mean_df,
+                        df_runs=time_delay_runs_df,
+                        x_column="time_delay_min",
+                        metric=metric,
+                        xlabel="Latency [min]",
+                        title=f"{metric} vs latency for TC1x1 at 40° off-nadir{variant['title_suffix']}",
+                        output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean_and_runs{variant['file_suffix']}.png",
+                        y_unit_mode=variant["y_unit_mode"],
+                    )
 
                 _make_mean_only_plot(
                     df_mean=offnadir_mean_df,
@@ -517,16 +857,6 @@ def main() -> None:
                     xlabel="Off-nadir angle [deg]",
                     title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency",
                     output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean.png",
-                )
-
-                _make_mean_and_runs_plot(
-                    df_mean=time_delay_mean_df,
-                    df_runs=time_delay_runs_df,
-                    x_column="time_delay_min",
-                    metric=metric,
-                    xlabel="Latency [min]",
-                    title=f"{metric} vs latency for TC1x1 at 40° off-nadir",
-                    output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean_and_runs.png",
                 )
 
                 _make_mean_and_runs_plot(
@@ -548,6 +878,11 @@ def main() -> None:
             print(f"Off-nadir grouped rows: {len(offnadir_mean_df)}")
             print(f"Off-nadir seeded rows: {len(offnadir_runs_df)}")
             print(f"Plots written to: {output_root}")
+
+        _write_combined_location_plots(
+            script_dir=script_dir,
+            final_results=final_results,
+        )
 
     print("\n=============== Creating combined comparison plots ===============")
     for location_plot in LOCATION_PLOT_NAMES:

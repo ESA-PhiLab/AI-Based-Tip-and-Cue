@@ -18,24 +18,36 @@ EXTRACTED_COLUMNS = [
 
 METRIC_COLUMNS_FIRST = [
     "C_succ",
-    "E_e2e",
+    "C_succ_task",
     "L_mean_success_s",
     "V_mean_success_s",
+    "IoU_mean_success",
     "Q_mean_success",
-    "theta_mean_success_deg",
-    "overall_f1_detection",
+    "L_mean_task_success_s",
+    "V_mean_task_success_s",
+    "IoU_mean_task_success",
+    "Q_mean_task_success",
     "coco_ap50",
     "coco_ap50_95",
+    "detector_precision",
+    "detector_recall",
+    "detector_f1",
+    "avg_best_iou",
+    "avg_best_confidence",
+    "detector_score_threshold",
+    "detector_iou_threshold",
 ]
 
 METRIC_COLUMNS_SECOND = [
     "N_sat",
     "T_sim_hours",
+    "N_gt_overview",
     "N_gt",
-    "N_obs",
-    "N_positive_obs",
     "N_succ_detection_only",
     "N_succ",
+    "N_task",
+    "N_succ_task_detection_only",
+    "N_succ_task",
 ]
 
 ALL_METRIC_COLUMNS = METRIC_COLUMNS_FIRST + METRIC_COLUMNS_SECOND
@@ -43,24 +55,37 @@ ALL_METRIC_COLUMNS = METRIC_COLUMNS_FIRST + METRIC_COLUMNS_SECOND
 FINAL_METRIC_COLUMNS_FIRST = [
     "C_succ_sat",
     "C_succ_overall",
-    "E_e2e",
+    "C_succ_task_sat",
+    "C_succ_task_overall",
     "L_mean_success_s",
     "V_mean_success_s",
+    "IoU_mean_success",
     "Q_mean_success",
-    "theta_mean_success_deg",
-    "overall_f1_detection",
+    "L_mean_task_success_s",
+    "V_mean_task_success_s",
+    "IoU_mean_task_success",
+    "Q_mean_task_success",
     "coco_ap50",
     "coco_ap50_95",
+    "detector_precision",
+    "detector_recall",
+    "detector_f1",
+    "avg_best_iou",
+    "avg_best_confidence",
+    "detector_score_threshold",
+    "detector_iou_threshold",
 ]
 
 FINAL_METRIC_COLUMNS_SECOND = [
     "N_sat",
     "T_sim_hours",
+    "N_gt_overview",
     "N_gt",
-    "N_obs",
-    "N_positive_obs",
     "N_succ_detection_only",
     "N_succ",
+    "N_task",
+    "N_succ_task_detection_only",
+    "N_succ_task",
 ]
 
 FINAL_OUTPUT_METRIC_COLUMNS = FINAL_METRIC_COLUMNS_FIRST + FINAL_METRIC_COLUMNS_SECOND
@@ -238,17 +263,25 @@ def _safe_numeric_convert(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
 
 
 def _add_capacity_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Split C_succ into per-satellite and overall mission capacity."""
+    """Split whale and task capacity into per-satellite and overall mission capacity."""
     output = df.copy()
 
     if "C_succ" not in output.columns:
         output["C_succ"] = pd.NA
+    if "C_succ_task" not in output.columns:
+        output["C_succ_task"] = pd.NA
     if "N_sats_total" not in output.columns:
         output["N_sats_total"] = pd.NA
 
     output["C_succ_sat"] = pd.to_numeric(output["C_succ"], errors="coerce")
     output["C_succ_overall"] = (
         pd.to_numeric(output["C_succ_sat"], errors="coerce")
+        * pd.to_numeric(output["N_sats_total"], errors="coerce")
+    )
+
+    output["C_succ_task_sat"] = pd.to_numeric(output["C_succ_task"], errors="coerce")
+    output["C_succ_task_overall"] = (
+        pd.to_numeric(output["C_succ_task_sat"], errors="coerce")
         * pd.to_numeric(output["N_sats_total"], errors="coerce")
     )
 
@@ -341,21 +374,34 @@ def _build_overview_tables(row_dfs: list[pd.DataFrame], image_count_map: dict[st
         "n_images",
         "C_succ_sat",
         "C_succ_overall",
-        "E_e2e",
+        "C_succ_task_sat",
+        "C_succ_task_overall",
         "L_mean_success_s",
         "V_mean_success_s",
+        "IoU_mean_success",
         "Q_mean_success",
-        "theta_mean_success_deg",
-        "overall_f1_detection",
+        "L_mean_task_success_s",
+        "V_mean_task_success_s",
+        "IoU_mean_task_success",
+        "Q_mean_task_success",
         "coco_ap50",
         "coco_ap50_95",
+        "detector_precision",
+        "detector_recall",
+        "detector_f1",
+        "avg_best_iou",
+        "avg_best_confidence",
+        "detector_score_threshold",
+        "detector_iou_threshold",
         "N_sat",
         "T_sim_hours",
+        "N_gt_overview",
         "N_gt",
-        "N_obs",
-        "N_positive_obs",
         "N_succ_detection_only",
         "N_succ",
+        "N_task",
+        "N_succ_task_detection_only",
+        "N_succ_task",
     ]
 
     grouped_mean_df = (
@@ -378,19 +424,21 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     master_dir = script_dir.parent
 
-    final_results_list = ["reflection_offnadir_glint_255", "reflection_nadir_glint_255", "texture_offnadir_255", "texture_nadir_255"]
+    final_results_list = [
+        "reflection_offnadir_glint_255",
+        "reflection_nadir_glint_255",
+        "texture_offnadir_255",
+        "texture_nadir_255",
+    ]
 
     mode = "all"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
     overwrite_results = True
 
-
-
     for final_results in final_results_list:
-
         print(f"\n=============== Start processing {final_results} ===============")
 
-        final_results_folder_name =  "EXPERIMENTS/" + final_results
+        final_results_folder_name = "EXPERIMENTS/" + final_results
         final_results_root = master_dir / "0_results" / final_results_folder_name
 
         if not final_results_root.exists():

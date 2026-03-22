@@ -406,6 +406,56 @@ def _apply_stochastic_positive_sample_dropout(raw_predictions: list[dict[str, An
     return filtered_predictions, debug_info
 
 
+def _to_float_or_zero(value: object) -> float:
+    """Convert to float and return 0.0 on failure or NaN."""
+    try:
+        number = float(value)
+        if pd.isna(number):
+            return 0.0
+        return number
+    except Exception:
+        return 0.0
+
+
+def _build_gt_sample_rows_with_ann_id(image_name: str, image_id: int, evaluation_scores: dict[str, Any], gt_objects: list[dict[str, Any]], score_threshold: float, iou_threshold: float) -> list[dict[str, Any]]:
+    """Build enriched per-GT rows with stable annotation ids and valid-localization fields."""
+    raw_rows = gt_sample_summary_rows(
+        image_name=image_name,
+        image_id=image_id,
+        evaluation_scores=evaluation_scores,
+        score_threshold=score_threshold,
+        iou_threshold=iou_threshold,
+    )
+
+    ann_id_by_index = {idx: gt_obj["ann_id"] for idx, gt_obj in enumerate(gt_objects)}
+    enriched_rows: list[dict[str, Any]] = []
+
+    for row in raw_rows:
+        enriched_row = dict(row)
+
+        gt_index_raw = enriched_row.get("gt_index")
+        gt_index = int(gt_index_raw) if gt_index_raw is not None and not pd.isna(gt_index_raw) else None
+        gt_ann_id = ann_id_by_index.get(gt_index)
+
+        has_valid_localization = str(enriched_row.get("sample_status", "")).strip().lower() == "matched_tp"
+        valid_localization_iou = enriched_row.get("matched_iou")
+        valid_localization_score = enriched_row.get("matched_score")
+
+        if has_valid_localization and valid_localization_iou is None:
+            valid_localization_iou = enriched_row.get("best_prediction_iou")
+        if has_valid_localization and valid_localization_score is None:
+            valid_localization_score = enriched_row.get("best_prediction_score")
+
+        enriched_row["gt_ann_id"] = gt_ann_id
+        enriched_row["has_valid_localization"] = has_valid_localization
+        enriched_row["valid_localization_iou"] = valid_localization_iou
+        enriched_row["valid_localization_score"] = valid_localization_score
+
+        enriched_rows.append(enriched_row)
+
+    return enriched_rows
+
+
 def process_model_for_image_folder(
     model_name: str,
     best_stg_path: Path,
@@ -645,15 +695,17 @@ def process_model_for_image_folder(
                 evaluation_scores=individual_scores,
             )
         )
-        gt_sample_rows.extend(
-            gt_sample_summary_rows(
-                image_name=image_path.name,
-                image_id=image_id,
-                evaluation_scores=individual_scores,
-                score_threshold=individual_score_threshold,
-                iou_threshold=individual_iou_threshold,
-            )
+
+        current_gt_sample_rows = _build_gt_sample_rows_with_ann_id(
+            image_name=image_path.name,
+            image_id=image_id,
+            evaluation_scores=individual_scores,
+            gt_objects=gt_objects,
+            score_threshold=individual_score_threshold,
+            iou_threshold=individual_iou_threshold,
         )
+        gt_sample_rows.extend(current_gt_sample_rows)
+
         ap_predictions_iou50_rows.extend(
             prediction_details_to_rows(
                 image_name=image_path.name,
@@ -663,13 +715,15 @@ def process_model_for_image_folder(
         )
 
         if gt_boxes:
-            gt_best_ious = [float(item["best_prediction_iou"]) for item in individual_scores["gt_details"]]
-            gt_best_confidences = [
-                float(item["best_prediction_score"]) if item["best_prediction_score"] is not None else 0.0
-                for item in individual_scores["gt_details"]
-            ]
-            best_iou_for_sample = max(gt_best_ious) if gt_best_ious else 0.0
-            best_conf_for_sample = max(gt_best_confidences) if gt_best_confidences else 0.0
+            valid_rows = [row for row in current_gt_sample_rows if bool(row.get("has_valid_localization", False))]
+
+            if valid_rows:
+                best_iou_for_sample = max(_to_float_or_zero(row.get("valid_localization_iou")) for row in valid_rows)
+                best_conf_for_sample = max(_to_float_or_zero(row.get("valid_localization_score")) for row in valid_rows)
+            else:
+                best_iou_for_sample = max(_to_float_or_zero(row.get("best_prediction_iou")) for row in current_gt_sample_rows)
+                best_conf_for_sample = max(_to_float_or_zero(row.get("best_prediction_score")) for row in current_gt_sample_rows)
+
             positive_sample_best_ious.append(best_iou_for_sample)
             positive_sample_best_confidences.append(best_conf_for_sample)
             all_sample_best_ious.append(best_iou_for_sample)
@@ -830,7 +884,7 @@ def main() -> None:
     line_width = 15
 
     max_images: int | None = None
-    individual_score_threshold = 0.5 # 0.408785
+    individual_score_threshold = 0.408785
     individual_iou_threshold = 0.5
     ap_score_threshold = 0.0
 
