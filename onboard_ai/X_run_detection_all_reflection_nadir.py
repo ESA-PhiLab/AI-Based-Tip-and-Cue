@@ -57,6 +57,32 @@ def _prepare_output_dir(output_dir: Path, overwrite_results: bool) -> Path:
     return timestamped_output_dir
 
 
+def _find_existing_results_dir(output_dir: Path) -> Path | None:
+    """Return an existing completed results directory if found."""
+    candidate_dirs: list[Path] = []
+
+    if output_dir.exists() and output_dir.is_dir():
+        candidate_dirs.append(output_dir)
+
+    if output_dir.parent.exists():
+        candidate_dirs.extend(
+            sorted(
+                path
+                for path in output_dir.parent.glob(f"{output_dir.name}_*")
+                if path.is_dir()
+            )
+        )
+
+    for candidate_dir in candidate_dirs:
+        results_xlsx_path = candidate_dir / "onboard_detection_results.xlsx"
+        per_sample_xlsx_path = candidate_dir / "onboard_detection_per_sample.xlsx"
+
+        if results_xlsx_path.exists() and per_sample_xlsx_path.exists():
+            return candidate_dir
+
+    return None
+
+
 def _find_master_case_directories(master_results_root: Path) -> list[Path]:
     """Return all scenario/case directories inside the master results folder."""
     case_dirs = [path for path in master_results_root.iterdir() if path.is_dir()]
@@ -878,6 +904,7 @@ def main() -> None:
     mode = "all"
     distinct_locations = ["Auckland2006", "Pelagos2016"]
     overwrite_results = True
+    skip_existing_results = True
 
     device = "cpu"
     render_scale = 10
@@ -955,6 +982,7 @@ def main() -> None:
     print(f"Config: {config_path}")
     print(f"Location overview path: {location_overview_path}")
     print(f"Apply off-nadir success dropout: {apply_offnadir_success_dropout}")
+    print(f"Skip jobs with existing results: {skip_existing_results}")
     print(f"Random seed: {RANDOM_SEED}")
     print(f"Found {len(case_dirs)} case folders inside {master_results_root}.")
     print(f"Resolved {len(all_jobs)} image folder jobs.")
@@ -978,6 +1006,16 @@ def main() -> None:
         output_root_dir = case_dir / str(job["output_dir_name"])
         anns_path = image_folder_path / "annotations_postprocessed.json"
         folder_label = str(job["label"])
+
+        existing_results_dir = _find_existing_results_dir(output_root_dir) if skip_existing_results else None
+        if existing_results_dir is not None:
+            skipped += 1
+            print(f"\n\n[{current_job}/{total_jobs}] Skipping model: {model_name}")
+            print(f"Case: {case_dir.name}")
+            print(f"Dataset: {image_folder_path.name}")
+            print(f"Folder label: {folder_label}")
+            print(f"[SKIP] Existing results found in: {existing_results_dir}")
+            continue
 
         if not anns_path.exists():
             raise FileNotFoundError(f"Annotations file does not exist: {anns_path}")

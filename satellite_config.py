@@ -2,9 +2,7 @@
 # Data only. No functions here.
 
 
-
-
-generate_constellation = False       # True  -> Walker constellation mode, False -> Independent per-satellite mode
+generate_constellation = True      # True  -> Walker constellation mode, False -> Independent per-satellite mode
 
 offnadir_limit_deg = 40.0
 
@@ -12,8 +10,6 @@ offnadir_limit_deg = 40.0
 time_delay_tip_cue = 1 * 60
 nPlanes = 1
 nSats = 1
-
-
 
 SATELLITE_MODE = {
     "Tip": generate_constellation,

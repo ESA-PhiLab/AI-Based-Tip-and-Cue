@@ -23,11 +23,13 @@ def _to_bool(value: object) -> bool:
     text = str(value).strip().lower()
     return text in {"true", "1", "yes", "y", "whale", "positive"}
 
+
 def _coerce_bool_series(df: pd.DataFrame, column_name: str, default: bool = False) -> pd.Series:
     """Return a boolean Series from a mixed or missing dataframe column."""
     if column_name not in df.columns:
         return pd.Series(default, index=df.index, dtype=bool)
     return df[column_name].apply(lambda value: default if pd.isna(value) else _to_bool(value)).astype(bool)
+
 
 def _find_case_directories(master_results_root: Path) -> list[Path]:
     """Return all case directories inside the master results folder."""
@@ -86,6 +88,11 @@ def _find_required_workbook(path: Path) -> Path:
     return path
 
 
+def _has_existing_benchmark(benchmark_path: Path) -> bool:
+    """Return True when the benchmark workbook already exists."""
+    return benchmark_path.exists() and benchmark_path.is_file()
+
+
 def _read_sheet_with_aliases(xlsx_path: Path, aliases: list[str]) -> pd.DataFrame:
     """Read a sheet by trying multiple normalized alias names."""
     excel_file = pd.ExcelFile(xlsx_path)
@@ -136,14 +143,14 @@ def _to_float(value: object) -> float | None:
 
 
 def _extract_total_satellites_from_case_name(case_name: str) -> int | None:
-    """Extract total satellites from case name like TC_4x2sat_... or C_8x2sat_... ."""
+    """Extract total satellite count from case name, counting Tip and Cue separately for TC cases."""
     case_name = str(case_name)
 
-    tc_match = re.match(r"^TC_(\d+)x(\d+)sat_", case_name)
+    tc_match = re.match(r"^TC_(\d+)x(\d+)sat(?:_|$)", case_name)
     if tc_match:
         n_orbits = int(tc_match.group(1))
-        n_sats_per_orbit = int(tc_match.group(2))
-        return n_orbits * n_sats_per_orbit
+        n_pairs_per_orbit = int(tc_match.group(2))
+        return n_orbits * n_pairs_per_orbit * 2
 
     c_match = re.match(r"^C_(\d+)x(\d+)sat(?:_|$)", case_name)
     if c_match:
@@ -198,6 +205,26 @@ def _parse_datetime_column(df: pd.DataFrame, column_name: str) -> pd.Series:
         parsed.loc[remaining_mask] = parsed_part
 
     return parsed
+
+
+def _count_unique_non_null(df: pd.DataFrame, column_name: str) -> int:
+    """Count unique non-null values in one column."""
+    if column_name not in df.columns:
+        return 0
+    return int(df[column_name].dropna().nunique())
+
+
+def _count_unique_combinations(df: pd.DataFrame, columns: list[str]) -> int:
+    """Count unique non-null combinations across columns."""
+    existing_columns = [column for column in columns if column in df.columns]
+    if not existing_columns:
+        return 0
+
+    if len(existing_columns) == 1:
+        return _count_unique_non_null(df, existing_columns[0])
+
+    work_df = df[existing_columns].dropna(subset=existing_columns).drop_duplicates(subset=existing_columns)
+    return int(len(work_df))
 
 
 def _build_task_base_df(combined_df: pd.DataFrame, dataset_df: pd.DataFrame) -> pd.DataFrame:
@@ -439,9 +466,11 @@ def _collapse_task_event_df_to_unique_events(task_event_df: pd.DataFrame) -> pd.
     work_df["candidate_confidence_num"] = pd.to_numeric(work_df.get("candidate_confidence_num"), errors="coerce")
     work_df["candidate_iou_num"] = pd.to_numeric(work_df.get("candidate_iou_num"), errors="coerce")
     work_df["successful_detection_task"] = _coerce_bool_series(work_df, "successful_detection_task", default=False)
-    work_df["successful_detection_task_without_latency"] = _coerce_bool_series(work_df,
-                                                                               "successful_detection_task_without_latency",
-                                                                               default=False)
+    work_df["successful_detection_task_without_latency"] = _coerce_bool_series(
+        work_df,
+        "successful_detection_task_without_latency",
+        default=False,
+    )
     work_df["score_sort"] = work_df["candidate_confidence_num"].fillna(-1.0)
     work_df["iou_sort"] = work_df["candidate_iou_num"].fillna(-1.0)
     work_df["succ_sort"] = work_df["successful_detection_task"].astype(int)
@@ -469,9 +498,11 @@ def _collapse_whale_event_df_to_unique_whales(whale_event_df: pd.DataFrame) -> p
     work_df["valid_localization_confidence_num"] = pd.to_numeric(work_df.get("valid_localization_confidence_num"), errors="coerce")
     work_df["valid_localization_iou_num"] = pd.to_numeric(work_df.get("valid_localization_iou_num"), errors="coerce")
     work_df["successful_detection_whale"] = _coerce_bool_series(work_df, "successful_detection_whale", default=False)
-    work_df["successful_detection_whale_without_latency"] = _coerce_bool_series(work_df,
-                                                                                "successful_detection_whale_without_latency",
-                                                                                default=False)
+    work_df["successful_detection_whale_without_latency"] = _coerce_bool_series(
+        work_df,
+        "successful_detection_whale_without_latency",
+        default=False,
+    )
     work_df["score_sort"] = work_df["valid_localization_confidence_num"].fillna(-1.0)
     work_df["iou_sort"] = work_df["valid_localization_iou_num"].fillna(-1.0)
     work_df["succ_sort"] = work_df["successful_detection_whale"].astype(int)
@@ -515,6 +546,36 @@ def _extract_detection_metric(overall_detection_stats_df: pd.DataFrame, *metric_
     return None
 
 
+def _count_cue_tasks_received(task_event_unique_df: pd.DataFrame, fallback_count: int) -> int:
+    """Count Cue tasks received from task table."""
+    if "detection_id" not in task_event_unique_df.columns:
+        return fallback_count
+
+    if "cue_actor" in task_event_unique_df.columns:
+        received_df = task_event_unique_df.loc[task_event_unique_df["cue_actor"].notna()].copy()
+        return int(received_df["detection_id"].dropna().nunique())
+
+    return fallback_count
+
+
+def _count_cue_tasks_handled(task_event_unique_df: pd.DataFrame, fallback_count: int) -> int:
+    """Count Cue tasks handled from task table."""
+    if "detection_id" not in task_event_unique_df.columns:
+        return fallback_count
+
+    handled_mask = pd.Series(False, index=task_event_unique_df.index)
+
+    for column_name in ["saved_image", "cue_observation_time", "cue_confirmation_time"]:
+        if column_name in task_event_unique_df.columns:
+            handled_mask = handled_mask | task_event_unique_df[column_name].notna()
+
+    if handled_mask.any():
+        handled_df = task_event_unique_df.loc[handled_mask].copy()
+        return int(handled_df["detection_id"].dropna().nunique())
+
+    return fallback_count
+
+
 def _build_benchmark_overview(
     case_name: str,
     variant_label: str,
@@ -522,13 +583,14 @@ def _build_benchmark_overview(
     detection_results_workbook: Path,
     detection_per_sample_workbook: Path,
     overview_df: pd.DataFrame,
+    combined_df: pd.DataFrame,
     run_summary_df: pd.DataFrame,
     overall_detection_stats_df: pd.DataFrame,
     task_event_df: pd.DataFrame,
     whale_event_df: pd.DataFrame,
     tau_max_seconds: float | None,
 ) -> pd.DataFrame:
-    """Build tidy benchmark overview rows with whale-based primary metrics and task-based supplementary metrics."""
+    """Build tidy benchmark overview rows with mission, task, whale, and geometry metrics."""
     n_sat_from_name = _extract_total_satellites_from_case_name(case_name)
     n_sat_from_overview = _to_float(_extract_overview_value(overview_df, "Number of satellites"))
     n_sat = float(n_sat_from_name) if n_sat_from_name is not None else n_sat_from_overview
@@ -538,6 +600,17 @@ def _build_benchmark_overview(
     task_event_unique_df = _collapse_task_event_df_to_unique_events(task_event_df)
     whale_event_unique_df = _collapse_whale_event_df_to_unique_whales(whale_event_df)
 
+    n_mission_task = _count_unique_non_null(combined_df, "detection_id")
+    if "detection_id" in combined_df.columns and "target_id" in combined_df.columns:
+        n_mission = _count_unique_combinations(combined_df, ["detection_id", "target_id"])
+    elif "detection_id" in combined_df.columns:
+        n_mission = _count_unique_non_null(combined_df, "detection_id")
+    else:
+        n_mission = int(len(combined_df))
+
+    n_cue_task_received = _count_cue_tasks_received(task_event_unique_df, fallback_count=n_mission_task)
+    n_cue_task_handled = _count_cue_tasks_handled(task_event_unique_df, fallback_count=n_mission_task)
+
     n_task = int(task_event_unique_df["detection_id"].nunique()) if "detection_id" in task_event_unique_df.columns else int(len(task_event_unique_df))
     n_succ_task = int(task_event_unique_df["successful_detection_task"].fillna(False).sum()) if "successful_detection_task" in task_event_unique_df.columns else 0
     n_succ_task_no_latency = int(task_event_unique_df["successful_detection_task_without_latency"].fillna(False).sum()) if "successful_detection_task_without_latency" in task_event_unique_df.columns else 0
@@ -546,23 +619,50 @@ def _build_benchmark_overview(
     n_succ = int(whale_event_unique_df["successful_detection_whale"].fillna(False).sum()) if "successful_detection_whale" in whale_event_unique_df.columns else 0
     n_succ_no_latency = int(whale_event_unique_df["successful_detection_whale_without_latency"].fillna(False).sum()) if "successful_detection_whale_without_latency" in whale_event_unique_df.columns else 0
 
+    c_mission_task = None
+    c_mission = None
+    c_cue_task_received = None
+    c_cue_task_handled = None
     c_succ = None
     c_succ_task = None
+
     if n_sat is not None and t_sim_hours is not None and n_sat > 0:
         t_sim_days = t_sim_hours / 24.0
         if t_sim_days > 0:
+            c_mission_task = n_mission_task / (n_sat * t_sim_days)
+            c_mission = n_mission / (n_sat * t_sim_days)
+            c_cue_task_received = n_cue_task_received / (n_sat * t_sim_days)
+            c_cue_task_handled = n_cue_task_handled / (n_sat * t_sim_days)
             c_succ = n_succ / (n_sat * t_sim_days)
             c_succ_task = n_succ_task / (n_sat * t_sim_days)
 
-    l_mean_success = _to_float(whale_event_unique_df.loc[whale_event_unique_df["successful_detection_whale"], "latency_for_benchmark_s"].mean()) if "successful_detection_whale" in whale_event_unique_df.columns else None
-    v_mean_success = _to_float(whale_event_unique_df.loc[whale_event_unique_df["successful_detection_whale"], "viewing_time_s"].mean()) if "successful_detection_whale" in whale_event_unique_df.columns else None
-    iou_mean_success = _to_float(whale_event_unique_df.loc[whale_event_unique_df["successful_detection_whale"], "valid_localization_iou_num"].mean()) if "successful_detection_whale" in whale_event_unique_df.columns else None
-    q_mean_success = _to_float(whale_event_unique_df.loc[whale_event_unique_df["successful_detection_whale"], "valid_localization_confidence_num"].mean()) if "successful_detection_whale" in whale_event_unique_df.columns else None
+    offnadir_observed_mean_deg = _to_float(task_event_unique_df["offnadir_deg_num"].mean()) if "offnadir_deg_num" in task_event_unique_df.columns else None
 
-    l_mean_task_success = _to_float(task_event_unique_df.loc[task_event_unique_df["successful_detection_task"], "latency_for_benchmark_s"].mean()) if "successful_detection_task" in task_event_unique_df.columns else None
-    v_mean_task_success = _to_float(task_event_unique_df.loc[task_event_unique_df["successful_detection_task"], "viewing_time_s"].mean()) if "successful_detection_task" in task_event_unique_df.columns else None
-    iou_mean_task_success = _to_float(task_event_unique_df.loc[task_event_unique_df["successful_detection_task"], "candidate_iou_num"].mean()) if "successful_detection_task" in task_event_unique_df.columns else None
-    q_mean_task_success = _to_float(task_event_unique_df.loc[task_event_unique_df["successful_detection_task"], "candidate_confidence_num"].mean()) if "successful_detection_task" in task_event_unique_df.columns else None
+    l_mean_success = _to_float(
+        whale_event_unique_df.loc[whale_event_unique_df["successful_detection_whale"], "latency_for_benchmark_s"].mean()
+    ) if "successful_detection_whale" in whale_event_unique_df.columns else None
+    v_mean_success = _to_float(
+        whale_event_unique_df.loc[whale_event_unique_df["successful_detection_whale"], "viewing_time_s"].mean()
+    ) if "successful_detection_whale" in whale_event_unique_df.columns else None
+    iou_mean_success = _to_float(
+        whale_event_unique_df.loc[whale_event_unique_df["successful_detection_whale"], "valid_localization_iou_num"].mean()
+    ) if "successful_detection_whale" in whale_event_unique_df.columns else None
+    q_mean_success = _to_float(
+        whale_event_unique_df.loc[whale_event_unique_df["successful_detection_whale"], "valid_localization_confidence_num"].mean()
+    ) if "successful_detection_whale" in whale_event_unique_df.columns else None
+
+    l_mean_task_success = _to_float(
+        task_event_unique_df.loc[task_event_unique_df["successful_detection_task"], "latency_for_benchmark_s"].mean()
+    ) if "successful_detection_task" in task_event_unique_df.columns else None
+    v_mean_task_success = _to_float(
+        task_event_unique_df.loc[task_event_unique_df["successful_detection_task"], "viewing_time_s"].mean()
+    ) if "successful_detection_task" in task_event_unique_df.columns else None
+    iou_mean_task_success = _to_float(
+        task_event_unique_df.loc[task_event_unique_df["successful_detection_task"], "candidate_iou_num"].mean()
+    ) if "successful_detection_task" in task_event_unique_df.columns else None
+    q_mean_task_success = _to_float(
+        task_event_unique_df.loc[task_event_unique_df["successful_detection_task"], "candidate_confidence_num"].mean()
+    ) if "successful_detection_task" in task_event_unique_df.columns else None
 
     coco_ap50 = _to_float(_extract_run_summary_value(run_summary_df, "coco_ap50", "coco ap50"))
     coco_ap50_95 = _to_float(_extract_run_summary_value(run_summary_df, "coco_ap50_95", "coco ap50 95", "coco_ap50:95"))
@@ -595,21 +695,9 @@ def _build_benchmark_overview(
         )
     )
 
-    detector_precision = _extract_detection_metric(
-        overall_detection_stats_df,
-        "overall_precision",
-        "precision",
-    )
-    detector_recall = _extract_detection_metric(
-        overall_detection_stats_df,
-        "overall_recall",
-        "recall",
-    )
-    detector_f1 = _extract_detection_metric(
-        overall_detection_stats_df,
-        "overall_f1",
-        "f1",
-    )
+    detector_precision = _extract_detection_metric(overall_detection_stats_df, "overall_precision", "precision")
+    detector_recall = _extract_detection_metric(overall_detection_stats_df, "overall_recall", "recall")
+    detector_f1 = _extract_detection_metric(overall_detection_stats_df, "overall_f1", "f1")
 
     rows = [
         {"metric": "case_name", "value": case_name, "comment": None},
@@ -623,6 +711,14 @@ def _build_benchmark_overview(
         {"metric": "N_sat", "value": n_sat, "comment": "Number of satellites"},
         {"metric": "T_sim_hours", "value": t_sim_hours, "comment": "Simulation time in hours"},
         {"metric": "N_gt_overview", "value": n_gt_overview, "comment": "Total targets from mission overview"},
+        {"metric": "N_mission_task", "value": n_mission_task, "comment": "Total unique mission task events from simulation results"},
+        {"metric": "C_mission_task", "value": c_mission_task, "comment": "Mission task events per satellite per simulated day"},
+        {"metric": "N_mission", "value": n_mission, "comment": "Total mission whale detections from simulation results"},
+        {"metric": "C_mission", "value": c_mission, "comment": "Mission whale detections per satellite per simulated day"},
+        {"metric": "N_cue_task_received", "value": n_cue_task_received, "comment": "Cue tasks received by Cue satellites"},
+        {"metric": "C_cue_task_received", "value": c_cue_task_received, "comment": "Cue tasks received per satellite per simulated day"},
+        {"metric": "N_cue_task_handled", "value": n_cue_task_handled, "comment": "Cue tasks handled by Cue satellites before correctness filtering"},
+        {"metric": "C_cue_task_handled", "value": c_cue_task_handled, "comment": "Cue tasks handled per satellite per simulated day"},
         {"metric": "N_gt", "value": n_gt, "comment": "Total GT whales present in all evaluated Cue images"},
         {"metric": "N_succ_detection_only", "value": n_succ_no_latency, "comment": "GT whales with at least one valid retained localization, ignoring latency"},
         {"metric": "N_succ", "value": n_succ, "comment": "GT whales with at least one valid retained localization and latency filter passes"},
@@ -631,7 +727,8 @@ def _build_benchmark_overview(
         {"metric": "V_mean_success_s", "value": v_mean_success, "comment": "Mean viewing time over successful whale detections"},
         {"metric": "IoU_mean_success", "value": iou_mean_success, "comment": "Mean IoU over successful whale detections"},
         {"metric": "Q_mean_success", "value": q_mean_success, "comment": "Mean confidence over successful whale detections"},
-        {"metric": "N_task", "value": n_task, "comment": "Number of Cue tasks / generated Cue images"},
+        {"metric": "N_task", "value": n_task, "comment": "Number of Cue tasks represented in the task_event table"},
+        {"metric": "offnadir_observed_mean_deg", "value": offnadir_observed_mean_deg, "comment": "Mean observed off-nadir angle over unique Cue task events"},
         {"metric": "N_succ_task_detection_only", "value": n_succ_task_no_latency, "comment": "Tasks with at least one valid retained whale localization in the task image, ignoring latency"},
         {"metric": "N_succ_task", "value": n_succ_task, "comment": "Tasks with at least one valid retained whale localization in the task image and latency filter passes"},
         {"metric": "C_succ_task", "value": c_succ_task, "comment": "Successful task confirmations per satellite per simulated day"},
@@ -701,11 +798,11 @@ def _write_benchmark_workbook(
     detection_image_summary_df: pd.DataFrame | None,
     gt_sample_df: pd.DataFrame,
     overwrite_results: bool,
-) -> None:
+) -> bool:
     """Write benchmark workbook with overview and source sheets."""
     if benchmark_path.exists() and not overwrite_results:
         print(f"[SKIP] Benchmark already exists and overwrite_results=False: {benchmark_path}")
-        return
+        return False
 
     workbook = Workbook()
     workbook.remove(workbook.active)
@@ -728,6 +825,7 @@ def _write_benchmark_workbook(
 
     benchmark_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(benchmark_path)
+    return True
 
 
 def process_case_variant(
@@ -736,9 +834,16 @@ def process_case_variant(
     detection_dir: Path,
     benchmark_filename: str,
     overwrite_results: bool,
+    skip_existing_results: bool,
     tau_max_seconds: float | None,
-) -> None:
+) -> bool:
     """Process one case and one variant into one benchmark workbook."""
+    benchmark_path = case_dir / benchmark_filename
+
+    if skip_existing_results and _has_existing_benchmark(benchmark_path):
+        print(f"[SKIP] Existing benchmark found: {benchmark_path}")
+        return False
+
     mission_workbook = _find_mission_results_workbook(case_dir)
     detection_results_workbook = _find_required_workbook(detection_dir / "onboard_detection_results.xlsx")
     detection_per_sample_workbook = _find_required_workbook(detection_dir / "onboard_detection_per_sample.xlsx")
@@ -757,11 +862,7 @@ def process_case_variant(
     except Exception:
         detection_image_summary_df = None
 
-    task_base_df = _build_task_base_df(
-        combined_df=combined_df,
-        dataset_df=dataset_df,
-    )
-
+    task_base_df = _build_task_base_df(combined_df=combined_df, dataset_df=dataset_df)
     detection_image_df = _aggregate_detection_per_image(gt_sample_df)
 
     task_event_df = _build_task_event_table(
@@ -785,6 +886,7 @@ def process_case_variant(
         detection_results_workbook=detection_results_workbook,
         detection_per_sample_workbook=detection_per_sample_workbook,
         overview_df=overview_df,
+        combined_df=combined_df,
         run_summary_df=detection_run_summary_df,
         overall_detection_stats_df=overall_detection_stats_df,
         task_event_df=task_event_df,
@@ -792,9 +894,7 @@ def process_case_variant(
         tau_max_seconds=tau_max_seconds,
     )
 
-    benchmark_path = case_dir / benchmark_filename
-
-    _write_benchmark_workbook(
+    written = _write_benchmark_workbook(
         benchmark_path=benchmark_path,
         benchmark_overview_df=benchmark_overview_df,
         whale_event_df=whale_event_df,
@@ -811,7 +911,10 @@ def process_case_variant(
         overwrite_results=overwrite_results,
     )
 
-    print(f"[OK] Wrote benchmark: {benchmark_path}")
+    if written:
+        print(f"[OK] Wrote benchmark: {benchmark_path}")
+
+    return written
 
 
 def main() -> None:
@@ -819,12 +922,17 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     master_dir = script_dir.parent
 
-    master_results_list = ["reflection_offnadir_glint_255", "reflection_nadir_glint_255", "texture_offnadir_255", "texture_nadir_255"]
+    master_results_list = [
+        "reflection_offnadir_glint_255",
+        "reflection_nadir_glint_255",
+        "texture_offnadir_255",
+        "texture_nadir_255",
+    ]
     mode = "all"
 
     distinct_locations = ["Auckland2006", "Pelagos2016"]
     overwrite_results = True
-
+    skip_existing_results = True
     tau_max_seconds: float | None = None
 
     for master_results in master_results_list:
@@ -858,6 +966,8 @@ def main() -> None:
         print(f"Found {len(case_dirs)} case folders.")
         print(f"Resolved {len(all_jobs)} benchmark jobs.")
         print(f"Mode: {mode}")
+        print(f"overwrite_results: {overwrite_results}")
+        print(f"skip_existing_results: {skip_existing_results}")
         print(f"tau_max_seconds: {tau_max_seconds}")
         print()
 
@@ -874,15 +984,19 @@ def main() -> None:
             print(f"\n[{index}/{len(all_jobs)}] Case: {case_dir.name} | Variant: {variant_label}")
 
             try:
-                process_case_variant(
+                was_written = process_case_variant(
                     case_dir=case_dir,
                     variant_label=variant_label,
                     detection_dir=detection_dir,
                     benchmark_filename=benchmark_filename,
                     overwrite_results=overwrite_results,
+                    skip_existing_results=skip_existing_results,
                     tau_max_seconds=tau_max_seconds,
                 )
-                processed += 1
+                if was_written:
+                    processed += 1
+                else:
+                    skipped += 1
             except FileNotFoundError as exc:
                 skipped += 1
                 print(f"[SKIP] {case_dir.name} | {variant_label}: {exc}")

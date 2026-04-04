@@ -25,7 +25,7 @@ img_path = os.path.join(images_folder, img_file)
 anns_folder = "dataset/create_dataset/"
 anns_path = os.path.join(anns_folder, "final_annotations.json")
 
-real_run = True
+real_run = False
 
 if real_run:
     print_values = False
@@ -48,7 +48,7 @@ else:
 
 
 t0 = datetime(2025, 9, 20, 2, 33, 39, tzinfo=timezone.utc)
-whale_seed = 17
+whale_seed = 42
 
 if not real_run:
     t0 += timedelta(seconds=-3 * 60)
@@ -226,7 +226,7 @@ alpha_stab_res = alpha_max_rad / 10
 if real_run:
     n_targets = 500
 else:
-    n_targets = 3000
+    n_targets = 10000
 
 
 pos_fraction = 1.0

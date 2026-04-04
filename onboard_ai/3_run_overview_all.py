@@ -16,11 +16,25 @@ EXTRACTED_COLUMNS = [
     "time_delay_min",
 ]
 
+RAW_CAPACITY_COLUMNS = [
+    "C_mission_task",
+    "C_mission",
+    "C_cue_task_received",
+    "C_cue_task_handled",
+    "C_succ",
+    "C_succ_task",
+]
+
 METRIC_COLUMNS_FIRST = [
+    "C_mission_task",
+    "C_mission",
+    "C_cue_task_received",
+    "C_cue_task_handled",
     "C_succ",
     "C_succ_task",
     "L_mean_success_s",
     "V_mean_success_s",
+    "offnadir_observed_mean_deg",
     "IoU_mean_success",
     "Q_mean_success",
     "L_mean_task_success_s",
@@ -42,6 +56,10 @@ METRIC_COLUMNS_SECOND = [
     "N_sat",
     "T_sim_hours",
     "N_gt_overview",
+    "N_mission_task",
+    "N_mission",
+    "N_cue_task_received",
+    "N_cue_task_handled",
     "N_gt",
     "N_succ_detection_only",
     "N_succ",
@@ -53,12 +71,21 @@ METRIC_COLUMNS_SECOND = [
 ALL_METRIC_COLUMNS = METRIC_COLUMNS_FIRST + METRIC_COLUMNS_SECOND
 
 FINAL_METRIC_COLUMNS_FIRST = [
+    "C_mission_task_sat",
+    "C_mission_task_overall",
+    "C_mission_sat",
+    "C_mission_overall",
+    "C_cue_task_received_sat",
+    "C_cue_task_received_overall",
+    "C_cue_task_handled_sat",
+    "C_cue_task_handled_overall",
     "C_succ_sat",
     "C_succ_overall",
     "C_succ_task_sat",
     "C_succ_task_overall",
     "L_mean_success_s",
     "V_mean_success_s",
+    "offnadir_observed_mean_deg",
     "IoU_mean_success",
     "Q_mean_success",
     "L_mean_task_success_s",
@@ -80,6 +107,10 @@ FINAL_METRIC_COLUMNS_SECOND = [
     "N_sat",
     "T_sim_hours",
     "N_gt_overview",
+    "N_mission_task",
+    "N_mission",
+    "N_cue_task_received",
+    "N_cue_task_handled",
     "N_gt",
     "N_succ_detection_only",
     "N_succ",
@@ -166,27 +197,51 @@ def _read_benchmark_overview_sheet(xlsx_path: Path) -> pd.DataFrame:
 
 
 def _extract_seed_group(case_name: str) -> str:
-    """Remove trailing seed suffix like _1sd, _17sd, _42sd from a case name."""
-    return re.sub(r"_\d+sd$", "", str(case_name))
+    """Remove seed token like _1sd or _17sd even when followed by more suffixes."""
+    return re.sub(r"_\d+sd(?=_|$)", "", str(case_name))
+
+
+def _to_number_or_none(value: object) -> float | None:
+    """Convert scalar-like values to float or return None."""
+    try:
+        number = pd.to_numeric(value, errors="coerce")
+    except Exception:
+        return None
+
+    if pd.isna(number):
+        return None
+
+    return float(number)
+
+
+def _first_not_none(*values: object) -> object:
+    """Return the first non-missing value."""
+    for value in values:
+        if value is None:
+            continue
+        if pd.isna(value):
+            continue
+        return value
+    return None
 
 
 def _extract_case_parameters(case_name: str) -> dict[str, object]:
-    """Extract satellite count, off-nadir angle, and delay from grouped case name."""
-    case_name = str(case_name)
+    """Extract fallback parameters from grouped case name."""
+    case_name = _extract_seed_group(str(case_name))
 
-    tc_match = re.match(r"^TC_(\d+)x(\d+)sat_(\d+)deg_(\d+)min$", case_name)
+    tc_match = re.match(r"^TC_(\d+)x(\d+)sat(?:_(\d+)deg)?(?:_(\d+)min)?(?:_|$)", case_name)
     if tc_match:
         n_orbits = int(tc_match.group(1))
-        n_sats_per_orbit = int(tc_match.group(2))
-        offnadir_angle_deg = int(tc_match.group(3))
-        time_delay_min = int(tc_match.group(4))
+        n_pairs_per_orbit = int(tc_match.group(2))
+        offnadir_angle_deg = int(tc_match.group(3)) if tc_match.group(3) is not None else None
+        time_delay_min = int(tc_match.group(4)) if tc_match.group(4) is not None else None
         return {
-            "N_sats_total": n_orbits * n_sats_per_orbit,
+            "N_sats_total": n_orbits * n_pairs_per_orbit * 2,
             "offnadir_angle_deg": offnadir_angle_deg,
             "time_delay_min": time_delay_min,
         }
 
-    c_match = re.match(r"^C_(\d+)x(\d+)sat$", case_name)
+    c_match = re.match(r"^C_(\d+)x(\d+)sat(?:_|$)", case_name)
     if c_match:
         n_orbits = int(c_match.group(1))
         n_sats_per_orbit = int(c_match.group(2))
@@ -200,6 +255,26 @@ def _extract_case_parameters(case_name: str) -> dict[str, object]:
         "N_sats_total": None,
         "offnadir_angle_deg": None,
         "time_delay_min": None,
+    }
+
+
+def _extract_case_parameters_from_row(row: pd.Series, source_case_column: str) -> dict[str, object]:
+    """Extract parameters using workbook values first and case-name parsing as fallback."""
+    case_name = str(row.get(source_case_column, ""))
+    parsed = _extract_case_parameters(case_name)
+
+    n_sats_from_excel = _first_not_none(
+        _to_number_or_none(row.get("N_sats_total")),
+        _to_number_or_none(row.get("N_sat")),
+    )
+
+    offnadir_from_excel = _to_number_or_none(row.get("offnadir_angle_deg"))
+    time_delay_from_excel = _to_number_or_none(row.get("time_delay_min"))
+
+    return {
+        "N_sats_total": _first_not_none(n_sats_from_excel, parsed["N_sats_total"]),
+        "offnadir_angle_deg": _first_not_none(offnadir_from_excel, parsed["offnadir_angle_deg"]),
+        "time_delay_min": _first_not_none(time_delay_from_excel, parsed["time_delay_min"]),
     }
 
 
@@ -242,7 +317,11 @@ def _build_case_group_to_image_count(case_dirs: list[Path], label: str) -> dict[
 def _add_extracted_columns(df: pd.DataFrame, source_case_column: str, image_count_map: dict[str, int | None]) -> pd.DataFrame:
     """Add extracted numerical columns next to the case column."""
     output = df.copy()
-    extracted_series = output[source_case_column].astype(str).apply(_extract_case_parameters)
+
+    extracted_series = output.apply(
+        lambda row: _extract_case_parameters_from_row(row=row, source_case_column=source_case_column),
+        axis=1,
+    )
     extracted_df = pd.DataFrame(list(extracted_series), index=output.index)
 
     for column in EXTRACTED_COLUMNS:
@@ -262,28 +341,33 @@ def _safe_numeric_convert(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return output
 
 
+def _add_one_capacity_pair(output: pd.DataFrame, raw_column: str, total_sat_column: str) -> pd.DataFrame:
+    """Create _sat and _overall capacity columns from one raw capacity column."""
+    sat_column = f"{raw_column}_sat"
+    overall_column = f"{raw_column}_overall"
+
+    if raw_column not in output.columns:
+        output[raw_column] = pd.NA
+    if total_sat_column not in output.columns:
+        output[total_sat_column] = pd.NA
+
+    output[sat_column] = pd.to_numeric(output[raw_column], errors="coerce")
+    output[overall_column] = (
+        pd.to_numeric(output[sat_column], errors="coerce")
+        * pd.to_numeric(output[total_sat_column], errors="coerce")
+    )
+    return output
+
+
 def _add_capacity_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Split whale and task capacity into per-satellite and overall mission capacity."""
+    """Split capacity metrics into per-satellite and overall mission capacity."""
     output = df.copy()
 
-    if "C_succ" not in output.columns:
-        output["C_succ"] = pd.NA
-    if "C_succ_task" not in output.columns:
-        output["C_succ_task"] = pd.NA
     if "N_sats_total" not in output.columns:
         output["N_sats_total"] = pd.NA
 
-    output["C_succ_sat"] = pd.to_numeric(output["C_succ"], errors="coerce")
-    output["C_succ_overall"] = (
-        pd.to_numeric(output["C_succ_sat"], errors="coerce")
-        * pd.to_numeric(output["N_sats_total"], errors="coerce")
-    )
-
-    output["C_succ_task_sat"] = pd.to_numeric(output["C_succ_task"], errors="coerce")
-    output["C_succ_task_overall"] = (
-        pd.to_numeric(output["C_succ_task_sat"], errors="coerce")
-        * pd.to_numeric(output["N_sats_total"], errors="coerce")
-    )
+    for raw_column in RAW_CAPACITY_COLUMNS:
+        output = _add_one_capacity_pair(output, raw_column=raw_column, total_sat_column="N_sats_total")
 
     return output
 
@@ -372,12 +456,21 @@ def _build_overview_tables(row_dfs: list[pd.DataFrame], image_count_map: dict[st
         "offnadir_angle_deg",
         "time_delay_min",
         "n_images",
+        "C_mission_task_sat",
+        "C_mission_task_overall",
+        "C_mission_sat",
+        "C_mission_overall",
+        "C_cue_task_received_sat",
+        "C_cue_task_received_overall",
+        "C_cue_task_handled_sat",
+        "C_cue_task_handled_overall",
         "C_succ_sat",
         "C_succ_overall",
         "C_succ_task_sat",
         "C_succ_task_overall",
         "L_mean_success_s",
         "V_mean_success_s",
+        "offnadir_observed_mean_deg",
         "IoU_mean_success",
         "Q_mean_success",
         "L_mean_task_success_s",
@@ -396,6 +489,10 @@ def _build_overview_tables(row_dfs: list[pd.DataFrame], image_count_map: dict[st
         "N_sat",
         "T_sim_hours",
         "N_gt_overview",
+        "N_mission_task",
+        "N_mission",
+        "N_cue_task_received",
+        "N_cue_task_handled",
         "N_gt",
         "N_succ_detection_only",
         "N_succ",

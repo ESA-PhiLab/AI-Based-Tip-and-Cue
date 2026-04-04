@@ -77,7 +77,7 @@ if real_run:
     verbose = False
 
 slew_finish_steps_early = 0     # Debugging
-
+cue_task_expiry_seconds = observation_time_limit
 
 # Initialize Orekit
 vm = orekit.initVM()
@@ -427,6 +427,8 @@ n_observed_cue = 0
 n_confirmed_cue = 0
 n_confirmed_pos = 0
 n_confirmed_neg = 0
+n_missed = 0
+n_expired = 0
 
 elapsed_seconds, elapsed_hours, n_steps = 0.0, 0.0, 0
 
@@ -466,6 +468,60 @@ while elapsed_seconds <= sim_duration_seconds:
     cleanup_idx = []
 
     queue_changed = False
+
+    expired_task_ids = []
+
+    for whale_idx, whale in list(tasked_targets.items()):
+        t_ref = whale.t_confirmed_tip
+        if t_ref is None:
+            t_ref = getattr(whale, "t_tasked_cue", None)
+        if t_ref is None:
+            t_ref = whale.t_observed_tip
+
+        if t_ref is None:
+            continue
+
+        task_age_s = (t_datetime - t_ref).total_seconds()
+
+        if task_age_s > cue_task_expiry_seconds:
+            expired_task_ids.append(whale_idx)
+
+    for whale_idx in expired_task_ids:
+        whale = tasked_targets.pop(whale_idx, None)
+        if whale is None:
+            continue
+
+        t_ref = whale.t_observed_tip
+        if t_ref is None:
+            t_ref = whale.t_confirmed_tip
+        if t_ref is None:
+            t_ref = getattr(whale, "t_tasked_cue", None)
+
+        task_age_s = (t_datetime - t_ref).total_seconds() if t_ref is not None else float("nan")
+
+        print(
+            f"!! Global Cue queue: Remove stale Target {whale_idx} "
+            f"(age={task_age_s:.1f} s > {cue_task_expiry_seconds:.1f} s)"
+        )
+
+        whale.state_tasked = 0
+        whale.assigned_cue = None
+        if hasattr(whale, "t_tasked_cue"):
+            whale.t_tasked_cue = None
+        n_expired += 1
+
+        for cue_actor in cue_actors:
+            current_task = eo_tools_dict[cue_actor.name].current_task
+            if current_task is not None and current_task["target_id"] == whale_idx:
+                release_current_task(
+                    actor_name=cue_actor.name,
+                    eo_tools_dict=eo_tools_dict,
+                    att_models_dict=att_models_dict,
+                    all_targets=all_targets,
+                    eul_default=eul_ang_cue_default
+                )
+
+        queue_changed = True
 
     for idx in all_cleanup_idx:
         if verbose:
@@ -669,10 +725,27 @@ while elapsed_seconds <= sim_duration_seconds:
             if elapsed_since_task_s > eo_tools_dict[actor.name].t_to_obs_expected * 1.1 + 15 * sim_step_seconds:
 
                 current_task = eo_tools_dict[actor.name].current_task
-                task_id = eo_tools_dict[actor.name].current_task["target_id"]
+                task_id = current_task["target_id"]
+                whale_task = all_targets.get(task_id)
 
-                print(f"!! {actor.name}: Expected observation time for Target {task_id} exceeded, release task")
+                print(
+                    f"!! {actor.name}: Target {task_id} not observed within expected observation window. "
+                    f"Remove from queue and release task"
+                )
 
+                # Remove from global Cue queue so it cannot be claimed again later
+                if task_id in tasked_targets:
+                    del tasked_targets[task_id]
+                    queue_changed = True
+
+                # Reset task state on the target itself
+                if whale_task is not None:
+                    whale_task.state_tasked = 0
+                    whale_task.assigned_cue = None
+                    if hasattr(whale_task, "t_tasked_cue"):
+                        whale_task.t_tasked_cue = None
+
+                # Release the local task from this actor
                 release_current_task(
                     actor_name=actor.name,
                     eo_tools_dict=eo_tools_dict,
@@ -680,6 +753,8 @@ while elapsed_seconds <= sim_duration_seconds:
                     all_targets=all_targets,
                     eul_default=eul_ang_cue_default
                 )
+
+                n_missed += 1
 
         else:
             elapsed_since_task_s = None
@@ -988,6 +1063,10 @@ while elapsed_seconds <= sim_duration_seconds:
                     if whale_idx in tasked_targets:
                         del tasked_targets[whale_idx]
                         whale.state_tasked = 0
+                        whale.assigned_cue = None
+                        if hasattr(whale, "t_tasked_cue"):
+                            whale.t_tasked_cue = None
+                        queue_changed = True
 
                     h_m = float(np.linalg.norm(np.array(r))) - R_earth
                     gsd0_cue_local = float(satellite_specs[actor.name]["sensor"]["GSD"])
@@ -1237,7 +1316,9 @@ print(f"Tip confirmed:                              {n_confirmed_tip}")
 print(f"Tip tasks sent:                             {n_tasked_tip}")
 print(f"Cue tasks started:                          {n_tasked_cue}")
 print(f"Cue observed:                               {n_observed_cue} (unique: {len(observed_targets_cue)})")
-print(f"Cue confirmed:                              {n_confirmed_cue}\n")
+print(f"Cue confirmed:                              {n_confirmed_cue}")
+print(f"Cue missed after slew:                      {n_missed}")
+print(f"Cue expired from queue:                     {n_expired}\n")
 
 # --- Latency / off-nadir ---
 if logging:
@@ -1395,6 +1476,7 @@ if logging:
         ("Cue tasks started", n_tasked_cue, ""),
         ("Cue observed", n_observed_cue, f"(unique: {len(observed_targets_cue)})"),
         ("Cue confirmed", n_confirmed_cue, ""),
+        ("Cue missed", n_missed, ""),
         ("", "", ""),
 
         # --- Latency / off-nadir ---

@@ -32,10 +32,21 @@ plt.rcParams.update({
 CASE_COLUMN = "case_name"
 
 METRICS = [
+    "C_mission_overall",
+    "C_cue_task_received_overall",
+    "C_cue_task_handled_overall",
+    "C_succ_sat",
     "C_succ_overall",
     "C_succ_task_overall",
+    "N_mission_task",
+    "N_mission",
+    "N_cue_task_received",
+    "N_cue_task_handled",
+    "N_succ",
+    "N_succ_task",
     "L_mean_success_s",
     "V_mean_success_s",
+    "offnadir_observed_mean_deg",
     "IoU_mean_success",
     "Q_mean_success",
     "coco_ap50",
@@ -56,10 +67,16 @@ LOCATION_PLOT_NAMES = ["random", "Auckland2006", "Pelagos2016"]
 LOCATION_COMBINED_PLOT_NAMES = ["Auckland2006", "Pelagos2016"]
 
 EXPERIMENT_LABELS = {
-    "reflection_offnadir_glint_255": "reflection off-nadir",
-    "reflection_nadir_glint_255": "reflection nadir",
-    "texture_offnadir_255": "texture off-nadir",
-    "texture_nadir_255": "texture nadir",
+    "reflection_offnadir_glint_255": "Geometric and Radiometric Effects",
+    "reflection_nadir_glint_255": "Only Radiometric Effects",
+    "texture_offnadir_255": "Only Geometric Effects",
+    "texture_nadir_255": "Raw Input Patches",
+}
+
+LOCATION_TITLE_LABELS = {
+    "random": "random",
+    "Auckland2006": "Auckland 2006",
+    "Pelagos2016": "Pelagos 2016",
 }
 
 COMPARISON_GROUPS = {
@@ -96,29 +113,95 @@ LOCATION_COLOR_MAP = {
 }
 
 METRIC_PLOT_META = {
-    "C_succ_overall": {
-        "symbol": r"$C_{\mathrm{succ}}$",
-        "description": "Successful whale detections",
+    "C_mission_overall": {
+        "symbol": r"$C_{\mathrm{mission}}$",
+        "description": "Mission whale detections",
         "unit": "",
-        "ylim": (0, 60),
+        "ylim": None,
+    },
+    "C_cue_task_received_overall": {
+        "symbol": r"$C_{\mathrm{cue,received}}$",
+        "description": "Cue tasks received",
+        "unit": "",
+        "ylim": None,
+    },
+    "C_cue_task_handled_overall": {
+        "symbol": r"$C_{\mathrm{cue,handled}}$",
+        "description": "Cue tasks handled",
+        "unit": "",
+        "ylim": (0, 80),
+    },
+    "C_succ_sat": {
+        "symbol": r"$C_{\mathrm{succ}}$",
+        "description": "Successful whale detections per satellite",
+        "unit": "",
+        "ylim": (0, 30),
+    },
+    "C_succ_overall": {
+        "symbol": r"$C_{\mathrm{succ,mission}}$",
+        "description": "Successful whale detections mission total",
+        "unit": "",
+        "ylim": None,
     },
     "C_succ_task_overall": {
         "symbol": r"$C_{\mathrm{succ,task}}$",
+        "description": "Successful task confirmations mission total",
+        "unit": "",
+        "ylim": None,
+    },
+    "N_mission_task": {
+        "symbol": r"$N_{\mathrm{mission,task}}$",
+        "description": "Mission task events",
+        "unit": "",
+        "ylim": None,
+    },
+    "N_mission": {
+        "symbol": r"$N_{\mathrm{mission}}$",
+        "description": "Mission whale detections",
+        "unit": "",
+        "ylim": None,
+    },
+    "N_cue_task_received": {
+        "symbol": r"$N_{\mathrm{cue,received}}$",
+        "description": "Cue tasks received",
+        "unit": "",
+        "ylim": None,
+    },
+    "N_cue_task_handled": {
+        "symbol": r"$N_{\mathrm{cue,handled}}$",
+        "description": "Cue tasks handled",
+        "unit": "",
+        "ylim": (50, 80),
+    },
+    "N_succ": {
+        "symbol": r"$N_{\mathrm{succ}}$",
+        "description": "Successful whale detections",
+        "unit": "",
+        "ylim": None,
+    },
+    "N_succ_task": {
+        "symbol": r"$N_{\mathrm{succ,task}}$",
         "description": "Successful task confirmations",
         "unit": "",
-        "ylim": (0, 60),
+        "ylim": None,
     },
     "L_mean_success_s": {
         "symbol": r"$L$",
         "description": "Mean latency",
         "unit": "[s]",
-        "ylim": (0, 400),
+        "ylim": (0, 650),
     },
     "V_mean_success_s": {
         "symbol": r"$V$",
         "description": "Mean viewing time",
         "unit": "[s]",
         "ylim": (0, 400),
+    },
+    "offnadir_observed_mean_deg": {
+        "symbol": r"$\overline{\theta}_{\mathrm{obs}}$",
+        "description": "Observed off-nadir angle",
+        "unit": "[deg]",
+        "ylim": (0, 60),
     },
     "IoU_mean_success": {
         "symbol": r"$\overline{\mathrm{IoU}}$",
@@ -174,6 +257,41 @@ def _resolve_final_results_root(script_dir: Path, final_results_folder_name: str
 def _sanitize_filename(name: str) -> str:
     """Make filename-safe string."""
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_")
+
+
+def _get_experiment_label(final_results: str) -> str:
+    """Return short human-readable experiment label."""
+    return EXPERIMENT_LABELS.get(final_results, final_results)
+
+
+def _get_location_label(location_plot: str) -> str:
+    """Return short human-readable location label."""
+    return LOCATION_TITLE_LABELS.get(location_plot, location_plot)
+
+
+def _get_time_delay_scenario_title() -> str:
+    """Return compact time-delay scenario title."""
+    return "TC1x1, 40° planned off-nadir"
+
+
+def _get_offnadir_scenario_title() -> str:
+    """Return compact off-nadir scenario title."""
+    return "TC1x1, 5 min latency"
+
+
+def _build_single_experiment_title(final_results: str, location_plot: str, scenario_title: str) -> str:
+    """Build compact title for one experiment and one location."""
+    return f"{_get_experiment_label(final_results)}\n{_get_location_label(location_plot)} · {scenario_title}"
+
+
+def _build_combined_location_title(final_results: str, scenario_title: str) -> str:
+    """Build compact title for one experiment with Auckland and Pelagos combined."""
+    return f"{_get_experiment_label(final_results)}\nAuckland 2006 + Pelagos 2016 · {scenario_title}"
+
+
+def _build_comparison_title(location_plot: str, scenario_title: str) -> str:
+    """Build compact title for cross-experiment comparison plots."""
+    return f"{_get_location_label(location_plot)}\n{scenario_title}"
 
 
 def _load_grouped_mean_table(xlsx_path: Path) -> pd.DataFrame:
@@ -278,24 +396,12 @@ def _get_metric_plot_config(metric: str, y_unit_mode: str = "native") -> dict[st
     }
 
 
-def _get_time_delay_plot_variants(metric: str) -> list[dict[str, str]]:
-    """Return variants for time-delay plots."""
-    variants = [
-        {
-            "y_unit_mode": "native",
-            "file_suffix": "",
-            "title_suffix": "",
-        }
-    ]
+def _get_metric_plot_variants(metric: str) -> list[dict[str, str]]:
+    """Return plot variants for one metric."""
+    variants = [{"y_unit_mode": "native", "file_suffix": ""}]
 
     if metric in {"L_mean_success_s", "V_mean_success_s"}:
-        variants.append(
-            {
-                "y_unit_mode": "minutes",
-                "file_suffix": "_ymin",
-                "title_suffix": " (y-axis in minutes)",
-            }
-        )
+        variants.append({"y_unit_mode": "minutes", "file_suffix": "_ymin"})
 
     return variants
 
@@ -643,16 +749,19 @@ def _write_combined_location_plots(script_dir: Path, final_results: str) -> None
             sort_columns=["seed", "offnadir_angle_deg"],
         )
 
+    time_delay_title = _build_combined_location_title(final_results, _get_time_delay_scenario_title())
+    offnadir_title = _build_combined_location_title(final_results, _get_offnadir_scenario_title())
+
     for metric in METRICS:
-        for variant in _get_time_delay_plot_variants(metric):
+        for variant in _get_metric_plot_variants(metric):
             _make_combined_location_mean_only_plot(
                 data_by_location=data_by_location,
                 location_order=LOCATION_COMBINED_PLOT_NAMES,
                 df_key="time_delay_mean_df",
                 x_column="time_delay_min",
                 metric=metric,
-                xlabel="Latency [min]",
-                title=f"{metric} vs latency for TC1x1 at 40° off-nadir (Auckland2006 and Pelagos2016){variant['title_suffix']}",
+                xlabel="Tip-Cue time delay [min]",
+                title=time_delay_title,
                 output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean_Auckland2006_Pelagos2016{variant['file_suffix']}.png",
                 y_unit_mode=variant["y_unit_mode"],
             )
@@ -664,34 +773,37 @@ def _write_combined_location_plots(script_dir: Path, final_results: str) -> None
                 runs_df_key="time_delay_runs_df",
                 x_column="time_delay_min",
                 metric=metric,
-                xlabel="Latency [min]",
-                title=f"{metric} vs latency for TC1x1 at 40° off-nadir (Auckland2006 and Pelagos2016){variant['title_suffix']}",
+                xlabel="Tip-Cue time delay [min]",
+                title=time_delay_title,
                 output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean_and_runs_Auckland2006_Pelagos2016{variant['file_suffix']}.png",
                 y_unit_mode=variant["y_unit_mode"],
             )
 
-        _make_combined_location_mean_only_plot(
-            data_by_location=data_by_location,
-            location_order=LOCATION_COMBINED_PLOT_NAMES,
-            df_key="offnadir_mean_df",
-            x_column="offnadir_angle_deg",
-            metric=metric,
-            xlabel="Off-nadir angle [deg]",
-            title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency (Auckland2006 and Pelagos2016)",
-            output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean_Auckland2006_Pelagos2016.png",
-        )
+        for variant in _get_metric_plot_variants(metric):
+            _make_combined_location_mean_only_plot(
+                data_by_location=data_by_location,
+                location_order=LOCATION_COMBINED_PLOT_NAMES,
+                df_key="offnadir_mean_df",
+                x_column="offnadir_angle_deg",
+                metric=metric,
+                xlabel="Off-nadir angle [deg]",
+                title=offnadir_title,
+                output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean{variant['file_suffix']}.png",
+                y_unit_mode=variant["y_unit_mode"],
+            )
 
-        _make_combined_location_mean_and_runs_plot(
-            data_by_location=data_by_location,
-            location_order=LOCATION_COMBINED_PLOT_NAMES,
-            mean_df_key="offnadir_mean_df",
-            runs_df_key="offnadir_runs_df",
-            x_column="offnadir_angle_deg",
-            metric=metric,
-            xlabel="Off-nadir angle [deg]",
-            title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency (Auckland2006 and Pelagos2016)",
-            output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean_and_runs_Auckland2006_Pelagos2016.png",
-        )
+            _make_combined_location_mean_and_runs_plot(
+                data_by_location=data_by_location,
+                location_order=LOCATION_COMBINED_PLOT_NAMES,
+                mean_df_key="offnadir_mean_df",
+                runs_df_key="offnadir_runs_df",
+                x_column="offnadir_angle_deg",
+                metric=metric,
+                xlabel="Off-nadir angle [deg]",
+                title=offnadir_title,
+                output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean_and_runs{variant['file_suffix']}.png",
+                y_unit_mode=variant["y_unit_mode"],
+            )
 
     print(f"[OK] Combined Auckland2006 + Pelagos2016 plots written to: {output_root}")
 
@@ -711,6 +823,9 @@ def _write_combined_comparison_plots(script_dir: Path, location_plot: str) -> No
             location_plot=location_plot,
         )
 
+    time_delay_title = _build_comparison_title(location_plot, _get_time_delay_scenario_title())
+    offnadir_title = _build_comparison_title(location_plot, _get_offnadir_scenario_title())
+
     for group_name, experiment_names in COMPARISON_GROUPS.items():
         group_root = combined_root / group_name
         time_delay_output_dir = group_root / "time_delay_sweep"
@@ -729,27 +844,29 @@ def _write_combined_comparison_plots(script_dir: Path, location_plot: str) -> No
         }
 
         for metric in METRICS:
-            for variant in _get_time_delay_plot_variants(metric):
+            for variant in _get_metric_plot_variants(metric):
                 _make_combined_comparison_plot(
                     data_by_experiment=time_delay_data_by_experiment,
                     experiment_order=experiment_names,
                     x_column="time_delay_min",
                     metric=metric,
-                    xlabel="Latency [min]",
-                    title=f"{metric} vs latency for TC1x1 at 40° off-nadir{variant['title_suffix']}",
+                    xlabel="Tip-Cue time delay [min]",
+                    title=time_delay_title,
                     output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_comparison{variant['file_suffix']}.png",
                     y_unit_mode=variant["y_unit_mode"],
                 )
 
-            _make_combined_comparison_plot(
-                data_by_experiment=offnadir_data_by_experiment,
-                experiment_order=experiment_names,
-                x_column="offnadir_angle_deg",
-                metric=metric,
-                xlabel="Off-nadir angle [deg]",
-                title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency",
-                output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_comparison.png",
-            )
+            for variant in _get_metric_plot_variants(metric):
+                _make_combined_comparison_plot(
+                    data_by_experiment=offnadir_data_by_experiment,
+                    experiment_order=experiment_names,
+                    x_column="offnadir_angle_deg",
+                    metric=metric,
+                    xlabel="Off-nadir angle [deg]",
+                    title=offnadir_title,
+                    output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_comparison{variant['file_suffix']}.png",
+                    y_unit_mode=variant["y_unit_mode"],
+                )
 
         for experiment_name in experiment_names:
             time_delay_csv_path = time_delay_output_dir / f"{experiment_name}_time_delay_grouped_mean.csv"
@@ -827,14 +944,17 @@ def main() -> None:
                 sort_columns=["seed", "offnadir_angle_deg"],
             )
 
+            time_delay_title = _build_single_experiment_title(final_results, location_plot, _get_time_delay_scenario_title())
+            offnadir_title = _build_single_experiment_title(final_results, location_plot, _get_offnadir_scenario_title())
+
             for metric in METRICS:
-                for variant in _get_time_delay_plot_variants(metric):
+                for variant in _get_metric_plot_variants(metric):
                     _make_mean_only_plot(
                         df_mean=time_delay_mean_df,
                         x_column="time_delay_min",
                         metric=metric,
-                        xlabel="Latency [min]",
-                        title=f"{metric} vs latency for TC1x1 at 40° off-nadir{variant['title_suffix']}",
+                        xlabel="Tip-Cue time delay [min]",
+                        title=time_delay_title,
                         output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean{variant['file_suffix']}.png",
                         y_unit_mode=variant["y_unit_mode"],
                     )
@@ -844,30 +964,33 @@ def main() -> None:
                         df_runs=time_delay_runs_df,
                         x_column="time_delay_min",
                         metric=metric,
-                        xlabel="Latency [min]",
-                        title=f"{metric} vs latency for TC1x1 at 40° off-nadir{variant['title_suffix']}",
+                        xlabel="Tip-Cue time delay [min]",
+                        title=time_delay_title,
                         output_path=time_delay_output_dir / f"{_sanitize_filename(metric)}_vs_time_delay_TC1x1_40deg_mean_and_runs{variant['file_suffix']}.png",
                         y_unit_mode=variant["y_unit_mode"],
                     )
 
-                _make_mean_only_plot(
-                    df_mean=offnadir_mean_df,
-                    x_column="offnadir_angle_deg",
-                    metric=metric,
-                    xlabel="Off-nadir angle [deg]",
-                    title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency",
-                    output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean.png",
-                )
+                for variant in _get_metric_plot_variants(metric):
+                    _make_mean_only_plot(
+                        df_mean=offnadir_mean_df,
+                        x_column="offnadir_angle_deg",
+                        metric=metric,
+                        xlabel="Off-nadir angle [deg]",
+                        title=offnadir_title,
+                        output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean{variant['file_suffix']}.png",
+                        y_unit_mode=variant["y_unit_mode"],
+                    )
 
-                _make_mean_and_runs_plot(
-                    df_mean=offnadir_mean_df,
-                    df_runs=offnadir_runs_df,
-                    x_column="offnadir_angle_deg",
-                    metric=metric,
-                    xlabel="Off-nadir angle [deg]",
-                    title=f"{metric} vs off-nadir angle for TC1x1 at 5 min latency",
-                    output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean_and_runs.png",
-                )
+                    _make_mean_and_runs_plot(
+                        df_mean=offnadir_mean_df,
+                        df_runs=offnadir_runs_df,
+                        x_column="offnadir_angle_deg",
+                        metric=metric,
+                        xlabel="Off-nadir angle [deg]",
+                        title=offnadir_title,
+                        output_path=offnadir_output_dir / f"{_sanitize_filename(metric)}_vs_offnadir_TC1x1_5min_mean_and_runs{variant['file_suffix']}.png",
+                        y_unit_mode=variant["y_unit_mode"],
+                    )
 
             print(f"Overview file: {overview_path}")
             print("Sheets used: grouped_mean for mean, all_cases for individual seeded runs")
@@ -879,17 +1002,11 @@ def main() -> None:
             print(f"Off-nadir seeded rows: {len(offnadir_runs_df)}")
             print(f"Plots written to: {output_root}")
 
-        _write_combined_location_plots(
-            script_dir=script_dir,
-            final_results=final_results,
-        )
+        _write_combined_location_plots(script_dir=script_dir, final_results=final_results)
 
     print("\n=============== Creating combined comparison plots ===============")
     for location_plot in LOCATION_PLOT_NAMES:
-        _write_combined_comparison_plots(
-            script_dir=script_dir,
-            location_plot=location_plot,
-        )
+        _write_combined_comparison_plots(script_dir=script_dir, location_plot=location_plot)
 
     print("\nFinished all per-experiment and combined comparison plots.")
 
